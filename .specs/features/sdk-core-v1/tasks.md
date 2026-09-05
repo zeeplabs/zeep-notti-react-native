@@ -499,15 +499,22 @@ T18 -> T19
 - Skill: NONE
 
 **Done when**:
-- [ ] `parseUserInfo` correctly extracts the same `NotificationPayload` shape from `UNNotification.request.content.userInfo`
-- [ ] Foreground receive fires `onNotificationReceived`; any-state click fires `onNotificationClicked`
-- [ ] `xcodebuild test` passes for the parsing function
-- [ ] Test count: at least 3 tests
+- [x] `parseUserInfo` correctly extracts the same `NotificationPayload` shape from `UNNotification.request.content.userInfo`
+- [x] Foreground receive fires `onNotificationReceived`; any-state click fires `onNotificationClicked`
+- [x] `xcodebuild test` passes for the parsing function
+- [x] Test count: at least 3 tests
 
 **Tests**: unit
 **Gate**: native-quick
 
 **Commit**: `feat(ios): add APNs delegate hooks and click detection`
+
+**Status**: ✅ Complete (4 new tests, 29 total in `NuntisTests`). `pnpm run build:ios` re-verified green (real Xcode build) since this task also touches the production pod.
+
+**Deviations**:
+1. Per T3's confirmed approach (no swizzling), the public entry points live on a small dedicated `NuntisBridge` class (`ios/NuntisPushDelegate.swift`) rather than on the TurboModule's own `Nuntis` Obj-C++ class — `NuntisBridge.didRegisterForRemoteNotifications(deviceToken:)` / `.didFailToRegisterForRemoteNotifications(_:)` are the methods the host `AppDelegate` calls; `NuntisPushDelegate.shared` is the `UNUserNotificationCenterDelegate` the host assigns to `UNUserNotificationCenter.current().delegate`. Both are documented as required host-app wiring for T19's README, not implemented here (this task only implements the SDK's side of the contract, per design.md).
+2. A real, non-hypothetical build break was hit and fixed while running this task's gate: Swift's auto-generated `Nuntis-Swift.h` forward-declares `UNUserNotificationCenterDelegate`/`UNNotificationPresentationOptions` without importing `UserNotifications` itself, so any Obj-C++ file including it needs that framework already visible — fixed by adding `#import <UserNotifications/UserNotifications.h>` to `ios/Nuntis.h` (included by `Nuntis.mm` before the generated header). Flagging per the task's instruction to report any mechanism that doesn't work as design.md describes when actually tried — this is a Swift/ObjC-interop framework-import gap, not a flaw in T2/T3's confirmed bridging mechanism itself.
+3. `onNotificationReceived`/`onNotificationClicked` emission for a real device only fires once a host app both forwards the APNs registration callbacks (`NuntisBridge`) and sets `NuntisPushDelegate.shared` as its `UNUserNotificationCenterDelegate` — neither is exercised end-to-end by this batch's tests (only the pure `parseUserInfo` function is unit-tested, matching this task's own Done-when scope, same pattern as Android's T9/T10 where the framework-dependent service/lifecycle classes are exercised at Phase 5's example-app smoke test instead).
 
 ---
 
