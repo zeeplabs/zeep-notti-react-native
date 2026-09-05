@@ -203,15 +203,19 @@ T18 -> T19
 - Skill: NONE
 
 **Done when**:
-- [ ] `mergeTags` correctly adds, removes, and handles overlapping add+remove of the same key in one call (last-operation-wins within the call, matching spec P3-AC8's serialization assumption)
-- [ ] Persisted fields round-trip through `SharedPreferences` correctly, including the empty/never-initialized state
-- [ ] `./gradlew testDebugUnitTest` passes
-- [ ] Test count: at least 6 tests (empty state, add, remove, add+remove overlap, persistence round-trip, external-id/subscribed round-trip)
+- [x] `mergeTags` correctly adds, removes, and handles overlapping add+remove of the same key in one call (last-operation-wins within the call, matching spec P3-AC8's serialization assumption)
+- [x] Persisted fields round-trip through `SharedPreferences` correctly, including the empty/never-initialized state
+- [x] `./gradlew testDebugUnitTest` passes
+- [x] Test count: at least 6 tests (empty state, add, remove, add+remove overlap, persistence round-trip, external-id/subscribed round-trip)
 
 **Tests**: unit
 **Gate**: native-quick
 
 **Commit**: `feat(android): add NuntisDeviceStore with tag-merge logic`
+
+**Status**: ✅ Complete
+
+**Deviation note**: `android/` has no standalone `gradlew` (library modules in this scaffold build only via the example app's Gradle project). The real gate command used: `cd example/android && ./gradlew :react-native-nuntis:testDebugUnitTest` (module name from Gradle autolinking). `tasks.md`'s literal `cd android && ./gradlew testDebugUnitTest` does not exist as a runnable command in this repo. Also required forcing `example/node_modules -> ../node_modules` locally (this repo's `.npmrc` sets `node-linker=hoisted`, but `example/android/settings.gradle` resolves the RN Gradle plugin via a relative `../node_modules` path) — a local, untracked workaround, not a repo change.
 
 ---
 
