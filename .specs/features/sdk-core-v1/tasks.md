@@ -387,14 +387,18 @@ T18 -> T19
 - Skill: NONE
 
 **Done when**:
-- [ ] Same test scenario list as T5's `NuntisDeviceStoreTest.kt`, ported to XCTest (add/remove/overlap/persistence/empty-state — same scenarios, both platforms, per design.md's parallel-platform-test-matrix mitigation)
-- [ ] `xcodebuild test` (command from the coverage matrix) passes
-- [ ] Test count: at least 6 tests, matching T5's count
+- [x] Same test scenario list as T5's `NuntisDeviceStoreTest.kt`, ported to XCTest (add/remove/overlap/persistence/empty-state — same scenarios, both platforms, per design.md's parallel-platform-test-matrix mitigation)
+- [x] `xcodebuild test` (command from the coverage matrix) passes
+- [x] Test count: at least 6 tests, matching T5's count
 
 **Tests**: unit
 **Gate**: native-quick
 
 **Commit**: `feat(ios): add NuntisDeviceStore with tag-merge logic`
+
+**Status**: ✅ Complete (6 tests)
+
+**Deviation note**: No standalone `NuntisTests` XCTest scheme/target existed in the scaffold (`tasks.md`'s literal `xcodebuild test -workspace example/ios/NuntisExample.xcworkspace -scheme NuntisTests ...` referenced a scheme that did not exist yet). Rather than wire iOS unit tests through the CocoaPods `Nuntis` pod target (would require a podspec `test_spec` plus a matching explicit `pod 'Nuntis', :testspecs: ['Tests']` Podfile line, which conflicts with RN autolinking's own unconditional `pod name, :path => path` declaration for the same pod), a dedicated `NuntisTests` unit-test-bundle target was added directly to `example/ios/NuntisExample.xcodeproj` (via the `xcodeproj` Ruby gem CocoaPods already vendors) with no CocoaPods/module dependency: its Sources build phase compiles the same on-disk `ios/*.swift` business-logic files (not pod-linked, not `@testable import`) plus `ios/Tests/*.swift`, as a standalone logic-test bundle (no `TEST_HOST`/`BUNDLE_LOADER`). This is stable across `pod install` re-runs (only `Pods.xcodeproj` is regenerated, not the app project) and avoids all CocoaPods/module-linking complexity for pure-Foundation business logic. `xcodebuild -list` confirms the scheme exists; real command used matches the coverage matrix's shape with `-scheme NuntisTests -destination 'platform=iOS Simulator,name=iPhone 17'` (device name adjusted to what's actually available in this environment, mirrors the same class of correction Batch 1 made for Android's gate command).
 
 ---
 
