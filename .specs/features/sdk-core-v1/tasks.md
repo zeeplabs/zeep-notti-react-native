@@ -322,16 +322,23 @@ T18 -> T19
 - Skill: NONE
 
 **Done when**:
-- [ ] `parseRemoteMessage` correctly extracts `title`/`body`/`data` from a `RemoteMessage` fixture, including the no-notification-block (data-only) edge case
-- [ ] `onNewToken` calls into `NuntisCore` with the new token
-- [ ] Manifest registers the service with the correct intent-filter (`com.google.firebase.MESSAGING_EVENT`)
-- [ ] `./gradlew testDebugUnitTest` passes
-- [ ] Test count: at least 3 tests for `parseRemoteMessage`
+- [x] `parseRemoteMessage` correctly extracts `title`/`body`/`data` from a `RemoteMessage` fixture, including the no-notification-block (data-only) edge case
+- [x] `onNewToken` calls into `NuntisCore` with the new token
+- [x] Manifest registers the service with the correct intent-filter (`com.google.firebase.MESSAGING_EVENT`)
+- [x] `./gradlew testDebugUnitTest` passes
+- [x] Test count: at least 3 tests for `parseRemoteMessage`
 
 **Tests**: unit (parsing function only, per Done-when)
 **Gate**: native-quick
 
 **Commit**: `feat(android): add FCM messaging service for token refresh and foreground receive`
+
+**Status**: ✅ Complete (25 tests total in the module, 3 new for this task)
+
+**Deviations**:
+1. Added `org.robolectric:robolectric:4.14.1` as a test-only dependency, scoped via `@RunWith(RobolectricTestRunner::class)` to just `NuntisFirebaseMessagingServiceTest` - `RemoteMessage` is backed by `android.os.Bundle`, which is unmockable on the plain JVM without it. Not applied repo-wide.
+2. `onNewToken` is not unit-tested directly (matches this task's own file-scope note: the service class needs a real Android framework context, exercised at Phase 5's example-app smoke test instead) - only the pure `parseRemoteMessage` function is unit-tested, per the Done-when bullet's own scoping.
+3. Emitting the Codegen event required a small, necessary addition to `NuntisModule.kt` (not in this task's `Where` field): a static bridge (`activeInstance`/`activeCore` + `emitReceived`/`emitClicked`), since `NuntisFirebaseMessagingService` is a separate Android `Service`, not a `NuntisModule` subclass, and design.md's Tech Decisions rule out `RCTDeviceEventEmitter` as an alternative.
 
 ---
 

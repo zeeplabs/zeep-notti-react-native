@@ -8,6 +8,7 @@ import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReadableArray
 import com.facebook.react.bridge.ReadableMap
+import com.facebook.react.bridge.WritableMap
 import com.facebook.react.modules.core.PermissionAwareActivity
 import com.facebook.react.modules.core.PermissionListener
 import okhttp3.OkHttpClient
@@ -21,6 +22,10 @@ import okhttp3.OkHttpClient
  */
 class NuntisModule(reactContext: ReactApplicationContext) :
   NativeNuntisSpec(reactContext) {
+
+  init {
+    activeInstance = this
+  }
 
   private val core: NuntisCore by lazy {
     NuntisCore(
@@ -38,8 +43,19 @@ class NuntisModule(reactContext: ReactApplicationContext) :
         null
       },
       permissionRequester = { callback -> requestNativePermission(callback) }
-    )
+    ).also { activeCore = it }
   }
+
+  // T9 forces a Codegen event-emit bridge onto this already-wired module:
+  // NuntisFirebaseMessagingService (a separate Android Service, not a
+  // NuntisModule subclass) has no direct access to the protected
+  // emitOnNotificationReceived/emitOnNotificationClicked methods Codegen
+  // generates, so a static reference to the live module instance is needed.
+  // Design.md's Tech Decisions rule out RCTDeviceEventEmitter as a
+  // workaround, so this is the minimal necessary bridge.
+  internal fun emitReceived(payload: WritableMap) = emitOnNotificationReceived(payload)
+
+  internal fun emitClicked(payload: WritableMap) = emitOnNotificationClicked(payload)
 
   override fun initialize(appId: String?, clientKey: String?) {
     core.initialize(appId.orEmpty(), clientKey.orEmpty())
@@ -105,5 +121,20 @@ class NuntisModule(reactContext: ReactApplicationContext) :
     // design.md (Nuntis.initialize only takes appId/clientKey, no host
     // parameter) - flagged for the orchestrator to confirm before ship.
     private const val NUNTIS_API_BASE_URL = "https://api.nuntis.io"
+
+    @Volatile
+    private var activeInstance: NuntisModule? = null
+
+    @Volatile
+    internal var activeCore: NuntisCore? = null
+      private set
+
+    internal fun emitNotificationReceived(payload: WritableMap) {
+      activeInstance?.emitReceived(payload)
+    }
+
+    internal fun emitNotificationClicked(payload: WritableMap) {
+      activeInstance?.emitClicked(payload)
+    }
   }
 }
