@@ -133,6 +133,21 @@ Each platform independently satisfies the same spec ACs (SDK-01 through SDK-19) 
 - **Dependencies**: host app's own APNs capability/entitlement (documented integrator prerequisite, not something the SDK can provision).
 - **Reuses**: n/a (new).
 
+**Swift Turbo Module bridging — confirmed T2 (2026-09-05):**
+
+React Native's own Turbo Native Modules docs (`reactnative.dev/docs/next/turbo-native-modules-introduction`, fetched directly) document only an Objective-C++ (`.mm`) implementation class and do not mention Swift at all — there is no official Meta-documented path for a Swift-implemented Turbo Module. Context7 MCP was not available in this environment (no matching tool registered), so this spike relied on the official-docs fallback plus an actual, real build as the deciding evidence (not a design read).
+
+Mechanism, empirically confirmed by a real `pod install` + `react-native build-ios --mode Debug` (RN 0.85.0, Xcode 26.6) succeeding in this repo:
+
+- The Obj-C++ scaffold (`ios/Nuntis.mm`/`ios/Nuntis.h`) stays as the thin TurboModule entry: it still implements `getTurboModule:` and `moduleName` (required — this is the one piece that must stay Obj-C++, since `getTurboModule:` returns a C++ `std::shared_ptr`, which Swift cannot express directly against the Codegen'd C++ JSI class).
+- The actual method bodies move to a plain Swift class (`ios/NuntisImpl.swift`), exposed back to Obj-C++ via `@objc(ClassName) public class ... : NSObject`.
+- `Nuntis.mm` imports the auto-generated `"Nuntis-Swift.h"` header (not a manual bridging header — bridging headers are an app-target mechanism; a CocoaPods pod's own Swift sources are exposed to its own Obj-C++ sources via this auto-generated umbrella header instead) and delegates each method one line into an instance of the Swift class.
+- `Nuntis.podspec` must declare `s.swift_version` explicitly (added: `"5.9"`) — CocoaPods refuses to `pod install` a pod containing Swift files without it.
+
+This pattern matches (and is corroborated by) several independent 2025 community write-ups (e.g. "Creating Turbo Modules in React Native with Swift", "Build Native and Turbo Modules in React Native with Swift" — both Medium, found via web search) that converge on the same Obj-C++-shim-plus-Swift-class shape, but it is **not** an officially documented Meta pattern. AD-002 is resolved as "active-confirmed by spike" (see `.specs/STATE.md`) on that basis — confirmed by working code and cross-referenced community consensus, not by an authoritative React Native doc, and that distinction is preserved here rather than overstated.
+
+Spike files (kept, since the mechanism is confirmed working): `ios/NuntisImpl.swift` (placeholder `multiply` body only — T14 replaces this with the real Spec delegation), `ios/Nuntis.mm` (updated to delegate into `NuntisImpl`), `Nuntis.podspec` (`swift_version` added).
+
 ---
 
 ## Data Models

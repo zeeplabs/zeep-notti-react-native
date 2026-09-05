@@ -16,7 +16,7 @@
 - **Trade-off**: iOS implementation work cannot start until the spike lands; if the spike concludes Swift bridging is impractical, this decision must be revisited (falls back to Objective-C, superseding this entry).
 - **Scope**: iOS native module structure for `zeep-nuntis-react-native`, any future iOS-side feature work.
 - **Date**: 2026-09-05
-- **Status**: active
+- **Status**: active-confirmed by spike (T2, 2026-09-05) — Swift Turbo Module bridging works via an Obj-C++ `getTurboModule:`/`moduleName` shim (`ios/Nuntis.mm`) delegating into a plain Swift class exposed through CocoaPods' auto-generated `Nuntis-Swift.h`, confirmed by a real `pod install` + Xcode build succeeding in this repo. Not an officially-documented Meta pattern (`reactnative.dev`'s Turbo Native Modules docs show Obj-C++ only, Context7 MCP unavailable in this environment) — corroborated by independent 2025 community write-ups and by this repo's own passing build. Full detail in `design.md`'s "iOS APNs delegate hooks" component.
 
 ## Handoff
 
