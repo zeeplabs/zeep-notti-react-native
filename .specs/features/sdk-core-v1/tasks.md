@@ -232,17 +232,19 @@ T18 -> T19
 - Skill: NONE
 
 **Done when**:
-- [ ] `POST` sends the correct body/headers (`Authorization: Bearer {clientKey}`, `{token, platform}`)
-- [ ] `PATCH` always includes the `token` field
-- [ ] On a 5xx or network failure, the client retries exactly per the 2/4/8/16/32s schedule, capped at 5 attempts, then surfaces a terminal failure
-- [ ] A successful response before the retry cap stops further retries
-- [ ] `./gradlew testDebugUnitTest` passes
-- [ ] Test count: at least 6 tests (POST success, PATCH success+token field, 5xx retry-then-succeed, retry-cap-exhausted, network-error path, request header/body shape)
+- [x] `POST` sends the correct body/headers (`Authorization: Bearer {clientKey}`, `{token, platform}`)
+- [x] `PATCH` always includes the `token` field
+- [x] On a 5xx or network failure, the client retries exactly per the 2/4/8/16/32s schedule, capped at 5 attempts, then surfaces a terminal failure
+- [x] A successful response before the retry cap stops further retries
+- [x] `./gradlew testDebugUnitTest` passes
+- [x] Test count: at least 6 tests (POST success, PATCH success+token field, 5xx retry-then-succeed, retry-cap-exhausted, network-error path, request header/body shape)
 
 **Tests**: unit
 **Gate**: native-quick
 
 **Commit**: `feat(android): add NuntisApiClient with retry backoff`
+
+**Status**: ✅ Complete (gate run via `cd example/android && ./gradlew :react-native-nuntis:testDebugUnitTest`, same deviation note as T5)
 
 ---
 

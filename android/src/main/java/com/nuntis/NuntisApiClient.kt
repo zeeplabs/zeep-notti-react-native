@@ -1,0 +1,112 @@
+package com.nuntis
+
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
+import java.io.IOException
+
+data class DeviceResponse(val id: String, val tags: Map<String, String>)
+
+sealed class ApiResult {
+  data class Success(val response: DeviceResponse) : ApiResult()
+  data class Failure(val message: String) : ApiResult()
+}
+
+/**
+ * Talks to Nuntis' `/v1/apps/{app_id}/devices` endpoints (design.md
+ * NuntisApiClient). Retries a 5xx response or network failure with
+ * exponential backoff (2s, 4s, 8s, 16s, 32s), capped at 5 attempts, per
+ * design.md's Tech Decisions. `sleeper` is injectable so tests can skip the
+ * real delay; production callers use the default (real `Thread.sleep`).
+ */
+class NuntisApiClient(
+  private val httpClient: OkHttpClient,
+  private val baseUrl: String,
+  private val appId: String,
+  private val clientKey: String,
+  private val sleeper: (Long) -> Unit = { Thread.sleep(it) }
+) {
+
+  companion object {
+    private const val MAX_ATTEMPTS = 5
+    private const val BASE_DELAY_MS = 2000L
+  }
+
+  private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
+
+  fun createOrUpdateDevice(token: String, platform: String): ApiResult {
+    val body = JSONObject()
+      .put("token", token)
+      .put("platform", platform)
+      .toString()
+      .toRequestBody(jsonMediaType)
+
+    val request = Request.Builder()
+      .url("$baseUrl/v1/apps/$appId/devices")
+      .header("Authorization", "Bearer $clientKey")
+      .post(body)
+      .build()
+
+    return executeWithRetry(request)
+  }
+
+  /** PATCH always includes the cached `token` field (AD-009 ownership proof). */
+  fun patchDevice(deviceId: String, token: String, fields: Map<String, Any>): ApiResult {
+    val json = JSONObject()
+    fields.forEach { (key, value) -> json.put(key, value) }
+    json.put("token", token)
+
+    val body = json.toString().toRequestBody(jsonMediaType)
+
+    val request = Request.Builder()
+      .url("$baseUrl/v1/apps/$appId/devices/$deviceId")
+      .header("Authorization", "Bearer $clientKey")
+      .patch(body)
+      .build()
+
+    return executeWithRetry(request)
+  }
+
+  private fun executeWithRetry(request: Request): ApiResult {
+    var attempt = 0
+    var delayMs = BASE_DELAY_MS
+    var lastError = "unknown error"
+
+    while (attempt < MAX_ATTEMPTS) {
+      attempt++
+      try {
+        httpClient.newCall(request).execute().use { response ->
+          if (response.isSuccessful) {
+            return ApiResult.Success(parseDeviceResponse(response.body?.string().orEmpty()))
+          }
+          if (response.code < 500) {
+            // 4xx: not retried, terminal failure.
+            return ApiResult.Failure("HTTP ${response.code}")
+          }
+          lastError = "HTTP ${response.code}"
+        }
+      } catch (e: IOException) {
+        lastError = e.message ?: "network error"
+      }
+
+      if (attempt < MAX_ATTEMPTS) {
+        sleeper(delayMs)
+        delayMs *= 2
+      }
+    }
+
+    return ApiResult.Failure(lastError)
+  }
+
+  private fun parseDeviceResponse(bodyString: String): DeviceResponse {
+    val json = JSONObject(bodyString)
+    val tags = mutableMapOf<String, String>()
+    if (json.has("tags")) {
+      val tagsJson = json.getJSONObject("tags")
+      tagsJson.keys().forEach { key -> tags[key] = tagsJson.getString(key) }
+    }
+    return DeviceResponse(id = json.getString("id"), tags = tags)
+  }
+}
