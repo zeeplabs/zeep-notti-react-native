@@ -443,14 +443,16 @@ T18 -> T19
 - Skill: NONE
 
 **Done when**:
-- [ ] Same test scenario list as T7's `NuntisCoreTest.kt` (missing-config no-op, repeat-init no-op, permission grant/deny, requestPermission-before-initialize, tag-mutation serialization)
-- [ ] `xcodebuild test` passes
-- [ ] Test count: at least 9 tests, matching T7's count
+- [x] Same test scenario list as T7's `NuntisCoreTest.kt` (missing-config no-op, repeat-init no-op, permission grant/deny, requestPermission-before-initialize, tag-mutation serialization)
+- [x] `xcodebuild test` passes
+- [x] Test count: at least 9 tests, matching T7's count
 
 **Tests**: unit
 **Gate**: native-quick
 
 **Commit**: `feat(ios): add NuntisCore orchestration layer`
+
+**Status**: ✅ Complete (13 new tests, 25 total in `NuntisTests`). Serialization test verified genuinely exercising the lock (not a false pass) via a real `Thread`-based race against a deliberately delayed stubbed PATCH response (`StubURLProtocol`'s `delayMs`), mirroring `NuntisCoreTest.kt`'s `MockWebServer` `setBodyDelay` technique.
 
 ---
 

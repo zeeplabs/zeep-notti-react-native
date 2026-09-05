@@ -10,13 +10,14 @@ final class StubURLProtocol: URLProtocol {
     let statusCode: Int?
     let body: Data?
     let error: Error?
+    let delayMs: Int
 
-    static func status(_ code: Int, body: String = "") -> StubResponse {
-      StubResponse(statusCode: code, body: body.data(using: .utf8), error: nil)
+    static func status(_ code: Int, body: String = "", delayMs: Int = 0) -> StubResponse {
+      StubResponse(statusCode: code, body: body.data(using: .utf8), error: nil, delayMs: delayMs)
     }
 
     static func networkError() -> StubResponse {
-      StubResponse(statusCode: nil, body: nil, error: URLError(.notConnectedToInternet))
+      StubResponse(statusCode: nil, body: nil, error: URLError(.notConnectedToInternet), delayMs: 0)
     }
   }
 
@@ -62,6 +63,10 @@ final class StubURLProtocol: URLProtocol {
     if let error = stub.error {
       client?.urlProtocol(self, didFailWithError: error)
       return
+    }
+
+    if stub.delayMs > 0 {
+      Thread.sleep(forTimeInterval: TimeInterval(stub.delayMs) / 1000.0)
     }
 
     let response = HTTPURLResponse(
