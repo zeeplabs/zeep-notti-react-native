@@ -355,15 +355,22 @@ T18 -> T19
 - Skill: NONE
 
 **Done when**:
-- [ ] `parseClickIntentExtras` correctly extracts the same `NotificationPayload` shape from launch-`Intent` extras
-- [ ] The click path fires `onNotificationClicked` exactly once per actual notification tap (not on every unrelated Activity resume) — verified by the intent-extras presence check itself, not a heuristic
-- [ ] `./gradlew testDebugUnitTest` passes
-- [ ] Test count: at least 3 tests for `parseClickIntentExtras` (present extras, absent extras/unrelated launch, malformed data map)
+- [x] `parseClickIntentExtras` correctly extracts the same `NotificationPayload` shape from launch-`Intent` extras
+- [x] The click path fires `onNotificationClicked` exactly once per actual notification tap (not on every unrelated Activity resume) — verified by the intent-extras presence check itself, not a heuristic
+- [x] `./gradlew testDebugUnitTest` passes
+- [x] Test count: at least 3 tests for `parseClickIntentExtras` (present extras, absent extras/unrelated launch, malformed data map)
 
 **Tests**: unit
 **Gate**: native-quick
 
 **Commit**: `feat(android): detect notification clicks from cold-start/background launch intents`
+
+**Status**: ✅ Complete (4 new tests; 29 total in the Android module). `pnpm run build:android` also re-verified green as this is the last Phase 2 task.
+
+**Deviations**:
+1. Implemented as a dedicated `NuntisActivityLifecycleListener.kt` (the task's own listed alternative), registered via `Application.ActivityLifecycleCallbacks` from `NuntisModule`'s `init` block (one line, forced touch, same pattern as T9's necessary `NuntisModule.kt` addition) — auto-wires cold-start/background click detection without requiring integrator code.
+2. "Exactly once per tap" is enforced by clearing the handled `Intent`'s extras (`intent.replaceExtras(Bundle())`) after firing, so a subsequent `onActivityResumed` for the same Activity instance finds no `google.message_id` key and `parseClickIntentExtras` correctly returns null — the presence-check test is the actual evidence for this property, per the Done-when bullet's own wording.
+3. The "unrelated launch" detection uses FCM's reserved `google.message_id` extra key (confirmed by inspecting the `firebase-messaging` AAR's `Constants.MessagePayloadKeys`) as the deterministic presence signal, not a heuristic.
 
 ---
 

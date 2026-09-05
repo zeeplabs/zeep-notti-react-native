@@ -25,6 +25,10 @@ class NuntisModule(reactContext: ReactApplicationContext) :
 
   init {
     activeInstance = this
+    // T10: detect notification clicks from cold-start/background launch
+    // intents without requiring integrator code (Application-level hook).
+    (reactApplicationContext.applicationContext as? android.app.Application)
+      ?.registerActivityLifecycleCallbacks(NuntisActivityLifecycleListener())
   }
 
   private val core: NuntisCore by lazy {
