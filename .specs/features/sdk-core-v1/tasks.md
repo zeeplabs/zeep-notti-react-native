@@ -177,12 +177,14 @@ T18 -> T19
 - Skill: NONE
 
 **Done when**:
-- [ ] `Spec` interface includes every v1 method and event listed above with correct TS types
-- [ ] Codegen runs cleanly (`pnpm typecheck` passes, no Codegen errors on `pnpm run build:android`/`build:ios` dry invocation)
-- [ ] No leftover reference to `multiply` in the Spec file
+- [x] `Spec` interface includes every v1 method and event listed above with correct TS types
+- [x] Codegen runs cleanly (`pnpm typecheck` passes, no Codegen errors on `pnpm run build:android`/`build:ios` dry invocation)
+- [x] No leftover reference to `multiply` in the Spec file
 
 **Tests**: none (type-only interface; exercised indirectly once T16 writes the facade tests)
 **Gate**: quick
+
+**Status**: ✅ Complete
 
 **Commit**: `feat(sdk): define full NativeNuntis TurboModule spec`
 
