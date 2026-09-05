@@ -21,10 +21,10 @@
 ## Handoff
 
 - **Feature**: sdk-core-v1
-- **Phase / Task**: Tasks approved (19 tasks, 5 phases) — about to start Execute at T1
-- **Completed**: Specify (spec.md), Design (design.md, AD-001/AD-002 recorded), Tasks (tasks.md, validate_tasks.py 0 errors)
-- **In-progress** (file:line): none — Execute has not started a task yet
-- **Next step**: Begin Execute at T1 (fix CI/setup action from yarn to pnpm), following tasks.md's Execution Plan in order
-- **Blockers**: none
-- **Uncommitted files**: `.specs/STATE.md`, `.specs/features/sdk-core-v1/design.md`, `.specs/features/sdk-core-v1/tasks.md`
-- **Branch**: main
+- **Phase / Task**: Batch 1 (T1-T10, Phases 1-2) complete + a post-batch fix pass. About to dispatch Batch 2 (T11-T15, Phase 3, iOS).
+- **Completed**: Specify, Design (AD-001/AD-002), Tasks (validate_tasks.py 0 errors). Batch 1: T1-T10 all ✅, commits `6ac087c`..`b60256c`. Fix pass on top (found by orchestrator review, not a formal task): `2ba2928` (baseUrl param added to `initialize()`, self-hosted Nuntis has no fixed host — spec.md/design.md amended), `ff059b1` (real `FirebaseMessaging.getInstance().token` wired into the previously-stubbed `tokenProvider`), `3d477cf` (fixed `example/android/settings.gradle`'s relative `node_modules` path for this repo's pnpm/hoisted layout), `3bdcb89` (commit Podfile.lock/Gemfile.lock, gitignore generated `.xcworkspace`), `e21d10c` (eslint now ignores native `build/` output dirs — was sweeping up a Gradle-generated JS test report). Along the way found and killed a genuine test hang (unbounded `MockWebServer.takeRequest()` in `NuntisCoreTest.kt`, confirmed via `jstack`, fixed with a bounded timeout) — not an environment flake. Final Android gate re-verified green by the orchestrator directly (forced `--rerun`, not cache): `BUILD SUCCESSFUL`, 32 tests / 0 failures.
+- **In-progress** (file:line): none
+- **Next step**: Dispatch Batch 2 (T11-T15, iOS native core) as a sub-agent batch worker, same model as Batch 1 — mirror Android's contract into Swift, informed by T2/T3's confirmed bridging mechanism (AD-002) and the corrected `baseUrl`-bearing `initialize()` signature from the fix pass above (do NOT let iOS mirror the old 2-arg signature).
+- **Blockers**: none. Note for the iOS batch worker: budget real wall-clock time for Xcode/XCTest builds and gate runs (first-run CocoaPods installs and Xcode builds are slow) and watch them to actual completion rather than leaving them backgrounded unattended — Batch 1's Android gate run stalled on an unrelated test bug and looked identical to "just slow" until directly inspected with `jstack`, costing real time before it was caught.
+- **Uncommitted files**: none (`example/node_modules` is an untracked local symlink workaround for the settings.gradle path issue, safe to ignore — not meant to be committed)
+- **Branch**: feat/sdk-core-v1
