@@ -261,18 +261,20 @@ T18 -> T19
 - Skill: NONE
 
 **Done when**:
-- [ ] `initialize` with missing/empty `appId`/`clientKey` logs and does not call the API client (SDK-03)
-- [ ] Repeat `initialize` calls with identical args are a no-op (SDK-07)
-- [ ] `requestPermission` grant/deny paths call `patchDevice` with the correct `subscribed` value (SDK-09, SDK-10)
-- [ ] `requestPermission` called before any `initialize` logs and does not prompt (Edge Case)
-- [ ] Two rapid tag-mutation calls serialize (second waits for the first's API call to resolve) and the final persisted state reflects the net merged result (SDK-19/P3-AC8)
-- [ ] `./gradlew testDebugUnitTest` passes
-- [ ] Test count: at least 9 tests (one per Done-when bullet above, plus a happy-path init→register test)
+- [x] `initialize` with missing/empty `appId`/`clientKey` logs and does not call the API client (SDK-03)
+- [x] Repeat `initialize` calls with identical args are a no-op (SDK-07)
+- [x] `requestPermission` grant/deny paths call `patchDevice` with the correct `subscribed` value (SDK-09, SDK-10)
+- [x] `requestPermission` called before any `initialize` logs and does not prompt (Edge Case)
+- [x] Two rapid tag-mutation calls serialize (second waits for the first's API call to resolve) and the final persisted state reflects the net merged result (SDK-19/P3-AC8)
+- [x] `./gradlew testDebugUnitTest` passes
+- [x] Test count: at least 9 tests (one per Done-when bullet above, plus a happy-path init→register test)
 
 **Tests**: unit
 **Gate**: native-quick
 
 **Commit**: `feat(android): add NuntisCore orchestration layer`
+
+**Status**: ✅ Complete (10 tests). SDK-05 retry-backoff behavior is exercised at `NuntisApiClientTest.kt` (T6), not retested here. SDK-11 (Android <13 auto-grant) is delegated to the concrete `permissionRequester` implementation T8 wires in — out of `NuntisCore`'s own layer, so not tested at this level; flagged, not silently skipped.
 
 ---
 
