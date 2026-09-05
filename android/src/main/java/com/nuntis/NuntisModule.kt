@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Log
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReadableArray
@@ -11,6 +12,7 @@ import com.facebook.react.bridge.ReadableMap
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.modules.core.PermissionAwareActivity
 import com.facebook.react.modules.core.PermissionListener
+import com.google.firebase.messaging.FirebaseMessaging
 import okhttp3.OkHttpClient
 
 /**
@@ -39,13 +41,7 @@ class NuntisModule(reactContext: ReactApplicationContext) :
       apiClientFactory = { appId, clientKey, baseUrl ->
         NuntisApiClient(OkHttpClient(), baseUrl, appId, clientKey)
       },
-      tokenProvider = {
-        // SPEC_DEVIATION: real FCM token fetch lands in T9, once
-        // com.google.firebase:firebase-messaging is added as a dependency
-        // (T8 depends only on T4/T7, not T9). NuntisCore already logs and
-        // no-ops safely when this returns null (SDK-04, verified in T7).
-        null
-      },
+      tokenProvider = { callback -> fetchFcmToken(callback) },
       permissionRequester = { callback -> requestNativePermission(callback) }
     ).also { activeCore = it }
   }
@@ -89,6 +85,28 @@ class NuntisModule(reactContext: ReactApplicationContext) :
 
   override fun setSubscription(enabled: Boolean) {
     core.setSubscription(enabled)
+  }
+
+  /**
+   * Fetches the current FCM token via `FirebaseMessaging.getInstance().token`
+   * (Play Services Tasks API, asynchronous). Mirrors SDK-04's crash-safety
+   * contract for a missing native push prerequisite (no Firebase app
+   * configured / no `google-services.json`): any failure - synchronous
+   * (Firebase not initialized) or asynchronous (`addOnFailureListener`) - is
+   * logged and resolves the callback with `null`, never throws.
+   */
+  private fun fetchFcmToken(callback: (String?) -> Unit) {
+    try {
+      FirebaseMessaging.getInstance().token
+        .addOnSuccessListener { token -> callback(token) }
+        .addOnFailureListener { e ->
+          Log.e(NAME, "Nuntis: failed to fetch FCM token - ${e.message}")
+          callback(null)
+        }
+    } catch (e: Exception) {
+      Log.e(NAME, "Nuntis: failed to fetch FCM token - ${e.message}")
+      callback(null)
+    }
   }
 
   private fun requestNativePermission(callback: (Boolean) -> Unit) {

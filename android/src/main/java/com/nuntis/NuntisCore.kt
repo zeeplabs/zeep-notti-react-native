@@ -8,12 +8,15 @@ package com.nuntis
  * abstract the platform-specific push-token fetch and OS permission prompt
  * (owned by the concrete wiring in T8/NuntisModule — e.g. the Android <13
  * auto-grant behavior from spec P2-AC4 lives in whatever concrete
- * `permissionRequester` T8 wires in, not here).
+ * `permissionRequester` T8 wires in, not here). `tokenProvider` is
+ * callback-based rather than a plain synchronous getter, since the real FCM
+ * token fetch (`FirebaseMessaging.getInstance().token`) is an asynchronous
+ * Play Services `Task`, not a synchronous call.
  */
 class NuntisCore(
   private val deviceStore: NuntisDeviceStore,
   private val apiClientFactory: (appId: String, clientKey: String, baseUrl: String) -> NuntisApiClient,
-  private val tokenProvider: () -> String?,
+  private val tokenProvider: (callback: (token: String?) -> Unit) -> Unit,
   private val permissionRequester: (callback: (granted: Boolean) -> Unit) -> Unit,
   private val platform: String = "android",
   private val logger: (message: String) -> Unit = {}
@@ -42,12 +45,13 @@ class NuntisCore(
     val client = apiClientFactory(appId, clientKey, baseUrl)
     this.apiClient = client
 
-    val token = tokenProvider()
-    if (token == null) {
-      logger("Nuntis.initialize: no push token available - skipping registration")
-      return
+    tokenProvider { token ->
+      if (token == null) {
+        logger("Nuntis.initialize: no push token available - skipping registration")
+        return@tokenProvider
+      }
+      registerDevice(client, token)
     }
-    registerDevice(client, token)
   }
 
   fun onTokenRefreshed(newToken: String) {

@@ -36,7 +36,7 @@ class NuntisCoreTest {
   }
 
   private fun newCore(
-    tokenProvider: () -> String? = { "fcm-token" },
+    tokenProvider: (callback: (String?) -> Unit) -> Unit = { cb -> cb("fcm-token") },
     permissionRequester: (callback: (Boolean) -> Unit) -> Unit = { it(true) },
     logs: MutableList<String>? = null
   ) = NuntisCore(
@@ -91,9 +91,40 @@ class NuntisCoreTest {
   @Test
   fun `initialize with no available push token logs and does not register`() {
     val logs = mutableListOf<String>()
-    val core = newCore(tokenProvider = { null }, logs = logs)
+    val core = newCore(tokenProvider = { cb -> cb(null) }, logs = logs)
 
     core.initialize("app-1", "key", validBaseUrl)
+
+    assertEquals(0, server.requestCount)
+    assertTrue(logs.any { it.contains("no push token") })
+  }
+
+  @Test
+  fun `initialize with an async token fetch that resolves later still registers once the token arrives`() {
+    server.enqueue(
+      MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}""")
+    )
+    var deferredCallback: ((String?) -> Unit)? = null
+    val core = newCore(tokenProvider = { cb -> deferredCallback = cb })
+
+    core.initialize("app-1", "key", validBaseUrl)
+    assertEquals(0, server.requestCount)
+
+    deferredCallback?.invoke("fcm-token")
+
+    assertEquals(1, server.requestCount)
+    assertEquals("device-1", store.getDeviceId())
+    assertEquals("fcm-token", store.getLastToken())
+  }
+
+  @Test
+  fun `initialize with an async token fetch that fails does not crash and does not attempt registration`() {
+    val logs = mutableListOf<String>()
+    var deferredCallback: ((String?) -> Unit)? = null
+    val core = newCore(tokenProvider = { cb -> deferredCallback = cb }, logs = logs)
+
+    core.initialize("app-1", "key", validBaseUrl)
+    deferredCallback?.invoke(null)
 
     assertEquals(0, server.requestCount)
     assertTrue(logs.any { it.contains("no push token") })
