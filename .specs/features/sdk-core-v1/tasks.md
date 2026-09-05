@@ -415,14 +415,18 @@ T18 -> T19
 - Skill: NONE
 
 **Done when**:
-- [ ] Same test scenario list as T6's `NuntisApiClientTest.kt` (POST success, PATCH success+token, 5xx retry-then-succeed, retry-cap-exhausted, network-error, request shape)
-- [ ] `xcodebuild test` passes
-- [ ] Test count: at least 6 tests, matching T6's count
+- [x] Same test scenario list as T6's `NuntisApiClientTest.kt` (POST success, PATCH success+token, 5xx retry-then-succeed, retry-cap-exhausted, network-error, request shape)
+- [x] `xcodebuild test` passes
+- [x] Test count: at least 6 tests, matching T6's count
 
 **Tests**: unit
 **Gate**: native-quick
 
 **Commit**: `feat(ios): add NuntisApiClient with retry backoff`
+
+**Status**: ✅ Complete (6 new tests, 12 total in `NuntisTests`)
+
+**Deviation note**: Uses a custom `URLProtocol` stub (`ios/Tests/StubURLProtocol.swift`) instead of OkHttp's `MockWebServer` (no iOS equivalent exists) — the ecosystem-standard XCTest approach the coverage matrix names. `NuntisApiClient`'s HTTP calls are made synchronously from the caller's perspective via a `DispatchSemaphore`-gated `URLSession.dataTask`, mirroring `NuntisApiClient.kt`'s blocking `OkHttpClient.newCall(...).execute()` so both platforms expose the same synchronous contract to `NuntisCore` (T13).
 
 ---
 
