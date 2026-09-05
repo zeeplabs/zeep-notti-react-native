@@ -12,7 +12,7 @@ package com.nuntis
  */
 class NuntisCore(
   private val deviceStore: NuntisDeviceStore,
-  private val apiClientFactory: (appId: String, clientKey: String) -> NuntisApiClient,
+  private val apiClientFactory: (appId: String, clientKey: String, baseUrl: String) -> NuntisApiClient,
   private val tokenProvider: () -> String?,
   private val permissionRequester: (callback: (granted: Boolean) -> Unit) -> Unit,
   private val platform: String = "android",
@@ -21,23 +21,25 @@ class NuntisCore(
 
   private var appId: String? = null
   private var clientKey: String? = null
+  private var baseUrl: String? = null
   private var apiClient: NuntisApiClient? = null
   private val mutationLock = Any()
 
-  fun initialize(appId: String, clientKey: String) {
-    if (appId.isBlank() || clientKey.isBlank()) {
-      logger("Nuntis.initialize: appId or clientKey is missing/empty - skipping registration")
+  fun initialize(appId: String, clientKey: String, baseUrl: String) {
+    if (appId.isBlank() || clientKey.isBlank() || baseUrl.isBlank()) {
+      logger("Nuntis.initialize: appId, clientKey, or baseUrl is missing/empty - skipping registration")
       return
     }
 
     // Repeat call with identical args in the same session: no-op (SDK-07).
-    if (appId == this.appId && clientKey == this.clientKey) {
+    if (appId == this.appId && clientKey == this.clientKey && baseUrl == this.baseUrl) {
       return
     }
 
     this.appId = appId
     this.clientKey = clientKey
-    val client = apiClientFactory(appId, clientKey)
+    this.baseUrl = baseUrl
+    val client = apiClientFactory(appId, clientKey, baseUrl)
     this.apiClient = client
 
     val token = tokenProvider()

@@ -36,8 +36,8 @@ class NuntisModule(reactContext: ReactApplicationContext) :
       deviceStore = NuntisDeviceStore(
         reactApplicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
       ),
-      apiClientFactory = { appId, clientKey ->
-        NuntisApiClient(OkHttpClient(), NUNTIS_API_BASE_URL, appId, clientKey)
+      apiClientFactory = { appId, clientKey, baseUrl ->
+        NuntisApiClient(OkHttpClient(), baseUrl, appId, clientKey)
       },
       tokenProvider = {
         // SPEC_DEVIATION: real FCM token fetch lands in T9, once
@@ -61,8 +61,8 @@ class NuntisModule(reactContext: ReactApplicationContext) :
 
   internal fun emitClicked(payload: WritableMap) = emitOnNotificationClicked(payload)
 
-  override fun initialize(appId: String?, clientKey: String?) {
-    core.initialize(appId.orEmpty(), clientKey.orEmpty())
+  override fun initialize(appId: String?, clientKey: String?, baseUrl: String?) {
+    core.initialize(appId.orEmpty(), clientKey.orEmpty(), baseUrl.orEmpty())
   }
 
   override fun requestPermission(promise: Promise?) {
@@ -120,11 +120,6 @@ class NuntisModule(reactContext: ReactApplicationContext) :
     const val NAME = NativeNuntisSpec.NAME
     private const val PREFS_NAME = "nuntis_prefs"
     private const val PERMISSION_REQUEST_CODE = 8420
-
-    // SPEC_DEVIATION: Nuntis' base API host is not specified in spec.md or
-    // design.md (Nuntis.initialize only takes appId/clientKey, no host
-    // parameter) - flagged for the orchestrator to confirm before ship.
-    private const val NUNTIS_API_BASE_URL = "https://api.nuntis.io"
 
     @Volatile
     private var activeInstance: NuntisModule? = null

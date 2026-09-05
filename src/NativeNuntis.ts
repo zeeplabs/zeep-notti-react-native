@@ -11,7 +11,7 @@ export interface NotificationPayload {
 }
 
 export interface Spec extends TurboModule {
-  initialize(appId: string, clientKey: string): void;
+  initialize(appId: string, clientKey: string, baseUrl: string): void;
   requestPermission(): Promise<boolean>;
   login(externalUserId: string): void;
   logout(): void;

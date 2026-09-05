@@ -19,7 +19,7 @@ Implement these tasks with the `tlc-spec-driven` skill: **activate it by name an
 
 | Code Layer | Required Test Type | Coverage Expectation | Location Pattern | Run Command |
 | --- | --- | --- | --- | --- |
-| Android business logic (`NuntisCore`, `NuntisApiClient`, `NuntisDeviceStore`, pure parsing functions) | unit (JUnit4) | All branches; 1:1 to spec ACs SDK-01–19 (Android-applicable subset); every listed Edge Case has a test | `android/src/test/java/com/nuntis/*Test.kt` | `cd android && ./gradlew testDebugUnitTest` |
+| Android business logic (`NuntisCore`, `NuntisApiClient`, `NuntisDeviceStore`, pure parsing functions) | unit (JUnit4) | All branches; 1:1 to spec ACs SDK-01–19 (Android-applicable subset); every listed Edge Case has a test | `android/src/test/java/com/nuntis/*Test.kt` | `cd example/android && ./gradlew :react-native-nuntis:testDebugUnitTest` |
 | iOS business logic (`NuntisCore`, `NuntisApiClient`, `NuntisDeviceStore`, pure parsing functions) | unit (XCTest) | All branches; 1:1 to spec ACs SDK-01–19 (iOS-applicable subset); every listed Edge Case has a test | `ios/Tests/*Tests.swift` | `xcodebuild test -workspace example/ios/NuntisExample.xcworkspace -scheme NuntisTests -destination 'platform=iOS Simulator,name=iPhone 16'` |
 | TurboModule thin entry (`NuntisModule.kt`, `Nuntis.swift`) | none (wiring only, exercised transitively by the business-logic tests above via manual construction) | build gate only | `android/src/main/java/com/nuntis/NuntisModule.kt`, `ios/Nuntis.swift` | `pnpm run build:android` / `pnpm run build:ios` (Turbo pipeline tasks already wired in `package.json`/`turbo.json`) |
 | TS facade (`src/index.tsx`, `src/NativeNuntis.ts`) | unit (Jest) | 1:1 to public API surface (every exported method/listener has at least one test); mirrors existing `src/__tests__/index.test.tsx` pattern | `src/__tests__/*.test.tsx` | `pnpm test` |
@@ -32,7 +32,7 @@ Implement these tasks with the `tlc-spec-driven` skill: **activate it by name an
 | Gate Level | When to Use | Command |
 | --- | --- | --- |
 | Quick | After a TS-only task (facade, Spec) | `pnpm typecheck && pnpm lint && pnpm test` |
-| Native-quick | After an Android-only or iOS-only business-logic task | `cd android && ./gradlew testDebugUnitTest` (Android) or the `xcodebuild test` command above (iOS) |
+| Native-quick | After an Android-only or iOS-only business-logic task | `cd example/android && ./gradlew :react-native-nuntis:testDebugUnitTest` (Android) or the `xcodebuild test` command above (iOS) |
 | Full | After a task touching both a native module and its TS Spec | Quick + Native-quick for the platform(s) touched |
 | Build | After phase completion, or a config/wiring-only task | `pnpm typecheck && pnpm lint && pnpm test && pnpm run build:android && pnpm run build:ios` (mirrors CI's four jobs) |
 
@@ -215,7 +215,7 @@ T18 -> T19
 
 **Status**: ✅ Complete
 
-**Deviation note**: `android/` has no standalone `gradlew` (library modules in this scaffold build only via the example app's Gradle project). The real gate command used: `cd example/android && ./gradlew :react-native-nuntis:testDebugUnitTest` (module name from Gradle autolinking). `tasks.md`'s literal `cd android && ./gradlew testDebugUnitTest` does not exist as a runnable command in this repo. Also required forcing `example/node_modules -> ../node_modules` locally (this repo's `.npmrc` sets `node-linker=hoisted`, but `example/android/settings.gradle` resolves the RN Gradle plugin via a relative `../node_modules` path) — a local, untracked workaround, not a repo change.
+**Deviation note**: `android/` has no standalone `gradlew` (library modules in this scaffold build only via the example app's Gradle project). The real gate command used: `cd example/android && ./gradlew :react-native-nuntis:testDebugUnitTest` (module name from Gradle autolinking). `tasks.md`'s literal `cd example/android && ./gradlew :react-native-nuntis:testDebugUnitTest` does not exist as a runnable command in this repo. Also required forcing `example/node_modules -> ../node_modules` locally (this repo's `.npmrc` sets `node-linker=hoisted`, but `example/android/settings.gradle` resolves the RN Gradle plugin via a relative `../node_modules` path) — a local, untracked workaround, not a repo change.
 
 ---
 

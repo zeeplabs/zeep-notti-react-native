@@ -75,7 +75,7 @@ Each platform independently satisfies the same spec ACs (SDK-01 through SDK-19) 
 - **Purpose**: Codegen contract between JS and native — the only cross-language boundary.
 - **Location**: `src/NativeNuntis.ts`
 - **Interfaces** (see Data Models for shared payload shapes):
-  - `initialize(appId: string, clientKey: string): void`
+  - `initialize(appId: string, clientKey: string, baseUrl: string): void`
   - `requestPermission(): Promise<boolean>`
   - `login(externalUserId: string): void`
   - `logout(): void`
@@ -91,7 +91,7 @@ Each platform independently satisfies the same spec ACs (SDK-01 through SDK-19) 
 - **Purpose**: Orchestrates init, device registration, token refresh, tag-merge, and serializes outgoing `PATCH` calls (spec P3-AC8).
 - **Location**: `android/src/main/java/com/nuntis/NuntisCore.kt`, `ios/NuntisCore.swift`
 - **Interfaces** (internal, called by the thin TurboModule entry class):
-  - `initialize(appId, clientKey)` — no-ops on repeat calls with identical args (SDK-07); fetches current push token and calls `registerDevice`.
+  - `initialize(appId, clientKey, baseUrl)` — no-ops on repeat calls with identical args (SDK-07); fetches current push token and calls `registerDevice`. `baseUrl` is the integrator's own Nuntis instance host (self-hosted or SaaS); missing/empty `baseUrl` is treated the same crash-safety way as missing `appId`/`clientKey` (log, no-op, never throw).
   - `registerDevice(token, platform)` — `POST` upsert, retry per Tech Decisions below.
   - `onTokenRefreshed(newToken)` — re-invokes `registerDevice`.
   - `requestPermission()` → native OS prompt, then `PATCH {subscribed}`.
@@ -107,7 +107,7 @@ Each platform independently satisfies the same spec ACs (SDK-01 through SDK-19) 
 - **Interfaces**:
   - `createOrUpdateDevice(token, platform): Result<DeviceResponse>` — `POST`, upsert semantics per Nuntis contract.
   - `patchDevice(deviceId, body): Result<DeviceResponse>` — `PATCH`, always includes the cached `token` field (AD-009 ownership proof).
-- **Dependencies**: `appId`/`clientKey` from `NuntisCore`, `NuntisDeviceStore` for the device id and last-known token.
+- **Dependencies**: `appId`/`clientKey`/`baseUrl` injected from `NuntisCore` at construction time (no hardcoded default host — each Nuntis deployment is self-hosted-or-SaaS with its own host), `NuntisDeviceStore` for the device id and last-known token.
 - **Reuses**: n/a (new); intentionally does not reuse any existing HTTP client already in the RN dependency tree beyond OkHttp (Android's existing transitive dep).
 
 ### `NuntisDeviceStore` (Android: `SharedPreferences`, iOS: `UserDefaults`)
@@ -195,7 +195,7 @@ interface DeviceState {
 
 | Error Scenario | Handling | User Impact |
 | --- | --- | --- |
-| Missing/invalid `appId`/`clientKey` at `initialize()` (SDK-03) | Native code logs an error via platform logger (`Log.e` / `os_log`), returns without throwing | No crash; no registration; silent from the JS caller's perspective (matches spec — `initialize` has no return value to reject) |
+| Missing/invalid `appId`/`clientKey`/`baseUrl` at `initialize()` (SDK-03) | Native code logs an error via platform logger (`Log.e` / `os_log`), returns without throwing | No crash; no registration; silent from the JS caller's perspective (matches spec — `initialize` has no return value to reject) |
 | Missing native push prerequisite (SDK-04) | Native code catches the specific missing-config exception/error (e.g. Firebase's own "no google-services.json" failure, or a nil APNs environment) and logs, does not propagate | No crash; push simply doesn't initialize |
 | Registration HTTP failure (SDK-05) | `NuntisApiClient` retries with exponential backoff, capped at 5 attempts, per-platform `Handler`/`DispatchQueue` timer — no shared code, so **this exact policy (base delay, multiplier, jitter or not) must be pinned as a Tech Decision below and implemented identically on both platforms**, or the two clients will observably diverge | No user-visible impact; device just registers late |
 | `requestPermission()` called before `initialize()` (Edge Case) | Native code logs an error, does not prompt | No native permission dialog appears |

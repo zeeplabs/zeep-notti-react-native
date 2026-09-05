@@ -6,7 +6,7 @@ Nuntis (self-hosted/SaaS push infra, `zeep-nuntis`) has a `Client key` auth sche
 
 ## Goals
 
-- [ ] A React Native app can register a device with Nuntis and receive FCM (Android) / APNS (iOS) pushes with only `Nuntis.initialize(appId, clientKey)` + native project setup (`google-services.json` / APNs capability), no custom native code.
+- [ ] A React Native app can register a device with Nuntis and receive FCM (Android) / APNS (iOS) pushes with only `Nuntis.initialize(appId, clientKey, baseUrl)` + native project setup (`google-services.json` / APNs capability), no custom native code.
 - [ ] SDK surface API shape mirrors `react-native-onesignal`'s v5 public API closely enough that an integrator already familiar with OneSignal's SDK recognizes the pattern (`initialize`, `Notifications.requestPermission`, `User.addTag(s)`/`removeTag(s)`, `User.addAlias`/external id, `login`/subscription).
 - [ ] Ships as a Turbo Module (New Architecture) with an Expo config plugin, working in both bare RN and Expo (dev client/prebuild).
 
@@ -29,6 +29,7 @@ Nuntis (self-hosted/SaaS push infra, `zeep-nuntis`) has a `Client key` auth sche
 | Assumption / decision | Chosen default | Rationale | Confirmed? |
 | --- | --- | --- | --- |
 | Auth model | SDK calls Nuntis directly from the device using the public Client key (no backend round-trip through the host app's own server) | Matches Nuntis' existing Client-key design intent (device register/update only, safe to embed) and OneSignal's own client-side model | y |
+| API host | Nuntis is self-hosted-or-SaaS per deployment (not a fixed single host) — `Nuntis.initialize` takes an explicit `baseUrl` parameter naming the integrator's own Nuntis instance (e.g. `https://push.example.com` for self-hosted, or Zeep's SaaS host); no hardcoded default host ships in the SDK | An SDK that hardcodes one host cannot serve self-hosted Nuntis deployments, which the backend explicitly supports | y |
 | Token acquisition | SDK obtains the FCM/APNS token itself natively (Firebase Messaging on Android, native APNS on iOS) rather than delegating to a pre-existing push lib in the host app | Locked in prior architecture brainstorm (see repo dev log) — gives rich push/badge/notification-action parity with OneSignal's real SDK from v1 | y |
 | Permission request timing | Explicit `Nuntis.requestPermission()` call, separate from `initialize()` | User decision — mirrors OneSignal's real SDK, gives host app control over prompt timing; device still registers on init with `subscribed: false` until permission is granted | y |
 | Tag merge semantics | SDK keeps a local in-memory cache of the device's last-known tags (seeded from the register/update response) and computes the full resulting map before every `PATCH`, since the backend only supports wholesale tag replacement | User decision — preserves OneSignal-equivalent granular `addTag`/`addTags`/`removeTag`/`removeTags` API despite the backend's replace-only contract | y |
@@ -37,7 +38,7 @@ Nuntis (self-hosted/SaaS push infra, `zeep-nuntis`) has a `Client key` auth sche
 | Token rotation (FCM/APNS token refresh) | SDK re-registers via the same upsert path (`POST .../devices`) — the backend's `(app_id, token, platform)` unique upsert naturally creates a new Device row when the token changes; the SDK does not attempt to delete/merge the prior row | Backend contract already documented in `zeep-nuntis`'s `design.md`; changing that behavior is out of scope for an SDK-only feature | y |
 | `login` / external user id API shape | `Nuntis.login(externalUserId: string)` and `Nuntis.logout()` (clears it), backed by `PATCH .../devices/{id}` with `external_user_id` | Mirrors OneSignal's `login`/`logout` naming over a more generic `setExternalUserId`, closer to the "recognizable to OneSignal users" goal | n — flagged for confirmation at Design if the exact method name matters to Julio; functionally equivalent either way |
 | Init before native config (missing `google-services.json` / APNS capability) | SDK logs a clear, non-fatal error and no-ops registration (never crashes app boot) | Crash-safety is a hard requirement for any SDK embedded in a third-party app's boot path | y |
-| Missing/invalid `appId`/`clientKey` at `initialize()` | Non-fatal: log an error, `initialize()` resolves/returns without throwing, no registration attempt is made | Same crash-safety rationale — an SDK must never be able to crash the host app from a config mistake | y |
+| Missing/invalid `appId`/`clientKey`/`baseUrl` at `initialize()` | Non-fatal: log an error, `initialize()` resolves/returns without throwing, no registration attempt is made | Same crash-safety rationale — an SDK must never be able to crash the host app from a config mistake | y |
 | iOS native language | Scaffolded as Kotlin+Objective-C via `create-react-native-library` (no Turbo Module + Swift template exists in the tool as of v0.63.0); iOS side will be converted from Obj-C to Swift as an early implementation task, before any push logic is written | User decision this session — New Architecture Turbo Modules fully support Swift, the scaffolding tool just has no preset for that exact combination | y |
 
 **Open questions:** none blocking — the `login`/`logout` naming is a low-risk naming choice, not a behavioral gap; proceed with it and easy to rename at Design/Tasks if flagged.
@@ -54,9 +55,9 @@ Nuntis (self-hosted/SaaS push infra, `zeep-nuntis`) has a `Client key` auth sche
 
 **Acceptance Criteria**:
 
-1. WHEN the host app calls `Nuntis.initialize(appId, clientKey)` for the first time THEN the SDK SHALL obtain the current FCM token (Android) or APNS device token (iOS) and call `POST /v1/apps/{appId}/devices` with `{token, platform}` using `Authorization: Bearer {clientKey}`.
+1. WHEN the host app calls `Nuntis.initialize(appId, clientKey, baseUrl)` for the first time THEN the SDK SHALL obtain the current FCM token (Android) or APNS device token (iOS) and call `POST {baseUrl}/v1/apps/{appId}/devices` with `{token, platform}` using `Authorization: Bearer {clientKey}`.
 2. WHEN the device-registration call succeeds THEN the SDK SHALL persist the returned device id and cache the returned `tags` map locally for later merge operations (see SDK Core v1's tag-merge assumption).
-3. IF `appId` or `clientKey` is missing or empty THEN the SDK SHALL log an error and SHALL NOT throw or crash the host app, and SHALL NOT attempt registration.
+3. IF `appId`, `clientKey`, or `baseUrl` is missing or empty THEN the SDK SHALL log an error and SHALL NOT throw or crash the host app, and SHALL NOT attempt registration.
 4. IF the native push prerequisite is missing (no `google-services.json` resolvable on Android, no push capability/entitlement on iOS) THEN the SDK SHALL log a clear, actionable error and SHALL NOT crash the host app.
 5. IF the registration HTTP call fails (network error or 5xx) THEN the SDK SHALL retry with exponential backoff up to 5 attempts, then stop until the next app foreground or the next FCM/APNS token-refresh event.
 6. WHEN the OS delivers a refreshed FCM or APNS token (independent of app restart) THEN the SDK SHALL re-register via the same `POST` upsert call with the new token.

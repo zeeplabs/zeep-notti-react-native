@@ -26,6 +26,10 @@ class NuntisCoreTest {
     store = NuntisDeviceStore(prefs)
   }
 
+  /** The mock server's own URL - the only `baseUrl` that actually reaches it in these tests. */
+  private val validBaseUrl: String
+    get() = server.url("/").toString().trimEnd('/')
+
   @After
   fun tearDown() {
     server.shutdown()
@@ -37,10 +41,10 @@ class NuntisCoreTest {
     logs: MutableList<String>? = null
   ) = NuntisCore(
     deviceStore = store,
-    apiClientFactory = { appId, clientKey ->
+    apiClientFactory = { appId, clientKey, baseUrl ->
       NuntisApiClient(
         httpClient = OkHttpClient(),
-        baseUrl = server.url("/").toString().trimEnd('/'),
+        baseUrl = baseUrl,
         appId = appId,
         clientKey = clientKey,
         sleeper = { }
@@ -56,10 +60,10 @@ class NuntisCoreTest {
     val logs = mutableListOf<String>()
     val core = newCore(logs = logs)
 
-    core.initialize("", "key")
+    core.initialize("", "key", validBaseUrl)
 
     assertEquals(0, server.requestCount)
-    assertTrue(logs.any { it.contains("appId or clientKey") })
+    assertTrue(logs.any { it.contains("appId, clientKey, or baseUrl") })
   }
 
   @Test
@@ -67,10 +71,21 @@ class NuntisCoreTest {
     val logs = mutableListOf<String>()
     val core = newCore(logs = logs)
 
-    core.initialize("app-1", "")
+    core.initialize("app-1", "", validBaseUrl)
 
     assertEquals(0, server.requestCount)
-    assertTrue(logs.any { it.contains("appId or clientKey") })
+    assertTrue(logs.any { it.contains("appId, clientKey, or baseUrl") })
+  }
+
+  @Test
+  fun `initialize with blank baseUrl logs and does not call the API client`() {
+    val logs = mutableListOf<String>()
+    val core = newCore(logs = logs)
+
+    core.initialize("app-1", "key", "")
+
+    assertEquals(0, server.requestCount)
+    assertTrue(logs.any { it.contains("appId, clientKey, or baseUrl") })
   }
 
   @Test
@@ -78,7 +93,7 @@ class NuntisCoreTest {
     val logs = mutableListOf<String>()
     val core = newCore(tokenProvider = { null }, logs = logs)
 
-    core.initialize("app-1", "key")
+    core.initialize("app-1", "key", validBaseUrl)
 
     assertEquals(0, server.requestCount)
     assertTrue(logs.any { it.contains("no push token") })
@@ -92,7 +107,7 @@ class NuntisCoreTest {
     )
     val core = newCore()
 
-    core.initialize("app-1", "key")
+    core.initialize("app-1", "key", validBaseUrl)
 
     assertEquals(1, server.requestCount)
     assertEquals("device-1", store.getDeviceId())
@@ -107,8 +122,8 @@ class NuntisCoreTest {
     )
     val core = newCore()
 
-    core.initialize("app-1", "key")
-    core.initialize("app-1", "key")
+    core.initialize("app-1", "key", validBaseUrl)
+    core.initialize("app-1", "key", validBaseUrl)
 
     assertEquals(1, server.requestCount)
   }
@@ -118,13 +133,13 @@ class NuntisCoreTest {
     server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
     server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
     val core = newCore()
-    core.initialize("app-1", "key")
+    core.initialize("app-1", "key", validBaseUrl)
 
     core.onTokenRefreshed("new-fcm-token")
 
     assertEquals(2, server.requestCount)
-    server.takeRequest() // the initial register
-    val refreshRequest = server.takeRequest()
+    server.takeRequest(5, TimeUnit.SECONDS) // the initial register
+    val refreshRequest = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
     val body = JSONObject(refreshRequest.body.readUtf8())
     assertEquals("new-fcm-token", body.getString("token"))
     assertEquals("new-fcm-token", store.getLastToken())
@@ -136,15 +151,15 @@ class NuntisCoreTest {
     server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
     var promptInvoked = false
     val core = newCore(permissionRequester = { cb -> promptInvoked = true; cb(true) })
-    core.initialize("app-1", "key")
+    core.initialize("app-1", "key", validBaseUrl)
 
     var callbackResult: Boolean? = null
     core.requestPermission { granted -> callbackResult = granted }
 
     assertTrue(promptInvoked)
     assertEquals(true, callbackResult)
-    server.takeRequest() // initial register
-    val patchRequest = server.takeRequest()
+    server.takeRequest(5, TimeUnit.SECONDS) // initial register
+    val patchRequest = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
     assertEquals("PATCH", patchRequest.method)
     assertEquals(true, JSONObject(patchRequest.body.readUtf8()).getBoolean("subscribed"))
     assertTrue(store.getSubscribed())
@@ -155,12 +170,12 @@ class NuntisCoreTest {
     server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
     server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
     val core = newCore(permissionRequester = { cb -> cb(false) })
-    core.initialize("app-1", "key")
+    core.initialize("app-1", "key", validBaseUrl)
 
     core.requestPermission { }
 
-    server.takeRequest()
-    val patchRequest = server.takeRequest()
+    server.takeRequest(5, TimeUnit.SECONDS)
+    val patchRequest = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
     assertEquals(false, JSONObject(patchRequest.body.readUtf8()).getBoolean("subscribed"))
     assertFalse(store.getSubscribed())
   }
@@ -183,7 +198,7 @@ class NuntisCoreTest {
   fun `two rapid tag mutations serialize and converge to the correct net merged result`() {
     server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
     val core = newCore()
-    core.initialize("app-1", "key")
+    core.initialize("app-1", "key", validBaseUrl)
 
     // First mutation's PATCH response is artificially slow; if mutateTags did
     // not serialize, the second (fast) mutation on another thread would race
