@@ -531,13 +531,15 @@ T18 -> T19
 - Skill: NONE
 
 **Done when**:
-- [ ] Every public method/listener above exists and calls the correct `NativeNuntis` method (verified by mocking `NativeNuntis` in tests, standard RN jest pattern)
-- [ ] `addTag`/`addTags` and `removeTag`/`removeTags` both funnel into the Spec's `addTags`/`removeTags` (single-key convenience wrappers around the plural form)
-- [ ] `pnpm test` passes
-- [ ] Test count: at least 9 tests (one per public method/listener)
+- [x] Every public method/listener above exists and calls the correct `NativeNuntis` method (verified by mocking `NativeNuntis` in tests, standard RN jest pattern)
+- [x] `addTag`/`addTags` and `removeTag`/`removeTags` both funnel into the Spec's `addTags`/`removeTags` (single-key convenience wrappers around the plural form)
+- [x] `pnpm test` passes
+- [x] Test count: at least 9 tests (one per public method/listener)
 
 **Tests**: unit
 **Gate**: quick
+
+**Status**: ✅ Complete (11 tests)
 
 **Commit**: `feat(sdk): implement public facade API in src/index.tsx`
 
