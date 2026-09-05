@@ -291,13 +291,21 @@ T18 -> T19
 - Skill: NONE
 
 **Done when**:
-- [ ] Every Spec method from T4 has a corresponding one-line delegation in `NuntisModule`
-- [ ] `pnpm run build:android` succeeds (Codegen + Gradle compile)
+- [x] Every Spec method from T4 has a corresponding one-line delegation in `NuntisModule`
+- [x] `pnpm run build:android` succeeds (Codegen + Gradle compile)
 
 **Tests**: none (thin wiring, exercised transitively by T7's tests against `NuntisCore` directly)
 **Gate**: build
 
 **Commit**: `feat(android): wire NuntisModule TurboModule entry to NuntisCore`
+
+**Status**: ✅ Complete
+
+**Deviations**:
+1. `tokenProvider` is a temporary `{ null }` stub — the real FCM token fetch needs `com.google.firebase:firebase-messaging`, which T9 (not T8) adds as a dependency. `NuntisCore` already handles a null token safely (logs, no-ops, verified in T7), so this doesn't crash; auto-registration simply won't fire until T9 lands.
+2. `NUNTIS_API_BASE_URL` is a placeholder (`https://api.nuntis.io`) — neither spec.md nor design.md specifies Nuntis' base host (`Nuntis.initialize` only takes `appId`/`clientKey`). Flagged for the orchestrator to confirm the real host before ship.
+3. Real Android permission-request plumbing (`PermissionAwareActivity`/SDK_INT<33 auto-grant) was implemented here, since no other task in the plan owns it and NuntisCore's `permissionRequester` was designed (T7) to have this injected.
+4. Blocking, pre-existing scaffold defects unrelated to any task's declared file scope, fixed here because they blocked the mandatory `pnpm run build:android` gate for T8 (and would have blocked it for every later Android build-gated task too): `example/android/app/build.gradle`'s `namespace`/`applicationId` was `"nuntisexample"` (no dot — invalid Android package id, failed manifest merge); fixed to `"com.nuntisexample"`. Also removed a stale `android/build/` directory left over from an earlier manual Codegen dry-run (T4), which was colliding with the example app's own CMake target names (`add_library` duplicate-target error) — not a repo file, gitignored, no commit impact.
 
 ---
 
