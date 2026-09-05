@@ -8,12 +8,56 @@
 - (instancetype)init {
     if (self = [super init]) {
         _impl = [NuntisImpl new];
+
+        __weak Nuntis *weakSelf = self;
+        _impl.emitReceivedHandler = ^(NSDictionary *payload) {
+            [weakSelf emitOnNotificationReceived:payload];
+        };
+        _impl.emitClickedHandler = ^(NSDictionary *payload) {
+            [weakSelf emitOnNotificationClicked:payload];
+        };
     }
     return self;
 }
 
-- (NSNumber *)multiply:(double)a b:(double)b {
-    return [_impl multiply:a b:b];
+- (void)initialize:(NSString *)appId
+         clientKey:(NSString *)clientKey
+           baseUrl:(NSString *)baseUrl
+{
+    [_impl initialize:appId clientKey:clientKey baseUrl:baseUrl];
+}
+
+- (void)requestPermission:(RCTPromiseResolveBlock)resolve
+                    reject:(RCTPromiseRejectBlock)reject
+{
+    [_impl requestPermission:^(NSNumber *granted) {
+        resolve(granted);
+    }];
+}
+
+- (void)login:(NSString *)externalUserId
+{
+    [_impl login:externalUserId];
+}
+
+- (void)logout
+{
+    [_impl logout];
+}
+
+- (void)addTags:(NSDictionary *)tags
+{
+    [_impl addTags:tags];
+}
+
+- (void)removeTags:(NSArray *)keys
+{
+    [_impl removeTags:keys];
+}
+
+- (void)setSubscription:(BOOL)enabled
+{
+    [_impl setSubscription:enabled];
 }
 
 - (std::shared_ptr<facebook::react::TurboModule>)getTurboModule:

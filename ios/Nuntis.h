@@ -1,5 +1,5 @@
 #import <NuntisSpec/NuntisSpec.h>
 
-@interface Nuntis : NSObject <NativeNuntisSpec>
+@interface Nuntis : NativeNuntisSpecBase <NativeNuntisSpec>
 
 @end

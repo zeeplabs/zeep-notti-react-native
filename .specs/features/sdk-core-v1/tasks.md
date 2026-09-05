@@ -469,13 +469,20 @@ T18 -> T19
 - Skill: NONE
 
 **Done when**:
-- [ ] Every Spec method from T4 has a corresponding one-line delegation
-- [ ] `pnpm run build:ios` succeeds (real Xcode build)
+- [x] Every Spec method from T4 has a corresponding one-line delegation
+- [x] `pnpm run build:ios` succeeds (real Xcode build)
 
 **Tests**: none (thin wiring, exercised transitively by T13's tests)
 **Gate**: build
 
 **Commit**: `feat(ios): wire Nuntis TurboModule entry to NuntisCore`
+
+**Status**: ✅ Complete. Gate run: `cd example && pnpm run build:ios` (root has no `build:ios` script — it's Turbo-orchestrated per-package via `example/package.json`'s `react-native build-ios --mode Debug`, same shape as the `build:ios`/`build:android` split already documented for Android) — `success Successfully built the app`. `NuntisTests` re-verified green (25/25) after this build.
+
+**Deviations**:
+1. Real APNs registration is wired (`UIApplication.shared.registerForRemoteNotifications()` inside `NuntisCore`'s `tokenProvider`, matching Batch 1's real-FCM-token-fetch bar) rather than a permanent stub — but per iOS's async-only token API (no synchronous getter exists), `tokenProvider`'s callback is intentionally never invoked directly; the actual registration (both first-time and refresh) happens uniformly through `NuntisCore.onTokenRefreshed`, called from T15's `AppDelegate`-forwarded `didRegisterForRemoteNotificationsWithDeviceToken` hook. Flagged here since T14 lands before T15's hook exists, so no token can flow end-to-end until T15 commits — same category of sequencing as Android's T8→T9 FCM dependency.
+2. `ios/Nuntis.h`/`ios/Nuntis.mm` required updating beyond this task's literal `Where` field (only `ios/Nuntis.swift` was named) — the actual T2-confirmed bridging pattern keeps the Obj-C++ shim as the TurboModule entry (`Nuntis.mm`, not a `Nuntis.swift` file), so the real business-logic Swift file is `NuntisImpl.swift` (already spiked in T2, now filled in with the real Spec delegation) and `Nuntis.mm`/`Nuntis.h` were updated to declare/delegate all seven Spec methods plus subclass `NativeNuntisSpecBase` (required for the Codegen event emitters) instead of `NSObject` — matches Android's T8 precedent of a task needing a small necessary addition outside its literal file list to complete the wiring.
+3. `Nuntis.podspec` gained `s.exclude_files = "ios/Tests/**/*"` — the existing `ios/**/*.swift` glob was compiling XCTest-importing test files into the main pod target (which doesn't link XCTest), a real build break caught while running this task's gate, not a hypothetical.
 
 ---
 
