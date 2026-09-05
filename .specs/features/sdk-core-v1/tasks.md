@@ -100,12 +100,14 @@ T18 -> T19
 - Skill: NONE
 
 **Done when**:
-- [ ] `action.yml` installs/caches via pnpm, no `yarn` reference remains
-- [ ] `ci.yml`'s `lint`/`test`/`build-library`/`build-android`/`build-ios` jobs invoke `pnpm`-prefixed commands
-- [ ] A local dry-run of each changed command (`pnpm install --frozen-lockfile`, `pnpm lint`, `pnpm typecheck`, `pnpm test`) succeeds
+- [x] `action.yml` installs/caches via pnpm, no `yarn` reference remains
+- [x] `ci.yml`'s `lint`/`test`/`build-library`/`build-android`/`build-ios` jobs invoke `pnpm`-prefixed commands
+- [x] A local dry-run of each changed command (`pnpm install --frozen-lockfile`, `pnpm lint`, `pnpm typecheck`, `pnpm test`) succeeds
 
 **Tests**: none
 **Gate**: build
+
+**Status**: ✅ Complete
 
 **Commit**: `chore(ci): convert CI and setup action from yarn to pnpm`
 
