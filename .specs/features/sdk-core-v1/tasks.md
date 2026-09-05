@@ -152,11 +152,13 @@ T18 -> T19
 - Skill: NONE
 
 **Done when**:
-- [ ] `design.md`'s iOS APNs delegate hooks component states the confirmed wiring approach and cites the source (doc URL or Context7 resolution) it was confirmed against
-- [ ] If swizzling is confirmed impractical/unsafe for this RN version, the integrator-facing `AppDelegate` forwarding requirement is written down as the fallback plan before Phase 3 starts building against it
+- [x] `design.md`'s iOS APNs delegate hooks component states the confirmed wiring approach and cites the source (doc URL or Context7 resolution) it was confirmed against
+- [x] If swizzling is confirmed impractical/unsafe for this RN version, the integrator-facing `AppDelegate` forwarding requirement is written down as the fallback plan before Phase 3 starts building against it
 
 **Tests**: none (spike, doc-only output)
 **Gate**: none (no code produced)
+
+**Status**: ✅ Complete
 
 **Commit**: `docs(ios): confirm APNs delegate wiring approach (AD-002)`
 

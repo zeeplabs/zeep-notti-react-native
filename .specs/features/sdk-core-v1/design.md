@@ -129,9 +129,20 @@ Each platform independently satisfies the same spec ACs (SDK-01 through SDK-19) 
 ### iOS APNs delegate hooks
 
 - **Purpose**: iOS equivalent of the FCM service — receives the APNs device token (`application(_:didRegisterForRemoteNotificationsWithDeviceToken:)`) and foreground/background/click notification callbacks (`UNUserNotificationCenterDelegate`).
-- **Location**: `ios/` (exact file TBD by the AD-002 spike — likely a class the host app's `AppDelegate` must forward into, since RN's New Architecture template does not support OneSignal-style method swizzling without confirming it's still viable; this is folded into the same AD-002 spike, not a separate unknown).
-- **Dependencies**: host app's own APNs capability/entitlement (documented integrator prerequisite, not something the SDK can provision).
+- **Location**: `ios/` — confirmed by T3 as a public entry point (e.g. `Nuntis.didRegisterForRemoteNotifications(deviceToken:)` / a `UNUserNotificationCenterDelegate`-conforming helper) that the **host app's own `AppDelegate` must call**, not a swizzled/zero-code hook (see T3 confirmation below).
+- **Dependencies**: host app's own APNs capability/entitlement (documented integrator prerequisite, not something the SDK can provision); host app's own `AppDelegate` forwarding the APNs callbacks into the SDK (T3 — a second, code-level integrator prerequisite beyond the entitlement).
 - **Reuses**: n/a (new).
+
+**APNs wiring approach — confirmed T3 (2026-09-05):**
+
+Context7 MCP was unavailable in this environment (same as T2), so this spike used web search over community/vendor sources — no single official Apple or Meta document states "third-party SDKs should/shouldn't swizzle push delegate methods," since swizzling is a runtime technique outside what either vendor's official app-lifecycle docs describe.
+
+Findings that drove the decision:
+- Swizzling `AppDelegate`/`UNUserNotificationCenterDelegate` methods to get zero-integrator-code push registration is a real, working pattern — used by Firebase (`GoogleUtilities/AppDelegateSwizzler`), Leanplum, and others.
+- It is also a documented source of real conflicts: Firebase ships a documented opt-out (`FirebaseAppDelegateProxyEnabled = NO`) precisely because its own swizzling proxy can consume APNs callbacks before the host app or another SDK sees them; Bloomreach's SDK dropped swizzling-based auto-registration for reliability reasons (both found via web search, cited in this repo's T3 research).
+- Whether swizzling interacts safely with RN's New Architecture Bridgeless mode (default since RN 0.74) is **not confirmed by any source found** — this was the exact gap AD-002 flagged as needing confirmation before Phase 3 could safely build against it, and it remains unconfirmed after this spike.
+
+**Decision**: iOS APNs wiring requires explicit `AppDelegate` forwarding by the host app — no method swizzling. This is the conservative choice given (a) the crash-safety/reliability bar this SDK's spec sets, (b) a real precedent of swizzling-based conflicts among push SDKs, and (c) no source confirming swizzling's interaction with Bridgeless mode. It trades OneSignal-style zero-code integration for a small, explicit, documented `AppDelegate` snippet (written up in T19's README) — the same trade Apple's own supported integration path already assumes (delegate conformance is how any push provider is meant to be wired). Phase 3 (T15) implements the SDK's side of this contract: a small set of public static/class methods the host app's `AppDelegate` calls into, not a swizzled hook.
 
 **Swift Turbo Module bridging — confirmed T2 (2026-09-05):**
 
