@@ -692,6 +692,38 @@ class NuntisCoreTest {
     assertEquals(3, server.requestCount)
     assertEquals(mapOf("cohort" to "beta"), store.getTags())
   }
+
+  @Test
+  fun `a 2xx registration response that cannot be parsed still leaves the foreground retry armed`() {
+    // A captive portal / proxy answering the registration POST with HTTP 200
+    // and an HTML body. The parse failure is not an IOException, so before the
+    // fix it unwound past every branch that assigns registrationState, parking
+    // it at IN_FLIGHT - which onAppForegrounded early-returns on, permanently
+    // disabling the only retry path and stranding queued mutations.
+    server.enqueue(
+      MockResponse().setResponseCode(200).setBody("<html><body>Sign in to the network</body></html>")
+    )
+    val core = newCore()
+
+    core.initialize("app-1", "key", validBaseUrl)
+    core.login("user-42")
+    awaitIdle()
+
+    assertEquals(1, server.requestCount)
+    assertEquals(null, store.getDeviceId())
+    assertEquals(null, store.getExternalUserId())
+
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    core.onAppForegrounded()
+    awaitIdle()
+
+    // Registration recovered on the next foreground, and the mutation that was
+    // queued behind it finally flushed.
+    assertEquals(3, server.requestCount)
+    assertEquals("device-1", store.getDeviceId())
+    assertEquals("user-42", store.getExternalUserId())
+  }
 }
 
 /** Same in-memory SharedPreferences fake used by NuntisDeviceStoreTest. */

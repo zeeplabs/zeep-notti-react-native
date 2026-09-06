@@ -132,6 +132,30 @@ class NuntisApiClientTest {
   }
 
   @Test
+  fun `a 2xx whose body is not JSON is a terminal failure, not a thrown exception`() {
+    // Captive portal / proxy shape: HTTP 200, HTML body.
+    server.enqueue(
+      MockResponse().setResponseCode(200).setBody("<html><body>Sign in to the network</body></html>")
+    )
+    // Only consumed if the client wrongly retried a non-retryable body.
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+
+    val result = client.createOrUpdateDevice(token = "t", platform = "android")
+
+    assertTrue("expected a Failure, got $result", result is ApiResult.Failure)
+    assertEquals(1, server.requestCount)
+  }
+
+  @Test
+  fun `a 2xx JSON body missing the id field is a terminal failure`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"device_id":"device-1"}"""))
+
+    val result = client.createOrUpdateDevice(token = "t", platform = "android")
+
+    assertTrue("expected a Failure, got $result", result is ApiResult.Failure)
+  }
+
+  @Test
   fun `a map field is stored as a nested JSONObject, not as a raw Map`() {
     val json = client.buildPatchJson("fcm-token", mapOf("tags" to mapOf("plan" to "vip")))
 

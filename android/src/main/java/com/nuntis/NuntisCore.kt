@@ -190,21 +190,34 @@ class NuntisCore(
    */
   private fun registerDevice(client: NuntisApiClient, token: String) {
     synchronized(mutationLock) {
-      when (val result = client.createOrUpdateDevice(token, platform)) {
-        is ApiResult.Success -> {
-          deviceStore.setDeviceId(result.response.id)
-          deviceStore.setLastToken(token)
-          deviceStore.setTags(result.response.tags)
-          registrationState = RegistrationState.REGISTERED
-          flushPendingMutations()
+      try {
+        when (val result = client.createOrUpdateDevice(token, platform)) {
+          is ApiResult.Success -> {
+            deviceStore.setDeviceId(result.response.id)
+            deviceStore.setLastToken(token)
+            deviceStore.setTags(result.response.tags)
+            registrationState = RegistrationState.REGISTERED
+            flushPendingMutations()
+          }
+          is ApiResult.Failure -> {
+            registrationState = RegistrationState.FAILED
+            logger(
+              "Nuntis.initialize: device registration failed: ${result.message} " +
+                "- retrying on the next app foreground or token refresh"
+            )
+          }
         }
-        is ApiResult.Failure -> {
-          registrationState = RegistrationState.FAILED
-          logger(
-            "Nuntis.initialize: device registration failed: ${result.message} " +
-              "- retrying on the next app foreground or token refresh"
-          )
-        }
+      } catch (t: Throwable) {
+        // Anything unexpected escaping here must still land the state machine
+        // in a retryable state: [onAppForegrounded] early-returns while
+        // IN_FLIGHT, so a throw that skipped both branches above would
+        // permanently disable the foreground retry and strand every queued
+        // mutation for the life of the process.
+        registrationState = RegistrationState.FAILED
+        logger(
+          "Nuntis.initialize: device registration failed unexpectedly: ${t.message} " +
+            "- retrying on the next app foreground or token refresh"
+        )
       }
     }
   }

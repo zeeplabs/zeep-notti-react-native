@@ -5,6 +5,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
 import java.io.IOException
 
@@ -114,7 +115,19 @@ class NuntisApiClient(
       try {
         httpClient.newCall(request).execute().use { response ->
           if (response.isSuccessful) {
-            return ApiResult.Success(parseDeviceResponse(response.body?.string().orEmpty()))
+            val bodyString = response.body?.string().orEmpty()
+            return try {
+              ApiResult.Success(parseDeviceResponse(bodyString))
+            } catch (e: JSONException) {
+              // A 2xx that is not the documented device JSON: a captive
+              // portal/proxy answering with HTML, or a renamed field.
+              // JSONException is not an IOException, so without this it would
+              // escape the retry loop entirely and unwind into NuntisCore,
+              // leaving registration parked mid-flight forever. Reported as a
+              // normal terminal failure instead, so the caller's failure
+              // handling (and the app-foreground retry) applies.
+              ApiResult.Failure("malformed response body: ${e.message}")
+            }
           }
           if (response.code < 500) {
             // 4xx: not retried, terminal failure.
