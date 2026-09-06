@@ -189,6 +189,75 @@ final class NuntisApiClientTests: XCTestCase {
     }
   }
 
+  func test_patchAcceptsA2xxAcknowledgementWithNoDeviceObjectWithoutRetrying() {
+    // PATCH updates an existing device: the id is the caller's own input, not
+    // something the response has to hand back. `204 No Content`, an empty 200
+    // and a bare ACK object are all normal REST answers to an update, and
+    // rejecting them cost five retries plus the local persistence of
+    // external_user_id/tags.
+    let acknowledgements: [(Int, String)] = [
+      (204, ""),
+      (200, ""),
+      (200, #"{"ok":true}"#),
+      (202, "OK"),
+    ]
+
+    for (status, body) in acknowledgements {
+      StubURLProtocol.reset()
+      sleeps = []
+      StubURLProtocol.enqueue(.status(status, body: body))
+
+      let result = client.patchDevice(deviceId: "device-1", token: "t", fields: ["external_user_id": "user-42"])
+
+      guard case .success(let response) = result else {
+        return XCTFail("PATCH answered \(status) '\(body)' must be a success")
+      }
+      XCTAssertEqual(response.id, "device-1", "the id stays the one that was patched")
+      XCTAssertEqual(
+        StubURLProtocol.recordedRequests().count, 1,
+        "\(status) '\(body)' must not be retried"
+      )
+      XCTAssertEqual(sleeps, [], "\(status) '\(body)' must not back off")
+    }
+  }
+
+  func test_patchAcknowledgedWithNoBodyReportsBackTheTagsItJustSent() {
+    // NuntisCore writes `response.tags` into its local cache after a tag
+    // mutation — an empty ACK must not read as "the device now has no tags".
+    StubURLProtocol.enqueue(.status(204))
+
+    let result = client.patchDevice(deviceId: "device-1", token: "t", fields: ["tags": ["plan": "vip"]])
+
+    guard case .success(let response) = result else { return XCTFail("expected success") }
+    XCTAssertEqual(response.tags, ["plan": "vip"])
+  }
+
+  func test_patchPrefersTheDeviceObjectWhenTheBackendDoesReturnOne() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{"plan":"gold"}}"#))
+
+    let result = client.patchDevice(deviceId: "device-1", token: "t", fields: ["tags": ["plan": "vip"]])
+
+    guard case .success(let response) = result else { return XCTFail("expected success") }
+    XCTAssertEqual(response.tags, ["plan": "gold"], "the server's view of the tags wins over the sent one")
+  }
+
+  func test_patchStillTreatsA4xxAsTerminalAndA5xxAsRetriable() {
+    StubURLProtocol.enqueue(.status(403))
+    guard case .failure = client.patchDevice(deviceId: "device-1", token: "t", fields: [:]) else {
+      return XCTFail("a 403 PATCH is still a failure")
+    }
+    XCTAssertEqual(StubURLProtocol.recordedRequests().count, 1)
+
+    StubURLProtocol.reset()
+    sleeps = []
+    for _ in 0..<5 { StubURLProtocol.enqueue(.status(503)) }
+    guard case .failure = client.patchDevice(deviceId: "device-1", token: "t", fields: [:]) else {
+      return XCTFail("a 503 PATCH is still a failure")
+    }
+    XCTAssertEqual(StubURLProtocol.recordedRequests().count, 5)
+    XCTAssertEqual(sleeps, [2000, 4000, 8000, 16000])
+  }
+
   func test_anUnparseable2xxThatLaterTurnsIntoAValidBodySucceeds() {
     StubURLProtocol.enqueue(.status(200, body: "<html>captive portal</html>"))
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{"plan":"vip"}}"#))

@@ -239,6 +239,30 @@ final class NuntisCoreTests: XCTestCase {
     XCTAssertEqual(store.getExternalUserId(), "user-42")
   }
 
+  func test_aBodylessPatchAckStillPersistsTheMutationLocallyAndIsNotRetried() {
+    // A backend that answers PATCH with `204 No Content` is doing nothing
+    // wrong. Demanding a full device object back made every login/addTags/
+    // setSubscription against such a backend burn five attempts and persist
+    // nothing locally.
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
+    StubURLProtocol.enqueue(.status(204)) // login
+    StubURLProtocol.enqueue(.status(204)) // addTags
+    StubURLProtocol.enqueue(.status(204)) // setSubscription
+    let core = newCore()
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    core.login("user-42")
+    core.mutateTags(add: ["plan": "vip"], remove: nil)
+    core.setSubscription(true)
+    drain(core)
+
+    XCTAssertEqual(StubURLProtocol.recordedRequests().count, 4, "register + 3 PATCHes, none retried")
+    XCTAssertEqual(store.getExternalUserId(), "user-42")
+    XCTAssertEqual(store.getTags(), ["plan": "vip"], "an empty ACK must not wipe the tag cache")
+    XCTAssertTrue(store.getSubscribed())
+  }
+
   func test_logoutClearsTheLocallyHeldExternalUserIdWithoutSendingAnyPatch() {
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))

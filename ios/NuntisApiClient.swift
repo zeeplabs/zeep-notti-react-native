@@ -99,7 +99,10 @@ public class NuntisApiClient {
     request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
     request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
-    return executeWithRetry(request)
+    // Registration is the one call that *depends* on the response body: the
+    // `id` it returns is the resource every later PATCH is addressed to, so a
+    // 2xx without a device object is not a usable success.
+    return executeWithRetry(request, parseSuccess: parseDeviceResponse)
   }
 
   /// PATCH always includes the cached `token` field (AD-009 ownership proof).
@@ -116,10 +119,26 @@ public class NuntisApiClient {
     request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
     request.httpBody = try? JSONSerialization.data(withJSONObject: json)
 
-    return executeWithRetry(request)
+    // Unlike registration, PATCH creates nothing: the caller already knows the
+    // device id it addressed and the field values it just applied. A REST
+    // backend is free to acknowledge it with `204 No Content`, an empty body
+    // or a bare `{"ok":true}`, so requiring a full device object here turned
+    // a perfectly good update into five retries and dropped the local
+    // persistence of `external_user_id`/tags. Any 2xx is accepted; the body is
+    // used when it happens to carry a device object, and otherwise the request
+    // itself is the source of truth.
+    return executeWithRetry(request) { [weak self] data in
+      if let device = self?.parseDeviceResponse(data) { return device }
+      return DeviceResponse(id: deviceId, tags: (fields["tags"] as? [String: String]) ?? [:])
+    }
   }
 
-  private func executeWithRetry(_ request: URLRequest) -> ApiResult {
+  /// `parseSuccess` turns a 2xx body into the `DeviceResponse` to report, or
+  /// nil to treat that 2xx as a retriable failure.
+  private func executeWithRetry(
+    _ request: URLRequest,
+    parseSuccess: (Data) -> DeviceResponse?
+  ) -> ApiResult {
     var attempt = 0
     var delayMs = Self.baseDelayMs
     var lastError = "unknown error"
@@ -132,13 +151,14 @@ public class NuntisApiClient {
         lastError = error.localizedDescription
       } else if let http = response as? HTTPURLResponse {
         if (200..<300).contains(http.statusCode) {
-          // A 2xx whose body is not a device object (captive portal/proxy HTML,
-          // a renamed/missing `id` field, truncated JSON) is *not* a success:
-          // reporting one made the caller persist an empty deviceId and wipe
-          // its local tags, then build every later request against
-          // `.../devices/` — a wrong resource. Treated as a retriable failure
-          // instead, exactly like a 5xx.
-          if let device = parseDeviceResponse(data ?? Data()) {
+          // What a 2xx body has to contain is per-endpoint (`parseSuccess`).
+          // For registration, a body that is not a device object (captive
+          // portal/proxy HTML, a renamed/missing `id` field, truncated JSON)
+          // is *not* a success: reporting one made the caller persist an empty
+          // deviceId and wipe its local tags, then build every later request
+          // against `.../devices/` — a wrong resource. Such a 2xx is treated
+          // as a retriable failure instead, exactly like a 5xx.
+          if let device = parseSuccess(data ?? Data()) {
             return .success(device)
           }
           lastError = "HTTP \(http.statusCode) with an unparseable device response body"
