@@ -1,8 +1,47 @@
 # react-native-nuntis
 
+[![CI](https://github.com/zeeplabs/zeep-nuntis-react-native/actions/workflows/ci.yml/badge.svg)](https://github.com/zeeplabs/zeep-nuntis-react-native/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/react-native-nuntis.svg)](https://www.npmjs.com/package/react-native-nuntis)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
+![Platforms](https://img.shields.io/badge/platform-Android%20%7C%20iOS-lightgrey.svg)
+
 Official React Native SDK for [Nuntis](https://github.com/zeeplabs/zeep-nuntis) push notifications (FCM + APNs). Handles device registration, tags, external user id, subscription state, and notification-received/clicked events — no hand-rolled REST calls required.
 
 Nuntis is self-hosted or SaaS per deployment, so the SDK never hardcodes a host: you always pass your own instance's `baseUrl` to `initialize`.
+
+## Table of contents
+
+- [Features](#features)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Usage](#usage)
+- [API reference](#api-reference)
+- [Bare React Native setup](#bare-react-native-setup)
+- [Expo setup](#expo-setup)
+- [Manual smoke testing](#manual-smoke-testing)
+- [Contributing](#contributing)
+- [Security](#security)
+- [Changelog](#changelog)
+- [License](#license)
+
+## Features
+
+- 📲 **Device registration** — FCM (Android) / APNs (iOS) token fetched and registered natively, no extra push library required in the host app.
+- 🏷️ **Tags & segmentation** — add/remove tags for Nuntis Segments, merged and persisted server-side.
+- 👤 **External user id** — associate/clear the device with your own user id (`login`/`logout`).
+- 🔕 **Subscription control** — enable/disable delivery without unregistering the device.
+- 🔔 **Notification events** — `notificationReceived` (foreground) and `notificationClicked` (warm), plus `getInitialNotificationClick()` for cold-start taps.
+- 🧩 **Turbo Module (New Architecture)** — thin TypeScript facade over native Kotlin/Swift; works even if the JS thread isn't running yet.
+- ⚙️ **Expo config plugin included** — works in bare React Native and Expo (dev client/prebuild) with no extra native-config package.
+- 🔁 **Safe by default** — mutations (tags, subscription, login) are serialized client-side; retried with exponential backoff on transient failure.
+
+## Requirements
+
+- React Native with the [New Architecture](https://reactnative.dev/architecture/landing-page) enabled (Turbo Modules).
+- Android: `minSdkVersion` compatible with `com.google.firebase:firebase-messaging` (Firebase Cloud Messaging configured in your Firebase project).
+- iOS: Push Notifications capability enabled for your app target (APNs).
+- A running [Nuntis](https://github.com/zeeplabs/zeep-nuntis) instance (self-hosted or SaaS) and an App's `appId`/`clientKey`.
 
 ## Installation
 
@@ -10,7 +49,7 @@ Nuntis is self-hosted or SaaS per deployment, so the SDK never hardcodes a host:
 npm install react-native-nuntis
 ```
 
-This installs the Turbo Module (New Architecture) for both bare React Native and Expo. Native setup differs by path — see below.
+This installs the Turbo Module (New Architecture) for both bare React Native and Expo. Native setup differs by path — see [Bare React Native setup](#bare-react-native-setup) / [Expo setup](#expo-setup) below.
 
 ## Usage
 
@@ -61,7 +100,7 @@ Nuntis.getInitialNotificationClick().then((payload) => {
 });
 ```
 
-### API reference
+## API reference
 
 | Method | Description |
 | --- | --- |
@@ -171,23 +210,32 @@ The Android runtime-permission declaration and the iOS `AppDelegate` forwarding 
 3. Run `pnpm example android` / `pnpm example ios`, or `pnpm run build:android` / `pnpm run build:ios` for a release-shaped build.
 4. Tap the example screen's buttons and confirm a new Device row appears in Nuntis' admin screen, tags/subscription reflect your taps, and notifications sent from Nuntis trigger the `notificationReceived`/`notificationClicked` console logs.
 
-## Sanity gate
+## Contributing
 
-Before shipping a change, all of the following must pass:
+See the [contributing guide](CONTRIBUTING.md) to learn how to contribute to the repository and the development workflow, including:
+
+- [Development workflow](CONTRIBUTING.md#development-workflow)
+- [Sanity gate / native tests](CONTRIBUTING.md#native-tests)
+- [Sending a pull request](CONTRIBUTING.md#sending-a-pull-request)
+- [Code of conduct](CODE_OF_CONDUCT.md)
+
+Before opening a PR, make sure the full gate passes:
 
 ```sh
 pnpm typecheck && pnpm lint && pnpm test && pnpm run build:android && pnpm run build:ios
 ```
 
-## Contributing
+## Security
 
-- [Development workflow](CONTRIBUTING.md#development-workflow)
-- [Sending a pull request](CONTRIBUTING.md#sending-a-pull-request)
-- [Code of conduct](CODE_OF_CONDUCT.md)
+Found a vulnerability? Please **don't** open a public issue — see [SECURITY.md](SECURITY.md) for how to report it privately.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for released and upcoming changes.
 
 ## License
 
-MIT
+[MIT](LICENSE)
 
 ---
 
