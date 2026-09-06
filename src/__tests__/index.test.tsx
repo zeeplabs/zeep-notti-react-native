@@ -7,6 +7,7 @@ const mockLogout = jest.fn();
 const mockAddTags = jest.fn();
 const mockRemoveTags = jest.fn();
 const mockSetSubscription = jest.fn();
+const mockGetInitialNotificationClick = jest.fn();
 const mockOnNotificationReceived = jest.fn();
 const mockOnNotificationClicked = jest.fn();
 
@@ -20,6 +21,8 @@ jest.mock('../NativeNuntis', () => ({
     addTags: (...args: unknown[]) => mockAddTags(...args),
     removeTags: (...args: unknown[]) => mockRemoveTags(...args),
     setSubscription: (...args: unknown[]) => mockSetSubscription(...args),
+    getInitialNotificationClick: (...args: unknown[]) =>
+      mockGetInitialNotificationClick(...args),
     onNotificationReceived: (...args: unknown[]) =>
       mockOnNotificationReceived(...args),
     onNotificationClicked: (...args: unknown[]) =>
@@ -83,6 +86,22 @@ describe('Nuntis facade', () => {
   it('User.removeTags calls NativeNuntis.removeTags with the full key list', () => {
     Nuntis.User.removeTags(['plan', 'region']);
     expect(mockRemoveTags).toHaveBeenCalledWith(['plan', 'region']);
+  });
+
+  it('getInitialNotificationClick calls NativeNuntis.getInitialNotificationClick and returns its result', async () => {
+    const payload = { title: 'hi', body: 'there', data: {} };
+    mockGetInitialNotificationClick.mockReturnValueOnce(
+      Promise.resolve(payload)
+    );
+    const result = await Nuntis.getInitialNotificationClick();
+    expect(mockGetInitialNotificationClick).toHaveBeenCalledWith();
+    expect(result).toBe(payload);
+  });
+
+  it('getInitialNotificationClick resolves null when the app was not cold-launched by a notification', async () => {
+    mockGetInitialNotificationClick.mockReturnValueOnce(Promise.resolve(null));
+    const result = await Nuntis.getInitialNotificationClick();
+    expect(result).toBeNull();
   });
 
   it("addEventListener('notificationReceived', cb) subscribes via NativeNuntis.onNotificationReceived", () => {

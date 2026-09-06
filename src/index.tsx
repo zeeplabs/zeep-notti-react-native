@@ -54,6 +54,18 @@ function setSubscription(enabled: boolean): void {
 }
 
 /**
+ * Resolves with the notification that cold-launched the app (the user
+ * tapped it while the app wasn't running), or `null` if the app was not
+ * launched this way. Call this once on startup, before or alongside
+ * wiring `addEventListener('notificationClicked', ...)` - it is the only
+ * reliable way to observe that specific click, since no JS listener can
+ * exist early enough to catch it via the event instead.
+ */
+function getInitialNotificationClick(): Promise<NotificationPayload | null> {
+  return NativeNuntis.getInitialNotificationClick();
+}
+
+/**
  * Subscribes to a Codegen-declared native event. Mirrors the Spec's
  * `onNotificationReceived`/`onNotificationClicked` EventEmitter properties
  * (each already a directly-callable `(handler) => EventSubscription`
@@ -79,6 +91,7 @@ export const Nuntis = {
   login,
   logout,
   setSubscription,
+  getInitialNotificationClick,
   addEventListener,
   User,
 };
