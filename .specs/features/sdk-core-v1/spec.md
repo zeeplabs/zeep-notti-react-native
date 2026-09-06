@@ -118,27 +118,27 @@ Nuntis (self-hosted/SaaS push infra, `zeep-nuntis`) has a `Client key` auth sche
 
 | Requirement ID | Story | Phase | Status |
 | --- | --- | --- | --- |
-| SDK-01 | P1: Init & auto-register | Design | Pending |
-| SDK-02 | P1: Init & auto-register | Design | Pending |
-| SDK-03 | P1: Init & auto-register | Design | Pending |
-| SDK-04 | P1: Init & auto-register | Design | Pending |
-| SDK-05 | P1: Init & auto-register | Design | Pending |
-| SDK-06 | P1: Init & auto-register | Design | Pending |
-| SDK-07 | P1: Init & auto-register | Design | Pending |
-| SDK-08 | P2: Explicit permission | Design | Pending |
-| SDK-09 | P2: Explicit permission | Design | Pending |
-| SDK-10 | P2: Explicit permission | Design | Pending |
-| SDK-11 | P2: Explicit permission | Design | Pending |
-| SDK-12 | P3: Tags/id/subscription/listeners | Design | Pending |
-| SDK-13 | P3: Tags/id/subscription/listeners | Design | Pending |
-| SDK-14 | P3: Tags/id/subscription/listeners | Design | Pending |
-| SDK-15 | P3: Tags/id/subscription/listeners | Design | Pending |
-| SDK-16 | P3: Tags/id/subscription/listeners | Design | Pending |
-| SDK-17 | P3: Tags/id/subscription/listeners | Design | Pending |
-| SDK-18 | P3: Tags/id/subscription/listeners | Design | Pending |
-| SDK-19 | P3: Tags/id/subscription/listeners | Design | Pending |
+| SDK-01 | P1: Init & auto-register | Execute | ✅ Verified |
+| SDK-02 | P1: Init & auto-register | Execute | ✅ Verified |
+| SDK-03 | P1: Init & auto-register | Execute | ✅ Verified |
+| SDK-04 | P1: Init & auto-register | Execute | ❌ Needs Fix (real missing-native-prerequisite path untested on both platforms) |
+| SDK-05 | P1: Init & auto-register | Execute | ✅ Verified |
+| SDK-06 | P1: Init & auto-register | Execute | ✅ Verified (declared scope: orchestration layer only, real OS token-refresh hooks untested) |
+| SDK-07 | P1: Init & auto-register | Execute | ✅ Verified |
+| SDK-08 | P2: Explicit permission | Execute | ⚠️ Spec-precision gap (declared scope: orchestration proven, real OS prompt call untested on both platforms) |
+| SDK-09 | P2: Explicit permission | Execute | ✅ Verified |
+| SDK-10 | P2: Explicit permission | Execute | ✅ Verified |
+| SDK-11 | P2: Explicit permission | Execute | ✅ Verified |
+| SDK-12 | P3: Tags/id/subscription/listeners | Execute | ⚠️ Spec-precision gap (iOS: indirect evidence only) |
+| SDK-13 | P3: Tags/id/subscription/listeners | Execute | ⚠️ Spec-precision gap (iOS: indirect evidence only) |
+| SDK-14 | P3: Tags/id/subscription/listeners | Execute | ✅ Verified |
+| SDK-15 | P3: Tags/id/subscription/listeners | Execute | ✅ Verified |
+| SDK-16 | P3: Tags/id/subscription/listeners | Execute | ✅ Verified |
+| SDK-17 | P3: Tags/id/subscription/listeners | Execute | ⚠️ Spec-precision gap (declared scope: parsing proven, emission wiring untested on both platforms) |
+| SDK-18 | P3: Tags/id/subscription/listeners | Execute | ✅ Verified |
+| SDK-19 | P3: Tags/id/subscription/listeners | Execute | ✅ Verified |
 
-**Coverage:** 19 total, 0 mapped to tasks, 19 unmapped ⚠️ (expected — Design/Tasks phases haven't run yet)
+**Coverage:** 19 total, 19 mapped to tasks. 14 Verified, 4 spec-precision gaps (SDK-08/12/13/17, declared-scope orchestration/parsing-only coverage per the Verifier's report), 1 Needs Fix (SDK-04, the real missing-native-prerequisite path). Per `.specs/features/sdk-core-v1/validation.md` (fix batch, verification round 1): SDK-11/14/15/16/18 moved from Needs Fix to Verified after native-layer test coverage landed.
 
 ---
 
