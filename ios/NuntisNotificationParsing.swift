@@ -33,11 +33,53 @@ public func parseUserInfo(_ userInfo: [AnyHashable: Any]) -> ParsedNotification 
 
   var data: [String: String] = [:]
   for (key, value) in userInfo {
-    guard let key = key as? String, key != "aps" else { continue }
-    data[key] = "\(value)"
+    guard let key = key as? String, !isInternalTransportKey(key) else { continue }
+    guard let stringValue = stringifyPayloadValue(value) else { continue }
+    data[key] = stringValue
   }
 
   return ParsedNotification(title: title, body: body, data: data)
+}
+
+/// Transport metadata the OS/FCM injects into the payload, which must never
+/// reach `payload.data` — that dictionary is the integrator's own custom data
+/// and nothing else. Same policy as Android's `parseClickIntentExtras`
+/// (`NuntisActivityLifecycleListener.kt`), expressed with the key names APNs
+/// and the FCM iOS SDK actually use, so the same push yields the same
+/// `payload.data` on both platforms.
+private let internalKeyPrefixes = ["gcm.", "google.", "aps."]
+private let internalKeys: Set<String> = [
+  "aps", "from", "collapse_key", "fcm_options", "content-available",
+  "mutable-content", "content_available", "mutable_content",
+]
+
+private func isInternalTransportKey(_ key: String) -> Bool {
+  if internalKeys.contains(key) { return true }
+  return internalKeyPrefixes.contains { key.hasPrefix($0) }
+}
+
+/// Renders a non-`String` payload value the way an integrator would expect to
+/// read it back in JS. Swift's default interpolation prints debug descriptions
+/// (`{\n    a = 1;\n}` for a nested dictionary, `Optional("x")`, …) — nested
+/// containers are re-encoded as JSON instead, and booleans as `true`/`false`
+/// rather than `1`/`0`. Returns nil for values with no sensible string form
+/// (`NSNull`), which are dropped.
+private func stringifyPayloadValue(_ value: Any) -> String? {
+  if let string = value as? String { return string }
+  if value is NSNull { return nil }
+  if let number = value as? NSNumber {
+    if CFGetTypeID(number as CFTypeRef) == CFBooleanGetTypeID() {
+      return number.boolValue ? "true" : "false"
+    }
+    return number.stringValue
+  }
+  if let bool = value as? Bool { return bool ? "true" : "false" }
+  if JSONSerialization.isValidJSONObject(value),
+    let data = try? JSONSerialization.data(withJSONObject: value),
+    let json = String(data: data, encoding: .utf8) {
+    return json
+  }
+  return String(describing: value)
 }
 
 public extension ParsedNotification {
