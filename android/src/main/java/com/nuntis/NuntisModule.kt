@@ -32,8 +32,9 @@ class NuntisModule(reactContext: ReactApplicationContext) :
    * once per process by [NuntisInitProvider], not here: this module is lazy
    * (so on a cold start it does not exist yet when the launching Activity
    * reads its intent) and is reconstructed on every RN reload. This instance
-   * only attaches itself as the relay's current emitter, picking up any click
-   * buffered before it existed.
+   * only attaches itself as the relay's current emitter, for clicks that land
+   * while JS is alive; a click buffered before it existed is handed to JS by
+   * [getInitialNotificationClick], not replayed as an event.
    */
   private val clickEmitter: (ParsedNotification) -> Unit = { parsed ->
     emitClicked(parsed.toWritableMap())
@@ -129,6 +130,19 @@ class NuntisModule(reactContext: ReactApplicationContext) :
 
   override fun setSubscription(enabled: Boolean) {
     core.setSubscription(enabled)
+  }
+
+  /**
+   * Hands JS the notification tap that cold-launched the process, once.
+   * Pull-based on purpose: the tap is detected by [NuntisInitProvider]'s
+   * Activity-lifecycle hook before this module exists, and this module is
+   * constructed while the JS bundle is still being evaluated - both strictly
+   * before any `addEventListener('notificationClicked', …)` in a `useEffect`
+   * runs, so emitting it as an event would deliver it to nobody.
+   */
+  override fun getInitialNotificationClick(promise: Promise?) {
+    val click = NuntisNotificationClickRelay.takePending()
+    promise?.resolve(click?.toWritableMap())
   }
 
   /**

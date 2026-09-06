@@ -14,6 +14,7 @@ import com.facebook.react.turbomodule.core.interfaces.CallInvokerHolder
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -31,7 +32,7 @@ import org.robolectric.annotation.Config
  * them are reachable from the below-API-33 path this test exercises.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [32])
+@Config(sdk = [32], shadows = [ShadowArguments::class])
 class NuntisModuleTest {
 
   @Test
@@ -82,14 +83,93 @@ class NuntisModuleTest {
 
     assertNull(NuntisModule.activeCore)
 
-    val delivered = mutableListOf<ParsedNotification>()
     NuntisNotificationClickRelay.emit(ParsedNotification("Hello", null, emptyMap()))
-    NuntisNotificationClickRelay.attach { delivered.add(it) }
 
-    // Buffered rather than delivered to the dead module: it detached itself.
-    assertEquals(listOf("Hello"), delivered.map { it.title })
+    // Buffered rather than pushed at the dead module: it detached itself, so
+    // the relay had no emitter left to hand the click to.
+    assertEquals("Hello", NuntisNotificationClickRelay.takePending()?.title)
   }
 
+  @Test
+  fun `getInitialNotificationClick hands over a cold-start click buffered before the module existed`() {
+    NuntisNotificationClickRelay.reset()
+    // The cold-start tap: detected by the Activity-lifecycle hook that
+    // NuntisInitProvider installs, long before this lazy TurboModule exists.
+    NuntisNotificationClickRelay.emit(
+      ParsedNotification("Hello", "World", mapOf("plan" to "vip"))
+    )
+
+    val module = NuntisModule(FakeReactApplicationContext())
+
+    val first = RecordingPromise()
+    module.getInitialNotificationClick(first)
+
+    val payload = first.resolved as WritableMap
+    assertEquals("Hello", payload.getString("title"))
+    assertEquals("World", payload.getString("body"))
+    assertEquals("vip", payload.getMap("data")?.getString("plan"))
+
+    // Consumed: a second pull with no new cold start resolves null, so a
+    // remounting JS component can't re-navigate off a stale tap.
+    val second = RecordingPromise()
+    module.getInitialNotificationClick(second)
+    assertNull(second.resolved)
+    assertTrue(second.didResolve)
+  }
+
+  @Test
+  fun `constructing the module does not replay the buffered cold-start click as an event`() {
+    NuntisNotificationClickRelay.reset()
+    NuntisNotificationClickRelay.emit(ParsedNotification("Hello", null, emptyMap()))
+
+    // Constructing the module attaches its emitter. If that replayed the
+    // buffered click, FakeReactApplicationContext's event-emitter plumbing
+    // would be hit here - and, worse in production, the event would fire
+    // before any JS `addEventListener` had run and be lost.
+    val module = NuntisModule(FakeReactApplicationContext())
+
+    // Still there, i.e. nothing consumed or emitted it behind JS' back.
+    val promise = RecordingPromise()
+    module.getInitialNotificationClick(promise)
+    assertEquals("Hello", (promise.resolved as WritableMap).getString("title"))
+  }
+
+  @Test
+  fun `getInitialNotificationClick resolves null when the app was not launched from a notification`() {
+    NuntisNotificationClickRelay.reset()
+    val module = NuntisModule(FakeReactApplicationContext())
+
+    val promise = RecordingPromise()
+    module.getInitialNotificationClick(promise)
+
+    assertTrue(promise.didResolve)
+    assertNull(promise.resolved)
+  }
+
+}
+
+/** Captures what a Spec method resolved, since RN ships no test Promise. */
+private class RecordingPromise : Promise {
+  var didResolve = false
+    private set
+  var resolved: Any? = null
+    private set
+
+  override fun resolve(value: Any?) {
+    didResolve = true
+    resolved = value
+  }
+
+  override fun reject(code: String?, message: String?) = Unit
+  override fun reject(code: String?, throwable: Throwable?) = Unit
+  override fun reject(code: String?, message: String?, throwable: Throwable?) = Unit
+  override fun reject(throwable: Throwable) = Unit
+  override fun reject(throwable: Throwable, userInfo: WritableMap) = Unit
+  override fun reject(code: String?, userInfo: WritableMap) = Unit
+  override fun reject(code: String?, throwable: Throwable?, userInfo: WritableMap) = Unit
+  override fun reject(code: String?, message: String?, userInfo: WritableMap) = Unit
+  override fun reject(code: String?, message: String?, throwable: Throwable?, userInfo: WritableMap?) = Unit
+  override fun reject(message: String) = Unit
 }
 
 /**

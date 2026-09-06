@@ -8,9 +8,17 @@ package com.nuntis
  * notification tap the host Activity's `onCreate`/`onResume` - where the
  * launch intent's extras live - run before [NuntisModule] is ever constructed
  * (spec P3-AC7, the killed-app click path). The click is therefore buffered
- * here and delivered as soon as a module attaches, in the shape of
- * `getInitialNotification()`-style patterns in other push SDKs, except that
- * the replay is automatic rather than requiring a JS pull.
+ * here and handed out on demand by [takePending], which backs the Spec's
+ * `getInitialNotificationClick()`.
+ *
+ * The buffered click is deliberately *not* replayed through the event emitter
+ * when a module attaches. Attaching happens while the JS bundle is still being
+ * evaluated (`TurboModuleRegistry.getEnforcing` constructs the module), which
+ * is strictly before any `addEventListener('notificationClicked', …)` inside a
+ * `useEffect` can run - an EventEmitter has no buffering for a subscriber that
+ * does not exist yet, so an auto-replay was always emitted into the void. JS
+ * pulls it instead; clicks arriving while the app is already alive still go
+ * out as events through [emit].
  *
  * Only one payload is buffered: a second cold-start click cannot exist without
  * a process restart, and while the app is alive the emitter is attached.
@@ -33,15 +41,25 @@ object NuntisNotificationClickRelay {
     target?.invoke(notification)
   }
 
-  /** Attaches the live module's emitter and drains any buffered cold-start click. */
+  /**
+   * Attaches the live module's emitter for clicks that arrive from now on. Any
+   * already-buffered cold-start click stays buffered: see the class doc - no
+   * JS listener can be subscribed yet at this point, so replaying it here
+   * would drop it. It is delivered by [takePending] instead.
+   */
   fun attach(emitter: (ParsedNotification) -> Unit) {
-    val buffered = synchronized(lock) {
-      this.emitter = emitter
-      val buffered = pending
-      pending = null
-      buffered
-    }
-    buffered?.let(emitter)
+    synchronized(lock) { this.emitter = emitter }
+  }
+
+  /**
+   * Returns the buffered cold-start click and clears it, so a second call
+   * without a new cold start returns null (the Spec's
+   * `getInitialNotificationClick()` contract: consumed exactly once).
+   */
+  fun takePending(): ParsedNotification? = synchronized(lock) {
+    val buffered = pending
+    pending = null
+    buffered
   }
 
   /**

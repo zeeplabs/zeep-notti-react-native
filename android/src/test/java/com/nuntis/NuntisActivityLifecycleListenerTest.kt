@@ -35,7 +35,7 @@ class NuntisActivityLifecycleListenerTest {
   }
 
   @Test
-  fun `a cold-start click detected before any module exists is delivered once a module attaches`() {
+  fun `a cold-start click detected before any module exists is held for the JS pull, not replayed as an event`() {
     // Process start: the ContentProvider runs before any Activity, and long
     // before the lazy TurboModule is constructed (spec P3-AC7 - a tap from a
     // killed app). Nothing is attached to emit on yet.
@@ -51,9 +51,16 @@ class NuntisActivityLifecycleListenerTest {
     val delivered = mutableListOf<ParsedNotification>()
     NuntisNotificationClickRelay.attach { delivered.add(it) }
 
-    assertEquals(1, delivered.size)
-    assertEquals("Hello", delivered.single().title)
-    assertEquals(mapOf("plan" to "vip"), delivered.single().data)
+    // Attaching is the module being constructed during bundle evaluation -
+    // still before any JS `addEventListener` has run, so an event emitted
+    // here reaches nobody. The click must survive for the pull instead.
+    assertEquals(emptyList<ParsedNotification>(), delivered)
+
+    val pulled = NuntisNotificationClickRelay.takePending()
+    assertEquals("Hello", pulled?.title)
+    assertEquals(mapOf("plan" to "vip"), pulled?.data)
+    // Consumed exactly once.
+    assertNull(NuntisNotificationClickRelay.takePending())
   }
 
   @Test
