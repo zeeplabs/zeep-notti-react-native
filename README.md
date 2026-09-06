@@ -236,7 +236,3 @@ See [CHANGELOG.md](CHANGELOG.md) for released and upcoming changes.
 ## License
 
 [MIT](LICENSE)
-
----
-
-Made with [create-react-native-library](https://github.com/callstack/react-native-builder-bob)
