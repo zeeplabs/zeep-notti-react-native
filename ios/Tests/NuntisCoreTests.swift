@@ -1,3 +1,4 @@
+import UIKit
 import XCTest
 
 final class NuntisCoreTests: XCTestCase {
@@ -480,6 +481,89 @@ final class NuntisCoreTests: XCTestCase {
     // must read the tag cache at send time, so it sees "plan" and drops it.
     XCTAssertEqual(bodies[2]["tags"] as? [String: String], [:])
     XCTAssertEqual(store.getTags(), [:])
+  }
+
+  // MARK: - Foreground retry after the retry cap is exhausted (P1-AC5)
+
+  func test_registrationThatExhaustedItsRetryCapIsRetriedOnTheNextAppForeground() {
+    // The backoff stops after 5 attempts. Without a foreground hook the device
+    // stayed unregistered until the app was relaunched.
+    for _ in 0..<5 { StubURLProtocol.enqueue(.status(500)) }
+    let logs = LogSink()
+    let core = newCore(logs: logs)
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    XCTAssertEqual(StubURLProtocol.recordedRequests().count, 5)
+    XCTAssertNil(store.getDeviceId())
+
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
+    NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+    drain(core, timeout: 10)
+
+    XCTAssertEqual(StubURLProtocol.recordedRequests().count, 6, "foreground must re-trigger registration")
+    XCTAssertEqual(store.getDeviceId(), "device-1")
+    XCTAssertEqual(store.getLastToken(), "apns-token")
+  }
+
+  func test_aSuccessfulRegistrationIsNotRepeatedOnEveryForeground() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
+    let core = newCore()
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    for _ in 0..<3 {
+      NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+    }
+    drain(core, timeout: 10)
+
+    XCTAssertEqual(StubURLProtocol.recordedRequests().count, 1)
+  }
+
+  func test_foregroundsArrivingWhileARegistrationIsInFlightDoNotPileUpExtraAttempts() {
+    // Guards against a retry storm: several didBecomeActive notifications
+    // during one in-flight registration must collapse into nothing extra.
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#, delayMs: 400))
+    let core = newCore()
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+
+    XCTAssertTrue(waitForRequestCount(1, timeout: 5), "registration request never went out")
+    for _ in 0..<5 {
+      NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+    }
+    drain(core, timeout: 10)
+
+    XCTAssertEqual(StubURLProtocol.recordedRequests().count, 1)
+    XCTAssertEqual(store.getDeviceId(), "device-1")
+  }
+
+  func test_foregroundBeforeInitializeDoesNothing() {
+    let core = newCore()
+
+    NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+    drain(core)
+
+    XCTAssertEqual(StubURLProtocol.recordedRequests().count, 0)
+    _ = core
+  }
+
+  func test_foregroundRetriesRegistrationWhenTheTokenNeverArrivedTheFirstTime() {
+    var deliverToken: ((String?) -> Void)?
+    let core = newCore(tokenProvider: { cb in deliverToken = cb })
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+    XCTAssertEqual(StubURLProtocol.recordedRequests().count, 0)
+
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
+    NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+    drain(core)
+    // The foreground retry asks the platform for a token again; registration
+    // happens once that (async) request resolves.
+    deliverToken?("apns-token")
+    drain(core, timeout: 10)
+
+    XCTAssertEqual(StubURLProtocol.recordedRequests().count, 1)
+    XCTAssertEqual(store.getDeviceId(), "device-1")
   }
 
   // MARK: - Registration tag write vs. addTags read-merge-write

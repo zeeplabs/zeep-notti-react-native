@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// Orchestrates init, device registration, token refresh, permission
 /// requests, and tag/external-id/subscription mutations (design.md
@@ -52,6 +55,25 @@ public class NuntisCore {
   private static let maxPendingMutations = 32
   private var pendingMutations: [PendingMutation] = []
 
+  /// Outcome of the last registration attempt (workQueue-only). Drives the
+  /// app-foreground retry: the retry schedule stops after 5 attempts, and
+  /// spec P1-AC5 requires it to resume on the next foreground.
+  private enum RegistrationState {
+    case notAttempted
+    case succeeded
+    case failed
+  }
+  private var registrationState: RegistrationState = .notAttempted
+  private var lastAttemptedToken: String?
+
+  /// Guards against a foreground-retry storm: `didBecomeActive` can fire
+  /// repeatedly (app switcher, control centre, alerts), and only one retry may
+  /// be queued at a time. Touched from the notification thread, so it needs
+  /// its own lock rather than the work queue.
+  private let foregroundLock = NSLock()
+  private var foregroundRetryQueued = false
+  private var foregroundObserver: NSObjectProtocol?
+
   public init(
     deviceStore: NuntisDeviceStore,
     apiClientFactory: @escaping (_ appId: String, _ clientKey: String, _ baseUrl: String) -> NuntisApiClient,
@@ -67,6 +89,13 @@ public class NuntisCore {
     self.platform = platform
     self.logger = logger
     workQueue.setSpecific(key: Self.workQueueKey, value: 1)
+    observeAppForeground()
+  }
+
+  deinit {
+    if let observer = foregroundObserver {
+      NotificationCenter.default.removeObserver(observer)
+    }
   }
 
   /// Runs `block` on `workQueue`, executing it inline when the caller is
@@ -225,14 +254,80 @@ public class NuntisCore {
   }
 
   private func registerDevice(_ client: NuntisApiClient, _ token: String) {
+    lastAttemptedToken = token
     switch client.createOrUpdateDevice(token: token, platform: platform) {
     case .success(let response):
+      registrationState = .succeeded
       deviceStore.setDeviceId(response.id)
       deviceStore.setLastToken(token)
       deviceStore.setTags(response.tags)
       flushPendingMutations(client, deviceId: response.id, token: token)
     case .failure(let message):
+      registrationState = .failed
       logger("Nuntis.initialize: device registration failed: \(message)")
+    }
+  }
+
+  // MARK: - Foreground retry (spec P1-AC5)
+
+  /// Subscribes to `UIApplication.didBecomeActiveNotification` directly - a
+  /// plain system notification, so no host-`AppDelegate` forwarding is needed
+  /// (unlike the APNs callbacks). Without this, a registration that exhausted
+  /// its 5 attempts never retried until the app was relaunched.
+  private func observeAppForeground() {
+    #if canImport(UIKit)
+      foregroundObserver = NotificationCenter.default.addObserver(
+        forName: UIApplication.didBecomeActiveNotification,
+        object: nil,
+        queue: nil
+      ) { [weak self] _ in
+        self?.handleAppDidBecomeActive()
+      }
+    #endif
+  }
+
+  private func handleAppDidBecomeActive() {
+    foregroundLock.lock()
+    if foregroundRetryQueued {
+      foregroundLock.unlock()
+      return
+    }
+    foregroundRetryQueued = true
+    foregroundLock.unlock()
+
+    workQueue.async { [weak self] in
+      guard let self = self else { return }
+      self.foregroundLock.lock()
+      self.foregroundRetryQueued = false
+      self.foregroundLock.unlock()
+      self.retryRegistrationIfNeeded()
+    }
+  }
+
+  /// workQueue-only. Runs after any in-flight registration has finished (the
+  /// queue is serial), so `registrationState` is already final here.
+  private func retryRegistrationIfNeeded() {
+    guard let client = apiClient else { return }
+    guard registrationState != .succeeded else { return }
+
+    logger("Nuntis: app foregrounded without a successful registration - retrying")
+
+    if let token = lastAttemptedToken ?? deviceStore.getLastToken() {
+      registerDevice(client, token)
+      return
+    }
+
+    // No token was ever obtained: ask the platform for one again (on iOS this
+    // re-triggers registerForRemoteNotifications).
+    tokenProvider { [weak self] token in
+      guard let self = self else { return }
+      self.onWorkQueue {
+        guard let token = token else {
+          self.logger("Nuntis: foreground retry found no push token available")
+          return
+        }
+        self.registerDevice(client, token)
+      }
     }
   }
 
