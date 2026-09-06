@@ -622,14 +622,20 @@ T18 -> T19
 - Skill: NONE
 
 **Done when**:
-- [ ] Every public method from T16 is documented with a usage example
-- [ ] Bare-RN and Expo setup paths are both documented, including the confirmed APNs wiring requirement from T3
-- [ ] `pnpm typecheck && pnpm lint && pnpm test && pnpm run build:android && pnpm run build:ios` all pass (final repo-wide sanity check)
+- [x] Every public method from T16 is documented with a usage example
+- [x] Bare-RN and Expo setup paths are both documented, including the confirmed APNs wiring requirement from T3
+- [x] `pnpm typecheck && pnpm lint && pnpm test && pnpm run build:android && pnpm run build:ios` all pass (final repo-wide sanity check)
 
 **Tests**: none
 **Gate**: build
 
+**Status**: ✅ Complete. Final sanity gate re-run and confirmed green: `pnpm typecheck` (clean), `pnpm lint` (clean), `pnpm test` (11/11 passed), `pnpm run build:android` (real `BUILD SUCCESSFUL in 12s`), `pnpm run build:ios` (real `Successfully built the app`, after the same CocoaPods sandbox pod install/Podfile.lock-revert cycle documented in T17/T18).
+
 **Commit**: `docs: add SDK quickstart and integration guide`
+
+**Deviations**:
+1. `pnpm run build:android`/`build:ios` don't exist as literal root scripts (root `package.json` has no `build:android`/`build:ios` entries - confirmed by T14's prior deviation note); the actual invocation used, matching that precedent, is `cd example && pnpm run build:android` / `build:ios` (Turbo-orchestrated per-package via `example/package.json`).
+2. README also documents a real, out-of-scope-for-this-task gap discovered while writing the Android setup section: the library's own `AndroidManifest.xml` does not declare `android.permission.POST_NOTIFICATIONS`, so a bare-RN integrator must add it to their own app manifest for `requestPermission()` to actually prompt on Android 13+ - documented as a required integrator step rather than silently fixed (fixing the library's own manifest is Phase 2 scope, not T19's).
 
 ---
 
