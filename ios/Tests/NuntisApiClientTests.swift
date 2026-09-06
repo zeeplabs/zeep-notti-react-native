@@ -21,6 +21,46 @@ final class NuntisApiClientTests: XCTestCase {
     )
   }
 
+  func test_validatedBaseUrlAcceptsAbsoluteHttpUrlsAndRejectsEverythingElse() {
+    XCTAssertEqual(NuntisApiClient.validatedBaseUrl("https://push.example.com"), "https://push.example.com")
+    XCTAssertEqual(NuntisApiClient.validatedBaseUrl("http://localhost:8080"), "http://localhost:8080")
+    XCTAssertEqual(NuntisApiClient.validatedBaseUrl(" https://push.example.com/// "), "https://push.example.com")
+
+    XCTAssertNil(NuntisApiClient.validatedBaseUrl("my host.example.com"))
+    XCTAssertNil(NuntisApiClient.validatedBaseUrl("push.example.com"))
+    XCTAssertNil(NuntisApiClient.validatedBaseUrl("https://"))
+    XCTAssertNil(NuntisApiClient.validatedBaseUrl("ftp://push.example.com"))
+    XCTAssertNil(NuntisApiClient.validatedBaseUrl("https://ex ample.com/%zz"))
+    XCTAssertNil(NuntisApiClient.validatedBaseUrl(""))
+  }
+
+  func test_anUnusableBaseUrlFailsTheCallInsteadOfCrashing() {
+    // Defense in depth for the public API client: even handed a baseUrl that
+    // cannot form a URL at all (invalid percent-escape here — current
+    // Foundation percent-encodes most other garbage instead of returning nil),
+    // it must return a failure rather than force-unwrap.
+    let config = URLSessionConfiguration.ephemeral
+    config.protocolClasses = [StubURLProtocol.self]
+    let brokenClient = NuntisApiClient(
+      session: URLSession(configuration: config),
+      baseUrl: "https://ex ample.com/%zz",
+      appId: "app-1",
+      clientKey: "secret-key",
+      sleeper: { _ in }
+    )
+
+    guard case .failure(let postError) = brokenClient.createOrUpdateDevice(token: "t", platform: "ios") else {
+      return XCTFail("expected failure")
+    }
+    XCTAssertTrue(postError.contains("baseUrl"))
+
+    guard case .failure(let patchError) = brokenClient.patchDevice(deviceId: "d", token: "t", fields: [:]) else {
+      return XCTFail("expected failure")
+    }
+    XCTAssertTrue(patchError.contains("baseUrl"))
+    XCTAssertEqual(StubURLProtocol.recordedRequests().count, 0)
+  }
+
   func test_createOrUpdateDeviceSendsPostWithCorrectHeadersAndBody() {
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
 

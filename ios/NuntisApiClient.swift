@@ -52,9 +52,36 @@ public class NuntisApiClient {
     self.sleeper = sleeper
   }
 
+  /// Validates and normalizes an integrator-supplied `baseUrl` (spec SDK-03:
+  /// invalid config must be non-fatal). Requires an absolute `http`/`https`
+  /// URL with a host — a malformed-but-non-empty string such as
+  /// `"my host.example.com"` or a scheme-less `"push.example.com"` is
+  /// rejected here rather than force-unwrapped into a crash later. Returns
+  /// the string with trailing slashes trimmed, or nil when unusable.
+  public static func validatedBaseUrl(_ raw: String) -> String? {
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard
+      !trimmed.isEmpty,
+      let url = URL(string: trimmed),
+      let scheme = url.scheme?.lowercased(),
+      scheme == "http" || scheme == "https",
+      let host = url.host,
+      !host.isEmpty
+    else {
+      return nil
+    }
+
+    var normalized = trimmed
+    while normalized.hasSuffix("/") { normalized.removeLast() }
+    return normalized.isEmpty ? nil : normalized
+  }
+
   public func createOrUpdateDevice(token: String, platform: String) -> ApiResult {
     let body: [String: Any] = ["token": token, "platform": platform]
-    var request = URLRequest(url: URL(string: "\(baseUrl)/v1/apps/\(appId)/devices")!)
+    guard let url = URL(string: "\(baseUrl)/v1/apps/\(appId)/devices") else {
+      return .failure("invalid device-registration URL built from the configured baseUrl")
+    }
+    var request = URLRequest(url: url)
     request.httpMethod = "POST"
     request.setValue("Bearer \(clientKey)", forHTTPHeaderField: "Authorization")
     request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
@@ -68,7 +95,10 @@ public class NuntisApiClient {
     var json = fields
     json["token"] = token
 
-    var request = URLRequest(url: URL(string: "\(baseUrl)/v1/apps/\(appId)/devices/\(deviceId)")!)
+    guard let url = URL(string: "\(baseUrl)/v1/apps/\(appId)/devices/\(deviceId)") else {
+      return .failure("invalid device-update URL built from the configured baseUrl")
+    }
+    var request = URLRequest(url: url)
     request.httpMethod = "PATCH"
     request.setValue("Bearer \(clientKey)", forHTTPHeaderField: "Authorization")
     request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")

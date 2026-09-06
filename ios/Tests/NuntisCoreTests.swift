@@ -314,6 +314,63 @@ final class NuntisCoreTests: XCTestCase {
     XCTAssertEqual(store.getTags(), ["cohort": "beta"])
   }
 
+  // MARK: - Invalid baseUrl must disable the SDK, never crash the host app
+
+  func test_initializeWithAMalformedBaseUrlDoesNotCrashAndDoesNotRegister() {
+    // "my host.example.com" is non-empty, so it got past the isEmpty guard and
+    // reached `URL(string:)!` inside the API client, taking the host app down
+    // with it. Spec SDK-03: log, stay disabled, never crash.
+    let malformed = [
+      "my host.example.com", // space in the host
+      "push.example.com", // no scheme
+      "not a url at all",
+      "https://", // scheme but no host
+      "ftp://push.example.com", // unsupported scheme
+      "   ",
+    ]
+
+    for baseUrl in malformed {
+      StubURLProtocol.reset()
+      let logs = LogSink()
+      let core = newCore(logs: logs)
+
+      core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+      drain(core)
+
+      XCTAssertEqual(StubURLProtocol.recordedRequests().count, 0, "must not register with baseUrl '\(baseUrl)'")
+      XCTAssertNil(store.getDeviceId())
+      XCTAssertTrue(
+        logs.messages.contains { $0.contains("baseUrl") },
+        "expected a config error logged for baseUrl '\(baseUrl)', got \(logs.messages)"
+      )
+    }
+  }
+
+  func test_initializeWithAMalformedBaseUrlLeavesLaterMutationsInertRatherThanCrashing() {
+    let core = newCore(logs: LogSink())
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: "my host.example.com")
+    drain(core)
+
+    core.mutateTags(add: ["plan": "vip"], remove: nil)
+    core.login("user-42")
+    core.setSubscription(true)
+    drain(core)
+
+    XCTAssertEqual(StubURLProtocol.recordedRequests().count, 0)
+  }
+
+  func test_initializeTrimsATrailingSlashFromTheBaseUrlSoRequestPathsStayValid() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
+    let core = newCore()
+
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: "\(baseUrl)/")
+    drain(core)
+
+    let recorded = StubURLProtocol.recordedRequests()
+    XCTAssertEqual(recorded.count, 1)
+    XCTAssertEqual(recorded[0].url?.path, "/v1/apps/app-1/devices")
+  }
+
   // MARK: - Mutations issued before registration completes
 
   func test_tagsAddedBeforeTheApnsTokenArrivesAreSentOnceRegistrationCompletes() {

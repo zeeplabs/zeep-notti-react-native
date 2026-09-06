@@ -188,15 +188,27 @@ public class NuntisCore {
       return
     }
 
+    // A malformed-but-non-empty baseUrl (e.g. "my host.example.com", or a
+    // scheme-less host) must leave the SDK disabled, not crash the host app
+    // (SDK-03). Validated once here so nothing downstream ever has to
+    // force-unwrap integrator-supplied config.
+    guard let validatedBaseUrl = NuntisApiClient.validatedBaseUrl(baseUrl) else {
+      logger(
+        "Nuntis.initialize: baseUrl is not a valid absolute http(s) URL - "
+          + "skipping registration (SDK stays disabled)"
+      )
+      return
+    }
+
     // Repeat call with identical args in the same session: no-op (SDK-07).
-    if appId == self.appId && clientKey == self.clientKey && baseUrl == self.baseUrl {
+    if appId == self.appId && clientKey == self.clientKey && validatedBaseUrl == self.baseUrl {
       return
     }
 
     self.appId = appId
     self.clientKey = clientKey
-    self.baseUrl = baseUrl
-    let client = apiClientFactory(appId, clientKey, baseUrl)
+    self.baseUrl = validatedBaseUrl
+    let client = apiClientFactory(appId, clientKey, validatedBaseUrl)
     self.apiClient = client
 
     tokenProvider { [weak self] token in
