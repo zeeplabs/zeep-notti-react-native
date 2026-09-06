@@ -694,6 +694,39 @@ class NuntisCoreTest {
   }
 
   @Test
+  fun `a call that lands after the executor is shut down is dropped, not thrown at the caller`() {
+    // NuntisModule.invalidate() shuts the executor down, but callers outside
+    // the module - NuntisFirebaseMessagingService.onNewToken and the
+    // process-lifecycle foreground observer - read `activeCore` before it is
+    // cleared and can still dispatch afterwards. `Executor.execute` throws
+    // RejectedExecutionException at *that* caller (the FCM service thread or
+    // the main thread), which is outside the task body's catch.
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    val ownExecutor = Executors.newSingleThreadExecutor()
+    val logs = mutableListOf<String>()
+    val core = newCore(logs = logs, coreExecutor = ownExecutor)
+    core.initialize("app-1", "key", validBaseUrl)
+    ownExecutor.submit { }.get(10, TimeUnit.SECONDS)
+
+    ownExecutor.shutdown()
+    assertTrue(ownExecutor.awaitTermination(10, TimeUnit.SECONDS))
+
+    // Every entry point an external caller can still reach post-shutdown.
+    core.onTokenRefreshed("refreshed-token")
+    core.mutateTags(add = mapOf("plan" to "vip"), remove = null)
+    core.login("user-42")
+    core.setSubscription(true)
+    var granted: Boolean? = null
+    core.requestPermission { granted = it }
+
+    // Reaching here at all is the assertion: any of the above escaping with a
+    // RejectedExecutionException would crash the host app's FCM callback.
+    assertEquals(true, granted)
+    assertEquals(1, server.requestCount)
+    assertTrue(logs.any { it.contains("SDK is shut down") })
+  }
+
+  @Test
   fun `a 2xx registration response that cannot be parsed still leaves the foreground retry armed`() {
     // A captive portal / proxy answering the registration POST with HTTP 200
     // and an HTML body. The parse failure is not an IOException, so before the

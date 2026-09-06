@@ -3,6 +3,7 @@ package com.nuntis
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 
 /**
  * Orchestrates init, device registration, token refresh, permission
@@ -331,12 +332,27 @@ class NuntisCore(
    * an SDK must not take the host app down (spec SDK-03/SDK-04 crash safety).
    */
   private fun dispatch(operation: String, work: () -> Unit) {
-    executor.execute {
-      try {
-        work()
-      } catch (t: Throwable) {
-        logger("Nuntis.$operation: unexpected failure - ${t.message}")
+    try {
+      executor.execute {
+        try {
+          work()
+        } catch (t: Throwable) {
+          logger("Nuntis.$operation: unexpected failure - ${t.message}")
+        }
       }
+    } catch (e: RejectedExecutionException) {
+      // The executor is shut down: NuntisModule.invalidate() tore the module
+      // down (host app dropping the RN context in background, or a dev
+      // reload) while a caller outside the module still held the core -
+      // NuntisFirebaseMessagingService.onNewToken and the process-lifecycle
+      // foreground observer both read `activeCore` before it is cleared and
+      // can dispatch after the shutdown. `execute` itself throws, on the FCM
+      // service thread or the main thread, so the rejection has to be
+      // swallowed here rather than inside the task body (spec SDK-03/SDK-04:
+      // the SDK must never take the host app down). The work is dropped:
+      // there is no executor left to run it on, and the next process will
+      // re-register from scratch.
+      logger("Nuntis.$operation: SDK is shut down - dropped")
     }
   }
 
