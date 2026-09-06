@@ -68,6 +68,18 @@ class NuntisCore(
   private var baseUrl: String? = null
   @Volatile
   private var apiClient: NuntisApiClient? = null
+
+  /**
+   * Where the device's registration stands right now. Drives both the
+   * app-foreground retry (spec SDK-05: after the 5-attempt backoff is
+   * exhausted the SDK stops "until the next app foreground or the next
+   * token-refresh event") and the guard that keeps repeated foregrounds from
+   * stacking registration attempts.
+   */
+  private enum class RegistrationState { NOT_STARTED, IN_FLIGHT, REGISTERED, FAILED }
+
+  @Volatile
+  private var registrationState = RegistrationState.NOT_STARTED
   private val mutationLock = Any()
 
   /**
@@ -128,13 +140,44 @@ class NuntisCore(
       // The token callback itself can be delivered on the main looper (Play
       // Services `Task` default executor), so the registration call is handed
       // off rather than run here.
+      registrationState = RegistrationState.IN_FLIGHT
       dispatch("register") { registerDevice(client, token) }
     }
   }
 
   fun onTokenRefreshed(newToken: String) {
     val client = apiClient ?: return
+    registrationState = RegistrationState.IN_FLIGHT
     dispatch("onTokenRefreshed") { registerDevice(client, newToken) }
+  }
+
+  /**
+   * Resumes registration when the app comes back to the foreground, which is
+   * the only recovery path the spec gives once `NuntisApiClient` has burned
+   * through its 5-attempt backoff (SDK-05) - otherwise a device that was
+   * offline at launch stays unregistered until the process is killed.
+   *
+   * A no-op unless registration actually needs it: already registered, or an
+   * attempt is still in flight (so repeated foregrounds cannot stack attempts
+   * or start a retry storm).
+   */
+  fun onAppForegrounded() {
+    val client = apiClient ?: return
+    if (registrationState == RegistrationState.REGISTERED ||
+      registrationState == RegistrationState.IN_FLIGHT
+    ) {
+      return
+    }
+
+    registrationState = RegistrationState.IN_FLIGHT
+    tokenProvider { token ->
+      if (token == null) {
+        registrationState = RegistrationState.FAILED
+        logger("Nuntis.onAppForegrounded: no push token available - registration not retried")
+        return@tokenProvider
+      }
+      dispatch("onAppForegrounded") { registerDevice(client, token) }
+    }
   }
 
   /**
@@ -152,10 +195,15 @@ class NuntisCore(
           deviceStore.setDeviceId(result.response.id)
           deviceStore.setLastToken(token)
           deviceStore.setTags(result.response.tags)
+          registrationState = RegistrationState.REGISTERED
           flushPendingMutations()
         }
         is ApiResult.Failure -> {
-          logger("Nuntis.initialize: device registration failed: ${result.message}")
+          registrationState = RegistrationState.FAILED
+          logger(
+            "Nuntis.initialize: device registration failed: ${result.message} " +
+              "- retrying on the next app foreground or token refresh"
+          )
         }
       }
     }

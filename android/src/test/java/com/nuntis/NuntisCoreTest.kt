@@ -592,6 +592,76 @@ class NuntisCoreTest {
   }
 
   @Test
+  fun `registration that exhausted its retry cap is resumed on the next app foreground`() {
+    // Five 5xx responses burn the whole backoff cap (NuntisApiClient), leaving
+    // the device unregistered with nothing left to retry it (spec SDK-05:
+    // "then stop until the next app foreground or the next token-refresh").
+    repeat(5) { server.enqueue(MockResponse().setResponseCode(500)) }
+    val core = newCore()
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+    assertEquals(5, server.requestCount)
+    assertEquals(null, store.getDeviceId())
+
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    core.onAppForegrounded()
+    awaitIdle()
+
+    assertEquals(6, server.requestCount)
+    assertEquals("device-1", store.getDeviceId())
+    assertEquals("fcm-token", store.getLastToken())
+  }
+
+  @Test
+  fun `app foreground does not re-register a device that is already registered`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    val core = newCore()
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    repeat(3) { core.onAppForegrounded() }
+    awaitIdle()
+
+    assertEquals(1, server.requestCount)
+  }
+
+  @Test
+  fun `repeated foregrounds while an attempt is in flight do not stack registration attempts`() {
+    val retryInFlight = CountDownLatch(1)
+    val releaseRetry = CountDownLatch(1)
+    var requestNumber = 0
+    // Holds the foreground retry (request #2) open, so the extra foregrounds
+    // below happen while it is genuinely still in flight.
+    val gateSecondRequest = Interceptor { chain ->
+      val current = synchronized(this) { ++requestNumber }
+      if (current == 2) {
+        retryInFlight.countDown()
+        releaseRetry.await()
+      }
+      chain.proceed(chain.request())
+    }
+    server.enqueue(MockResponse().setResponseCode(400)) // terminal failure, no retry cap burn
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    val core = newCore(interceptor = gateSecondRequest)
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+    assertEquals(1, server.requestCount)
+
+    core.onAppForegrounded()
+    assertTrue(retryInFlight.await(5, TimeUnit.SECONDS))
+
+    // Several more foregrounds (tab switching, lock/unlock) while that retry
+    // is still in flight must produce no further attempts - otherwise every
+    // foreground stacks another registration call.
+    repeat(4) { core.onAppForegrounded() }
+    releaseRetry.countDown()
+    awaitIdle()
+
+    assertEquals(2, server.requestCount)
+    assertEquals("device-1", store.getDeviceId())
+  }
+
+  @Test
   fun `two rapid tag mutations serialize and converge to the correct net merged result`() {
     server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
     val core = newCore()

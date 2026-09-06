@@ -49,6 +49,11 @@ android {
 dependencies {
   implementation "com.facebook.react:react-android"
   implementation "com.google.firebase:firebase-messaging:25.1.2"
+  // ProcessLifecycleOwner: app-level foreground signal used to resume device
+  // registration after the retry cap is exhausted (spec SDK-05). Same
+  // androidx.lifecycle version line react-android already pulls in; the
+  // artifact itself is not transitively available.
+  implementation "androidx.lifecycle:lifecycle-process:2.6.2"
 
   testImplementation "junit:junit:4.13.2"
   testImplementation "com.squareup.okhttp3:mockwebserver:4.12.0"
