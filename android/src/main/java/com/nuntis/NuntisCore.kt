@@ -170,13 +170,21 @@ class NuntisCore(
       return
     }
 
-    registrationState = RegistrationState.IN_FLIGHT
+    // IN_FLIGHT is set only once the token is actually in hand, not before
+    // the fetch. `tokenProvider` is backed by a Play Services `Task`, whose
+    // listener can simply never fire (Play Services missing, disabled, or
+    // wedged); marking IN_FLIGHT up front would park the state there forever
+    // and the guard above would then kill every future foreground retry. The
+    // cost of the looser guard is at most a duplicate token fetch plus an
+    // idempotent create-or-update POST, which the single-threaded executor
+    // serializes anyway.
     tokenProvider { token ->
       if (token == null) {
         registrationState = RegistrationState.FAILED
         logger("Nuntis.onAppForegrounded: no push token available - registration not retried")
         return@tokenProvider
       }
+      registrationState = RegistrationState.IN_FLIGHT
       dispatch("onAppForegrounded") { registerDevice(client, token) }
     }
   }

@@ -718,6 +718,41 @@ class NuntisCoreTest {
   }
 
   @Test
+  fun `a token fetch that never completes does not disable the next foreground retry`() {
+    // Play Services unavailable or wedged: the Task listener behind
+    // tokenProvider simply never fires. Marking the registration IN_FLIGHT
+    // before the token is in hand parks the state machine there forever, and
+    // the IN_FLIGHT guard then swallows every later foreground.
+    var tokenRequests = 0
+    val core = newCore(
+      tokenProvider = { callback ->
+        tokenRequests++
+        // Only the third request (initialize, first foreground, second
+        // foreground) ever answers.
+        if (tokenRequests >= 3) callback("fcm-token")
+      }
+    )
+
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+    assertEquals(1, tokenRequests)
+    assertEquals(0, server.requestCount)
+
+    core.onAppForegrounded()
+    awaitIdle()
+    assertEquals(2, tokenRequests)
+    assertEquals(0, server.requestCount)
+
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    core.onAppForegrounded()
+    awaitIdle()
+
+    assertEquals(3, tokenRequests)
+    assertEquals(1, server.requestCount)
+    assertEquals("device-1", store.getDeviceId())
+  }
+
+  @Test
   fun `a call that lands after the executor is shut down is dropped, not thrown at the caller`() {
     // NuntisModule.invalidate() shuts the executor down, but callers outside
     // the module - NuntisFirebaseMessagingService.onNewToken and the
