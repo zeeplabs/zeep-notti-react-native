@@ -60,6 +60,16 @@
     [_impl setSubscription:enabled];
 }
 
+- (void)getInitialNotificationClick:(RCTPromiseResolveBlock)resolve
+                             reject:(RCTPromiseRejectBlock)reject
+{
+    // Resolves the cold-start tap once, then null. NSNull keeps the JS side on
+    // the Spec's `NotificationPayload | null` - resolve(nil) would hand JS
+    // `undefined` instead.
+    NSDictionary *payload = [_impl takeInitialNotificationClick];
+    resolve(payload ?: (id)[NSNull null]);
+}
+
 - (std::shared_ptr<facebook::react::TurboModule>)getTurboModule:
     (const facebook::react::ObjCTurboModule::InitParams &)params
 {

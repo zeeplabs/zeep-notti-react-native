@@ -26,8 +26,10 @@ public class NuntisImpl: NSObject {
   /// Set by `Nuntis.mm`'s `-init` to forward parsed notification payloads
   /// into the Codegen event emitters it alone has access to. Assigning them
   /// registers the emitter with `NuntisEventBuffer`, which immediately
-  /// replays any notification that arrived before the module existed (cold
-  /// launch from a notification tap).
+  /// replays any *received* notification that arrived before the module
+  /// existed. A cold-start click is deliberately not replayed here — no JS
+  /// listener exists yet at module-construction time — and is handed over by
+  /// `getInitialNotificationClick()` instead.
   @objc public var emitReceivedHandler: (([String: Any]) -> Void)? {
     didSet { NuntisEventBuffer.shared.setHandler(.received, emitReceivedHandler) }
   }
@@ -114,5 +116,12 @@ public class NuntisImpl: NSObject {
   @objc(setSubscription:)
   public func setSubscription(_ enabled: Bool) {
     core.setSubscription(enabled)
+  }
+
+  /// Backs the Spec's `getInitialNotificationClick()`: returns the click that
+  /// launched the app from a cold start (buffered before any JS listener could
+  /// exist) and consumes it, or nil when the app was not launched by a tap.
+  @objc public func takeInitialNotificationClick() -> [String: Any]? {
+    NuntisEventBuffer.shared.takeInitialClick()
   }
 }
