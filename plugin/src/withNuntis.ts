@@ -23,21 +23,47 @@ const withNuntisAndroid: ConfigPlugin = (config) => {
   return config;
 };
 
+export type NuntisPluginProps = {
+  /**
+   * `aps-environment` entitlement value. Defaults to inferring from
+   * `EAS_BUILD_PROFILE` (EAS Build sets this env var during `eas build`;
+   * any profile other than `development` is treated as `production`).
+   * Builds run outside EAS (a local/manual `expo prebuild` + Xcode archive)
+   * have no such signal, so pass this explicitly for those release builds -
+   * otherwise the entitlement silently defaults to the sandbox APNs
+   * environment and production push does not work.
+   */
+  apsEnvironment?: 'development' | 'production';
+};
+
 /**
  * iOS side of the plugin (T17): adds the `aps-environment` entitlement so
  * `expo prebuild` provisions the push-notification capability the SDK's
  * APNs delegate hooks (T15) depend on - the same capability bare-RN
  * integrators must add manually in Xcode per T19's README.
  */
-const withNuntisIOS: ConfigPlugin = (config) => {
+const withNuntisIOS: ConfigPlugin<NuntisPluginProps | undefined> = (
+  config,
+  props
+) => {
+  const apsEnvironment =
+    props?.apsEnvironment ??
+    (process.env.EAS_BUILD_PROFILE &&
+    process.env.EAS_BUILD_PROFILE !== 'development'
+      ? 'production'
+      : 'development');
+
   return withEntitlementsPlist(config, (entitlementsConfig) => {
-    entitlementsConfig.modResults['aps-environment'] = 'development';
+    entitlementsConfig.modResults['aps-environment'] = apsEnvironment;
     return entitlementsConfig;
   });
 };
 
-const withNuntis: ConfigPlugin = (config) => {
-  return withPlugins(config, [withNuntisAndroid, withNuntisIOS]);
+const withNuntis: ConfigPlugin<NuntisPluginProps | undefined> = (
+  config,
+  props
+) => {
+  return withPlugins(config, [withNuntisAndroid, [withNuntisIOS, props]]);
 };
 
 export default withNuntis;
