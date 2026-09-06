@@ -226,6 +226,62 @@ class NuntisCoreTest {
   }
 
   @Test
+  fun `login PATCHes external_user_id and the cached token, and persists it locally on success`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    val core = newCore()
+    core.initialize("app-1", "key", validBaseUrl)
+
+    core.login("user-42")
+
+    assertEquals(2, server.requestCount)
+    server.takeRequest(5, TimeUnit.SECONDS) // initial register
+    val patchRequest = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+    assertEquals("PATCH", patchRequest.method)
+    val body = JSONObject(patchRequest.body.readUtf8())
+    assertEquals("user-42", body.getString("external_user_id"))
+    assertEquals("fcm-token", body.getString("token"))
+    assertEquals("user-42", store.getExternalUserId())
+  }
+
+  @Test
+  fun `logout clears the locally held external user id without sending any PATCH`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    val core = newCore()
+    core.initialize("app-1", "key", validBaseUrl)
+    core.login("user-42")
+    assertEquals("user-42", store.getExternalUserId())
+
+    core.logout()
+
+    // Only the initial register + login PATCH from setup above - logout()
+    // itself must not issue any network call (spec SDK-15: local-only clear,
+    // the backend has no support for clearing external_user_id server-side).
+    assertEquals(2, server.requestCount)
+    assertEquals(null, store.getExternalUserId())
+  }
+
+  @Test
+  fun `setSubscription PATCHes the given subscribed value and the cached token, and persists it locally on success`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    val core = newCore()
+    core.initialize("app-1", "key", validBaseUrl)
+
+    core.setSubscription(true)
+
+    assertEquals(2, server.requestCount)
+    server.takeRequest(5, TimeUnit.SECONDS) // initial register
+    val patchRequest = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+    assertEquals("PATCH", patchRequest.method)
+    val body = JSONObject(patchRequest.body.readUtf8())
+    assertEquals(true, body.getBoolean("subscribed"))
+    assertEquals("fcm-token", body.getString("token"))
+    assertTrue(store.getSubscribed())
+  }
+
+  @Test
   fun `two rapid tag mutations serialize and converge to the correct net merged result`() {
     server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
     val core = newCore()

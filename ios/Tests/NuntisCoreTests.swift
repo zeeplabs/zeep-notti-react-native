@@ -198,6 +198,59 @@ final class NuntisCoreTests: XCTestCase {
     XCTAssertTrue(logs.messages.contains { $0.contains("before initialize") })
   }
 
+  func test_loginPatchesExternalUserIdAndTheCachedTokenAndPersistsItLocallyOnSuccess() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
+    let core = newCore()
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+
+    core.login("user-42")
+
+    let requests = StubURLProtocol.recordedRequests()
+    XCTAssertEqual(requests.count, 2)
+    let patchRequest = requests.last!
+    XCTAssertEqual(patchRequest.httpMethod, "PATCH")
+    let body = try! JSONSerialization.jsonObject(with: bodyData(patchRequest)) as! [String: Any]
+    XCTAssertEqual(body["external_user_id"] as? String, "user-42")
+    XCTAssertEqual(body["token"] as? String, "apns-token")
+    XCTAssertEqual(store.getExternalUserId(), "user-42")
+  }
+
+  func test_logoutClearsTheLocallyHeldExternalUserIdWithoutSendingAnyPatch() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
+    let core = newCore()
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    core.login("user-42")
+    XCTAssertEqual(store.getExternalUserId(), "user-42")
+
+    core.logout()
+
+    // Only the initial register + login PATCH from setup above - logout()
+    // itself must not issue any network call (spec SDK-15: local-only clear,
+    // the backend has no support for clearing external_user_id server-side).
+    XCTAssertEqual(StubURLProtocol.recordedRequests().count, 2)
+    XCTAssertNil(store.getExternalUserId())
+  }
+
+  func test_setSubscriptionPatchesTheGivenSubscribedValueAndTheCachedTokenAndPersistsItLocallyOnSuccess() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
+    let core = newCore()
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+
+    core.setSubscription(true)
+
+    let requests = StubURLProtocol.recordedRequests()
+    XCTAssertEqual(requests.count, 2)
+    let patchRequest = requests.last!
+    XCTAssertEqual(patchRequest.httpMethod, "PATCH")
+    let body = try! JSONSerialization.jsonObject(with: bodyData(patchRequest)) as! [String: Any]
+    XCTAssertEqual(body["subscribed"] as? Bool, true)
+    XCTAssertEqual(body["token"] as? String, "apns-token")
+    XCTAssertTrue(store.getSubscribed())
+  }
+
   func test_twoRapidTagMutationsSerializeAndConvergeToTheCorrectNetMergedResult() {
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
     let core = newCore()
@@ -230,6 +283,25 @@ final class NuntisCoreTests: XCTestCase {
 
     XCTAssertEqual(StubURLProtocol.recordedRequests().count, 3)
     XCTAssertEqual(store.getTags(), ["cohort": "beta"])
+  }
+
+  /// Mirrors `NuntisApiClientTests.swift`'s private helper of the same name -
+  /// `URLRequest.httpBody` is sometimes nil with the body only available via
+  /// `httpBodyStream` depending on how `URLSession` moved it internally.
+  private func bodyData(_ request: URLRequest) -> Data {
+    if let body = request.httpBody { return body }
+    guard let stream = request.httpBodyStream else { return Data() }
+    stream.open()
+    defer { stream.close() }
+    var data = Data()
+    let bufferSize = 1024
+    var buffer = [UInt8](repeating: 0, count: bufferSize)
+    while stream.hasBytesAvailable {
+      let read = stream.read(&buffer, maxLength: bufferSize)
+      if read <= 0 { break }
+      data.append(buffer, count: read)
+    }
+    return data
   }
 }
 
