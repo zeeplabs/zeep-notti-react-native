@@ -566,6 +566,38 @@ final class NuntisCoreTests: XCTestCase {
     XCTAssertEqual(store.getDeviceId(), "device-1")
   }
 
+  func test_foregroundRetryDoesNotRegisterWithAPreviousSessionsPersistedToken() {
+    // Relaunch: a token from the last session is still in the store, but APNs
+    // has not delivered this session's token yet. The foreground retry used to
+    // fall back to the persisted one, registering the backend against a token
+    // that may already be dead - and then registering a *second* time moments
+    // later when the real token arrived.
+    store.setLastToken("stale-token-from-last-session")
+    var deliverToken: ((String?) -> Void)?
+    let core = newCore(tokenProvider: { cb in deliverToken = cb })
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
+    NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+    drain(core, timeout: 10)
+
+    XCTAssertEqual(
+      StubURLProtocol.recordedRequests().count, 0,
+      "the foreground retry must wait for a real token, not reuse the persisted one"
+    )
+
+    // The real token lands right after: exactly one registration, with it.
+    deliverToken?("fresh-apns-token")
+    drain(core, timeout: 10)
+
+    let requests = StubURLProtocol.recordedRequests()
+    XCTAssertEqual(requests.count, 1, "no duplicate registration")
+    let body = try! JSONSerialization.jsonObject(with: bodyData(requests[0])) as! [String: Any]
+    XCTAssertEqual(body["token"] as? String, "fresh-apns-token")
+    XCTAssertEqual(store.getLastToken(), "fresh-apns-token")
+  }
+
   // MARK: - A 2xx that is not a device object must not fake a successful registration
 
   func test_registrationWith2xxButAnUnparseableBodyDoesNotFakeSuccessAndRetriesOnForeground() {

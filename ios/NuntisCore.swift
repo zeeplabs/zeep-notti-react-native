@@ -312,13 +312,20 @@ public class NuntisCore {
 
     logger("Nuntis: app foregrounded without a successful registration - retrying")
 
-    if let token = lastAttemptedToken ?? deviceStore.getLastToken() {
+    if let token = lastAttemptedToken {
       registerDevice(client, token)
       return
     }
 
-    // No token was ever obtained: ask the platform for one again (on iOS this
-    // re-triggers registerForRemoteNotifications).
+    // No token has been seen *this session*. The persisted `lastToken` is
+    // deliberately not used as a stand-in: APNs tokens rotate (backup restore,
+    // reinstall), so on a relaunch where the token simply has not been
+    // delivered yet, registering with the previous session's token would both
+    // bind the backend to a dead token and cause a second, duplicate
+    // registration moments later when the real token does arrive. Ask the
+    // platform instead (on iOS this re-triggers registerForRemoteNotifications
+    // and the callback fires only once the real token is in hand) — the same
+    // mechanism `initialize` uses.
     tokenProvider { [weak self] token in
       guard let self = self else { return }
       self.onWorkQueue {
