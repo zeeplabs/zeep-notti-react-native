@@ -2,8 +2,7 @@
   "compilerOptions": {
     "target": "ES2019",
     "module": "CommonJS",
-    "moduleResolution": "node",
-    "ignoreDeprecations": "6.0",
+    "moduleResolution": "bundler",
     "esModuleInterop": true,
     "outDir": "build",
     "rootDir": "src",
