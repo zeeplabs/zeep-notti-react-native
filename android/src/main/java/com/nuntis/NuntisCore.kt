@@ -46,6 +46,13 @@ class NuntisCore(
 
   companion object {
     /**
+     * Bound on the pending-mutation queue below: registration can legitimately
+     * never complete (no push token, permanent 4xx), and an unbounded queue in
+     * that state would grow for the life of the process.
+     */
+    private const val MAX_PENDING_MUTATIONS = 32
+
+    /**
      * Single-threaded so blocking HTTP work never piles up more than one
      * thread and outgoing calls stay serialized; daemon so a pending retry
      * backoff can never hold the host process alive.
@@ -62,6 +69,24 @@ class NuntisCore(
   @Volatile
   private var apiClient: NuntisApiClient? = null
   private val mutationLock = Any()
+
+  /**
+   * Mutations issued before registration completes (`Nuntis.initialize()`
+   * immediately followed by `login`/`addTags`/`requestPermission`, which is
+   * the normal app-startup shape) have no device id or token to PATCH yet.
+   * Dropping them - as this used to - loses them permanently with nothing to
+   * retry, so they are held here and flushed in call order once registration
+   * succeeds. In-memory only, per the spec's Edge Case: a queued call is
+   * dropped on process death rather than replayed later with stale state.
+   * Guarded by [mutationLock].
+   */
+  private val pendingMutations = ArrayDeque<PendingMutation>()
+
+  private class PendingMutation(
+    val operation: String,
+    val client: NuntisApiClient,
+    val work: (client: NuntisApiClient, deviceId: String, token: String) -> Unit
+  )
 
   fun initialize(appId: String, clientKey: String, baseUrl: String) {
     if (appId.isBlank() || clientKey.isBlank() || baseUrl.isBlank()) {
@@ -127,6 +152,7 @@ class NuntisCore(
           deviceStore.setDeviceId(result.response.id)
           deviceStore.setLastToken(token)
           deviceStore.setTags(result.response.tags)
+          flushPendingMutations()
         }
         is ApiResult.Failure -> {
           logger("Nuntis.initialize: device registration failed: ${result.message}")
@@ -136,8 +162,7 @@ class NuntisCore(
   }
 
   fun requestPermission(callback: (granted: Boolean) -> Unit) {
-    val client = apiClient
-    if (client == null) {
+    if (apiClient == null) {
       logger("Nuntis.requestPermission: called before initialize - not prompting")
       callback(false)
       return
@@ -146,21 +171,18 @@ class NuntisCore(
     // The OS prompt must be triggered from the caller's (UI-capable) thread -
     // only the resulting PATCH is handed to the executor.
     permissionRequester { granted ->
-      dispatch("requestPermission") {
-        patchIfRegistered(client) { mapOf("subscribed" to granted) }?.let {
-          if (it is ApiResult.Success) deviceStore.setSubscribed(granted)
-        }
+      mutate("requestPermission") { client, deviceId, token ->
+        val result = client.patchDevice(deviceId, token, mapOf("subscribed" to granted))
+        if (result is ApiResult.Success) deviceStore.setSubscribed(granted)
       }
       callback(granted)
     }
   }
 
   fun login(externalUserId: String) {
-    val client = apiClient ?: return
-    dispatch("login") {
-      patchIfRegistered(client) { mapOf("external_user_id" to externalUserId) }?.let {
-        if (it is ApiResult.Success) deviceStore.setExternalUserId(externalUserId)
-      }
+    mutate("login") { client, deviceId, token ->
+      val result = client.patchDevice(deviceId, token, mapOf("external_user_id" to externalUserId))
+      if (result is ApiResult.Success) deviceStore.setExternalUserId(externalUserId)
     }
   }
 
@@ -173,25 +195,70 @@ class NuntisCore(
   }
 
   fun setSubscription(enabled: Boolean) {
-    val client = apiClient ?: return
-    dispatch("setSubscription") {
-      patchIfRegistered(client) { mapOf("subscribed" to enabled) }?.let {
-        if (it is ApiResult.Success) deviceStore.setSubscribed(enabled)
-      }
+    mutate("setSubscription") { client, deviceId, token ->
+      val result = client.patchDevice(deviceId, token, mapOf("subscribed" to enabled))
+      if (result is ApiResult.Success) deviceStore.setSubscribed(enabled)
     }
   }
 
   fun mutateTags(add: Map<String, String>?, remove: List<String>?) {
-    val client = apiClient ?: return
-    dispatch("mutateTags") {
-      synchronized(mutationLock) {
-        val deviceId = deviceStore.getDeviceId() ?: return@dispatch
-        val token = deviceStore.getLastToken() ?: return@dispatch
-        val merged = NuntisDeviceStore.mergeTags(deviceStore.getTags(), add, remove)
-        val result = client.patchDevice(deviceId, token, mapOf("tags" to merged))
-        if (result is ApiResult.Success) {
-          deviceStore.setTags(result.response.tags)
+    mutate("mutateTags") { client, deviceId, token ->
+      val merged = NuntisDeviceStore.mergeTags(deviceStore.getTags(), add, remove)
+      val result = client.patchDevice(deviceId, token, mapOf("tags" to merged))
+      if (result is ApiResult.Success) {
+        deviceStore.setTags(result.response.tags)
+      }
+    }
+  }
+
+  /**
+   * Single entry point for every device mutation: hands the work to
+   * [executor], then either runs it (device registered) or queues it until
+   * registration completes. The work body reads the cached state itself, so a
+   * queued tag mutation merges against the tag map registration seeded rather
+   * than against a snapshot taken at enqueue time.
+   */
+  private fun mutate(
+    operation: String,
+    work: (client: NuntisApiClient, deviceId: String, token: String) -> Unit
+  ) {
+    val client = apiClient
+    if (client == null) {
+      logger("Nuntis.$operation: called before initialize - ignored")
+      return
+    }
+    dispatch(operation) { runOrQueue(PendingMutation(operation, client, work)) }
+  }
+
+  private fun runOrQueue(mutation: PendingMutation) {
+    synchronized(mutationLock) {
+      val deviceId = deviceStore.getDeviceId()
+      val token = deviceStore.getLastToken()
+      if (deviceId == null || token == null) {
+        if (pendingMutations.size >= MAX_PENDING_MUTATIONS) {
+          val dropped = pendingMutations.removeFirst()
+          logger("Nuntis.${dropped.operation}: pending-mutation queue full - dropped the oldest queued call")
         }
+        pendingMutations.addLast(mutation)
+        logger("Nuntis.${mutation.operation}: device not registered yet - queued until registration completes")
+        return
+      }
+      mutation.work(mutation.client, deviceId, token)
+    }
+  }
+
+  /** Called from [registerDevice] while [mutationLock] is held. */
+  private fun flushPendingMutations() {
+    if (pendingMutations.isEmpty()) return
+    val deviceId = deviceStore.getDeviceId() ?: return
+    val token = deviceStore.getLastToken() ?: return
+    val queued = pendingMutations.toList()
+    pendingMutations.clear()
+    queued.forEach { mutation ->
+      try {
+        mutation.work(mutation.client, deviceId, token)
+      } catch (t: Throwable) {
+        logger("Nuntis.${mutation.operation}: queued call failed - ${t.message}")
       }
     }
   }
@@ -212,14 +279,4 @@ class NuntisCore(
     }
   }
 
-  private fun patchIfRegistered(
-    client: NuntisApiClient,
-    fields: () -> Map<String, Any>
-  ): ApiResult? {
-    synchronized(mutationLock) {
-      val deviceId = deviceStore.getDeviceId() ?: return null
-      val token = deviceStore.getLastToken() ?: return null
-      return client.patchDevice(deviceId, token, fields())
-    }
-  }
 }

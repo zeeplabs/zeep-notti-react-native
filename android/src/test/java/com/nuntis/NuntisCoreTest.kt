@@ -521,6 +521,77 @@ class NuntisCoreTest {
   }
 
   @Test
+  fun `a permission grant that lands before registration is queued and sent once the token arrives`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    var deferredToken: ((String?) -> Unit)? = null
+    val core = newCore(
+      tokenProvider = { cb -> deferredToken = cb },
+      permissionRequester = { cb -> cb(true) }
+    )
+
+    // Realistic sequence: initialize() then an immediate requestPermission()
+    // while the FCM token fetch is still in flight, so there is no device id
+    // to PATCH yet.
+    core.initialize("app-1", "key", validBaseUrl)
+    var granted: Boolean? = null
+    core.requestPermission { granted = it }
+    awaitIdle()
+
+    assertEquals(true, granted)
+    assertEquals(0, server.requestCount)
+
+    requireNotNull(deferredToken).invoke("fcm-token")
+    awaitIdle()
+
+    // The grant must still reach the backend - dropping it leaves the device
+    // permanently ineligible for delivery with nothing to retry it (P2-AC2).
+    assertEquals(2, server.requestCount)
+    assertEquals("POST", requireNotNull(server.takeRequest(5, TimeUnit.SECONDS)).method)
+    val patch = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+    assertEquals("PATCH", patch.method)
+    assertEquals(true, JSONObject(patch.body.readUtf8()).getBoolean("subscribed"))
+    assertTrue(store.getSubscribed())
+  }
+
+  @Test
+  fun `mutations queued before registration are flushed in call order and merged against the registered tags`() {
+    server.enqueue(
+      MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{"seeded":"yes"}}""")
+    )
+    server.enqueue(
+      MockResponse().setResponseCode(200)
+        .setBody("""{"id":"device-1","tags":{"seeded":"yes","plan":"vip"}}""")
+    )
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    var deferredToken: ((String?) -> Unit)? = null
+    val core = newCore(tokenProvider = { cb -> deferredToken = cb })
+
+    core.initialize("app-1", "key", validBaseUrl)
+    core.mutateTags(add = mapOf("plan" to "vip"), remove = null)
+    core.login("user-42")
+    awaitIdle()
+    assertEquals(0, server.requestCount)
+
+    requireNotNull(deferredToken).invoke("fcm-token")
+    awaitIdle()
+
+    assertEquals(3, server.requestCount)
+    assertEquals("POST", requireNotNull(server.takeRequest(5, TimeUnit.SECONDS)).method)
+
+    val tagPatch = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+    val sentTags = JSONObject(tagPatch.body.readUtf8()).getJSONObject("tags")
+    // Merged against the tag map registration seeded, not against an empty
+    // one - the merge has to happen at flush time, not at enqueue time.
+    assertEquals("vip", sentTags.getString("plan"))
+    assertEquals("yes", sentTags.getString("seeded"))
+
+    val loginPatch = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+    assertEquals("user-42", JSONObject(loginPatch.body.readUtf8()).getString("external_user_id"))
+    assertEquals("user-42", store.getExternalUserId())
+  }
+
+  @Test
   fun `two rapid tag mutations serialize and converge to the correct net merged result`() {
     server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
     val core = newCore()
