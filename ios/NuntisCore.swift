@@ -20,7 +20,7 @@ import UIKit
 /// **Threading contract**: every public method returns immediately and does
 /// its real work on `workQueue`, a private serial background queue.
 /// `NuntisApiClient` is blocking by design (semaphore-gated `URLSession`
-/// call plus `Thread.sleep` retry backoff, up to ~5x65s + backoff on a dead
+/// call plus `Thread.sleep` retry backoff, up to 5x15s + backoff on a dead
 /// network) and is therefore *only ever* invoked from `workQueue` — never
 /// from the caller's thread, which on the APNs-delegate and permission-result
 /// paths is the host app's main thread (a block there means a watchdog kill,

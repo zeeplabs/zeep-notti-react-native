@@ -22,7 +22,7 @@ private struct NuntisApiClientTimeoutError: Error, LocalizedError {
 /// callers use the default (real thread sleep via `Thread.sleep`).
 ///
 /// **Threading**: every method here blocks the calling thread — for up to
-/// ~5x65s of request timeouts plus 2+4+8+16s of backoff on a dead network.
+/// 5x15s of request timeouts plus 2+4+8+16s of backoff on a dead network.
 /// It must therefore only ever be called from `NuntisCore`'s private serial
 /// work queue, never from the main thread (see NuntisCore's threading
 /// contract). Nothing in this file may be invoked directly from an
@@ -31,6 +31,18 @@ public class NuntisApiClient {
 
   private static let maxAttempts = 5
   private static let baseDelayMs: UInt64 = 2000
+
+  /// Per-attempt request timeout. Same order of magnitude as Android's
+  /// `OkHttpClient()` defaults (10s connect/read/write) so a black-holing
+  /// network fails fast on both platforms. Set explicitly on every request
+  /// rather than inherited from `URLSession.shared`'s 60s default: this call
+  /// chain is blocking and owns `NuntisCore`'s serial work queue for its whole
+  /// duration, so every queued login/addTags/setSubscription waits it out.
+  private static let requestTimeoutSeconds: TimeInterval = 15
+  /// Backstop for the semaphore below, above `requestTimeoutSeconds` so
+  /// `URLSession`'s own timeout is what normally fires. Only reached if a
+  /// caller-supplied session never completes its task at all.
+  private static let semaphoreTimeoutSeconds: TimeInterval = 20
 
   private let session: URLSession
   private let baseUrl: String
@@ -81,7 +93,7 @@ public class NuntisApiClient {
     guard let url = URL(string: "\(baseUrl)/v1/apps/\(appId)/devices") else {
       return .failure("invalid device-registration URL built from the configured baseUrl")
     }
-    var request = URLRequest(url: url)
+    var request = URLRequest(url: url, timeoutInterval: Self.requestTimeoutSeconds)
     request.httpMethod = "POST"
     request.setValue("Bearer \(clientKey)", forHTTPHeaderField: "Authorization")
     request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
@@ -98,7 +110,7 @@ public class NuntisApiClient {
     guard let url = URL(string: "\(baseUrl)/v1/apps/\(appId)/devices/\(deviceId)") else {
       return .failure("invalid device-update URL built from the configured baseUrl")
     }
-    var request = URLRequest(url: url)
+    var request = URLRequest(url: url, timeoutInterval: Self.requestTimeoutSeconds)
     request.httpMethod = "PATCH"
     request.setValue("Bearer \(clientKey)", forHTTPHeaderField: "Authorization")
     request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
@@ -160,12 +172,12 @@ public class NuntisApiClient {
       semaphore.signal()
     }.resume()
 
-    // Independent bound on top of URLSession's own default request timeout
-    // (60s) - if a session with no timeout configured is ever passed in,
-    // this still guarantees executeWithRetry's retry loop resumes instead of
-    // hanging indefinitely (SDK reliability fix - see
+    // Independent bound on top of the request's own timeoutInterval - if a
+    // session is ever passed in that never completes the task, this still
+    // guarantees executeWithRetry's retry loop resumes instead of hanging
+    // indefinitely (SDK reliability fix - see
     // .specs/features/sdk-core-v1/validation.md Fix 4).
-    if semaphore.wait(timeout: .now() + 65) == .timedOut {
+    if semaphore.wait(timeout: .now() + Self.semaphoreTimeoutSeconds) == .timedOut {
       return (nil, nil, NuntisApiClientTimeoutError())
     }
     return (resultData, resultResponse, resultError)

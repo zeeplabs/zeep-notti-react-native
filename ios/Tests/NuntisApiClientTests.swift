@@ -140,6 +140,28 @@ final class NuntisApiClientTests: XCTestCase {
     XCTAssertEqual(StubURLProtocol.recordedRequests().count, 2)
   }
 
+  func test_everyRequestCarriesAnExplicitShortTimeoutInsteadOfTheUrlSessionDefault() {
+    // Inherited from URLSession's 60s default, a black-holing network held
+    // NuntisCore's serial work queue for ~5.5 minutes across the retry cap,
+    // stalling every queued login/addTags/setSubscription behind it. Android
+    // uses OkHttp's 10s defaults; iOS must be in the same order of magnitude.
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
+
+    _ = client.createOrUpdateDevice(token: "t", platform: "ios")
+    _ = client.patchDevice(deviceId: "device-1", token: "t", fields: [:])
+
+    let recorded = StubURLProtocol.recordedRequests()
+    XCTAssertEqual(recorded.count, 2)
+    for request in recorded {
+      XCTAssertLessThanOrEqual(
+        request.timeoutInterval, 15,
+        "\(request.httpMethod ?? "?") must not inherit URLSession's 60s default"
+      )
+      XCTAssertGreaterThan(request.timeoutInterval, 0)
+    }
+  }
+
   func test_a2xxWhoseBodyIsNotADeviceObjectIsAFailureAndIsRetried() {
     // A captive portal / proxy / gateway happily answers 200 with HTML, and a
     // backend can rename or omit `id`. Reporting that as success handed the
