@@ -1,5 +1,6 @@
 package com.nuntis
 
+import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -7,9 +8,12 @@ import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 class NuntisCoreTest {
@@ -17,6 +21,7 @@ class NuntisCoreTest {
   private lateinit var server: MockWebServer
   private lateinit var store: NuntisDeviceStore
   private lateinit var prefs: FakePrefsForCore
+  private lateinit var executor: ExecutorService
 
   @Before
   fun setUp() {
@@ -24,6 +29,17 @@ class NuntisCoreTest {
     server.start()
     prefs = FakePrefsForCore()
     store = NuntisDeviceStore(prefs)
+    executor = Executors.newSingleThreadExecutor()
+  }
+
+  /**
+   * Blocks until every task already submitted to the (single-threaded) core
+   * executor has run. Needed because NuntisCore's public methods return
+   * immediately after handing the work off - the whole point of the
+   * "no blocking I/O on the caller's thread" contract exercised below.
+   */
+  private fun awaitIdle() {
+    executor.submit { }.get(10, TimeUnit.SECONDS)
   }
 
   /** The mock server's own URL - the only `baseUrl` that actually reaches it in these tests. */
@@ -32,18 +48,23 @@ class NuntisCoreTest {
 
   @After
   fun tearDown() {
+    executor.shutdownNow()
     server.shutdown()
   }
 
   private fun newCore(
     tokenProvider: (callback: (String?) -> Unit) -> Unit = { cb -> cb("fcm-token") },
     permissionRequester: (callback: (Boolean) -> Unit) -> Unit = { it(true) },
-    logs: MutableList<String>? = null
+    logs: MutableList<String>? = null,
+    interceptor: Interceptor? = null,
+    coreExecutor: ExecutorService = executor
   ) = NuntisCore(
     deviceStore = store,
     apiClientFactory = { appId, clientKey, baseUrl ->
       NuntisApiClient(
-        httpClient = OkHttpClient(),
+        httpClient = OkHttpClient.Builder()
+          .apply { interceptor?.let { addInterceptor(it) } }
+          .build(),
         baseUrl = baseUrl,
         appId = appId,
         clientKey = clientKey,
@@ -52,7 +73,8 @@ class NuntisCoreTest {
     },
     tokenProvider = tokenProvider,
     permissionRequester = permissionRequester,
-    logger = { logs?.add(it) }
+    logger = { logs?.add(it) },
+    executor = coreExecutor
   )
 
   @Test
@@ -111,6 +133,7 @@ class NuntisCoreTest {
     assertEquals(0, server.requestCount)
 
     deferredCallback?.invoke("fcm-token")
+    awaitIdle()
 
     assertEquals(1, server.requestCount)
     assertEquals("device-1", store.getDeviceId())
@@ -125,6 +148,7 @@ class NuntisCoreTest {
 
     core.initialize("app-1", "key", validBaseUrl)
     deferredCallback?.invoke(null)
+    awaitIdle()
 
     assertEquals(0, server.requestCount)
     assertTrue(logs.any { it.contains("no push token") })
@@ -139,6 +163,7 @@ class NuntisCoreTest {
     val core = newCore()
 
     core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
 
     assertEquals(1, server.requestCount)
     assertEquals("device-1", store.getDeviceId())
@@ -155,6 +180,7 @@ class NuntisCoreTest {
 
     core.initialize("app-1", "key", validBaseUrl)
     core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
 
     assertEquals(1, server.requestCount)
   }
@@ -165,8 +191,10 @@ class NuntisCoreTest {
     server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
     val core = newCore()
     core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
 
     core.onTokenRefreshed("new-fcm-token")
+    awaitIdle()
 
     assertEquals(2, server.requestCount)
     server.takeRequest(5, TimeUnit.SECONDS) // the initial register
@@ -183,9 +211,11 @@ class NuntisCoreTest {
     var promptInvoked = false
     val core = newCore(permissionRequester = { cb -> promptInvoked = true; cb(true) })
     core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
 
     var callbackResult: Boolean? = null
     core.requestPermission { granted -> callbackResult = granted }
+    awaitIdle()
 
     assertTrue(promptInvoked)
     assertEquals(true, callbackResult)
@@ -202,8 +232,10 @@ class NuntisCoreTest {
     server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
     val core = newCore(permissionRequester = { cb -> cb(false) })
     core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
 
     core.requestPermission { }
+    awaitIdle()
 
     server.takeRequest(5, TimeUnit.SECONDS)
     val patchRequest = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
@@ -231,8 +263,10 @@ class NuntisCoreTest {
     server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
     val core = newCore()
     core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
 
     core.login("user-42")
+    awaitIdle()
 
     assertEquals(2, server.requestCount)
     server.takeRequest(5, TimeUnit.SECONDS) // initial register
@@ -251,9 +285,11 @@ class NuntisCoreTest {
     val core = newCore()
     core.initialize("app-1", "key", validBaseUrl)
     core.login("user-42")
+    awaitIdle()
     assertEquals("user-42", store.getExternalUserId())
 
     core.logout()
+    awaitIdle()
 
     // Only the initial register + login PATCH from setup above - logout()
     // itself must not issue any network call (spec SDK-15: local-only clear,
@@ -268,8 +304,10 @@ class NuntisCoreTest {
     server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
     val core = newCore()
     core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
 
     core.setSubscription(true)
+    awaitIdle()
 
     assertEquals(2, server.requestCount)
     server.takeRequest(5, TimeUnit.SECONDS) // initial register
@@ -282,10 +320,70 @@ class NuntisCoreTest {
   }
 
   @Test
+  fun `initialize never performs the registration HTTP call on the calling thread`() {
+    val callerThread = Thread.currentThread().name
+    val requestThreads = mutableListOf<String>()
+    // A deliberately slow round trip: if the call ran inline on the caller's
+    // thread, initialize() would not return until it finished (on a real
+    // device this is exactly the ANR / NetworkOnMainThreadException path).
+    val slowInterceptor = Interceptor { chain ->
+      requestThreads.add(Thread.currentThread().name)
+      Thread.sleep(700)
+      chain.proceed(chain.request())
+    }
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    val core = newCore(interceptor = slowInterceptor)
+
+    val startedAt = System.nanoTime()
+    core.initialize("app-1", "key", validBaseUrl)
+    val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000
+
+    assertTrue(
+      "initialize() blocked the calling thread for ${elapsedMs}ms",
+      elapsedMs < 300
+    )
+
+    awaitIdle()
+    assertEquals("device-1", store.getDeviceId())
+    assertEquals(1, requestThreads.size)
+    assertNotEquals(callerThread, requestThreads.single())
+  }
+
+  @Test
+  fun `mutation calls never perform their PATCH on the calling thread`() {
+    val callerThread = Thread.currentThread().name
+    val patchThreads = mutableListOf<String>()
+    val slowInterceptor = Interceptor { chain ->
+      if (chain.request().method == "PATCH") {
+        patchThreads.add(Thread.currentThread().name)
+        Thread.sleep(700)
+      }
+      chain.proceed(chain.request())
+    }
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{"plan":"vip"}}"""))
+    val core = newCore(interceptor = slowInterceptor)
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    val startedAt = System.nanoTime()
+    core.mutateTags(add = mapOf("plan" to "vip"), remove = null)
+    val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000
+
+    assertTrue("addTags() blocked the calling thread for ${elapsedMs}ms", elapsedMs < 300)
+
+    awaitIdle()
+    assertEquals(mapOf("plan" to "vip"), store.getTags())
+    assertEquals(1, patchThreads.size)
+    assertNotEquals(callerThread, patchThreads.single())
+  }
+
+  @Test
   fun `two rapid tag mutations serialize and converge to the correct net merged result`() {
     server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
     val core = newCore()
     core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
 
     // First mutation's PATCH response is artificially slow; if mutateTags did
     // not serialize, the second (fast) mutation on another thread would race
@@ -306,6 +404,7 @@ class NuntisCoreTest {
     thread2.start()
     thread1.join(2000)
     thread2.join(2000)
+    awaitIdle()
 
     assertEquals(3, server.requestCount)
     assertEquals(mapOf("cohort" to "beta"), store.getTags())

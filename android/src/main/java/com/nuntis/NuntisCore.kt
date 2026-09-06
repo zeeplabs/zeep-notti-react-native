@@ -1,5 +1,8 @@
 package com.nuntis
 
+import java.util.concurrent.Executor
+import java.util.concurrent.Executors
+
 /**
  * Orchestrates init, device registration, token refresh, permission
  * requests, and tag/external-id/subscription mutations (design.md
@@ -12,6 +15,23 @@ package com.nuntis
  * callback-based rather than a plain synchronous getter, since the real FCM
  * token fetch (`FirebaseMessaging.getInstance().token`) is an asynchronous
  * Play Services `Task`, not a synchronous call.
+ *
+ * ## Threading
+ *
+ * Every call that can reach [NuntisApiClient] (blocking OkHttp `execute()`
+ * plus the retry backoff's `Thread.sleep`) is handed to [executor] and never
+ * runs on the caller's thread: the TurboModule methods below are invoked from
+ * the RN JS thread, and the FCM token listener can land on the main looper —
+ * doing socket I/O there throws `NetworkOnMainThreadException` (an uncaught
+ * `RuntimeException`, not an `IOException`) or ANRs for the full retry window.
+ * The default executor is single-threaded, which additionally serializes all
+ * outgoing calls (spec P3-AC8) on top of the explicit [mutationLock].
+ *
+ * Public methods therefore return immediately (they are `void`/callback-based
+ * in the Spec, so no caller is waiting on a return value); results reach JS
+ * via the injected callbacks, which is safe from any thread — TurboModule
+ * `Promise` resolution is thread-agnostic (it marshals onto the JS queue
+ * itself), it does not require the main/UI thread.
  */
 class NuntisCore(
   private val deviceStore: NuntisDeviceStore,
@@ -19,12 +39,26 @@ class NuntisCore(
   private val tokenProvider: (callback: (token: String?) -> Unit) -> Unit,
   private val permissionRequester: (callback: (granted: Boolean) -> Unit) -> Unit,
   private val platform: String = "android",
-  private val logger: (message: String) -> Unit = {}
+  private val logger: (message: String) -> Unit = {},
+  private val executor: Executor = newDefaultExecutor()
 ) {
+
+  companion object {
+    /**
+     * Single-threaded so blocking HTTP work never piles up more than one
+     * thread and outgoing calls stay serialized; daemon so a pending retry
+     * backoff can never hold the host process alive.
+     */
+    @JvmStatic
+    fun newDefaultExecutor(): Executor = Executors.newSingleThreadExecutor { runnable ->
+      Thread(runnable, "nuntis-io").apply { isDaemon = true }
+    }
+  }
 
   private var appId: String? = null
   private var clientKey: String? = null
   private var baseUrl: String? = null
+  @Volatile
   private var apiClient: NuntisApiClient? = null
   private val mutationLock = Any()
 
@@ -50,13 +84,16 @@ class NuntisCore(
         logger("Nuntis.initialize: no push token available - skipping registration")
         return@tokenProvider
       }
-      registerDevice(client, token)
+      // The token callback itself can be delivered on the main looper (Play
+      // Services `Task` default executor), so the registration call is handed
+      // off rather than run here.
+      dispatch("register") { registerDevice(client, token) }
     }
   }
 
   fun onTokenRefreshed(newToken: String) {
     val client = apiClient ?: return
-    registerDevice(client, newToken)
+    dispatch("onTokenRefreshed") { registerDevice(client, newToken) }
   }
 
   private fun registerDevice(client: NuntisApiClient, token: String) {
@@ -80,9 +117,13 @@ class NuntisCore(
       return
     }
 
+    // The OS prompt must be triggered from the caller's (UI-capable) thread -
+    // only the resulting PATCH is handed to the executor.
     permissionRequester { granted ->
-      patchIfRegistered(client) { mapOf("subscribed" to granted) }?.let {
-        if (it is ApiResult.Success) deviceStore.setSubscribed(granted)
+      dispatch("requestPermission") {
+        patchIfRegistered(client) { mapOf("subscribed" to granted) }?.let {
+          if (it is ApiResult.Success) deviceStore.setSubscribed(granted)
+        }
       }
       callback(granted)
     }
@@ -90,8 +131,10 @@ class NuntisCore(
 
   fun login(externalUserId: String) {
     val client = apiClient ?: return
-    patchIfRegistered(client) { mapOf("external_user_id" to externalUserId) }?.let {
-      if (it is ApiResult.Success) deviceStore.setExternalUserId(externalUserId)
+    dispatch("login") {
+      patchIfRegistered(client) { mapOf("external_user_id" to externalUserId) }?.let {
+        if (it is ApiResult.Success) deviceStore.setExternalUserId(externalUserId)
+      }
     }
   }
 
@@ -105,20 +148,40 @@ class NuntisCore(
 
   fun setSubscription(enabled: Boolean) {
     val client = apiClient ?: return
-    patchIfRegistered(client) { mapOf("subscribed" to enabled) }?.let {
-      if (it is ApiResult.Success) deviceStore.setSubscribed(enabled)
+    dispatch("setSubscription") {
+      patchIfRegistered(client) { mapOf("subscribed" to enabled) }?.let {
+        if (it is ApiResult.Success) deviceStore.setSubscribed(enabled)
+      }
     }
   }
 
   fun mutateTags(add: Map<String, String>?, remove: List<String>?) {
     val client = apiClient ?: return
-    synchronized(mutationLock) {
-      val deviceId = deviceStore.getDeviceId() ?: return
-      val token = deviceStore.getLastToken() ?: return
-      val merged = NuntisDeviceStore.mergeTags(deviceStore.getTags(), add, remove)
-      val result = client.patchDevice(deviceId, token, mapOf("tags" to merged))
-      if (result is ApiResult.Success) {
-        deviceStore.setTags(result.response.tags)
+    dispatch("mutateTags") {
+      synchronized(mutationLock) {
+        val deviceId = deviceStore.getDeviceId() ?: return@dispatch
+        val token = deviceStore.getLastToken() ?: return@dispatch
+        val merged = NuntisDeviceStore.mergeTags(deviceStore.getTags(), add, remove)
+        val result = client.patchDevice(deviceId, token, mapOf("tags" to merged))
+        if (result is ApiResult.Success) {
+          deviceStore.setTags(result.response.tags)
+        }
+      }
+    }
+  }
+
+  /**
+   * Hands one unit of (blocking) work to [executor], never letting a failure
+   * escape: an exception thrown inside an `Executor` task is either swallowed
+   * silently (`submit`) or kills the worker thread (`execute`), and either way
+   * an SDK must not take the host app down (spec SDK-03/SDK-04 crash safety).
+   */
+  private fun dispatch(operation: String, work: () -> Unit) {
+    executor.execute {
+      try {
+        work()
+      } catch (t: Throwable) {
+        logger("Nuntis.$operation: unexpected failure - ${t.message}")
       }
     }
   }

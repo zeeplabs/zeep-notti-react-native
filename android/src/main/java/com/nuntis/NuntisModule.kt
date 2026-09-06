@@ -14,6 +14,8 @@ import com.facebook.react.modules.core.PermissionAwareActivity
 import com.facebook.react.modules.core.PermissionListener
 import com.google.firebase.messaging.FirebaseMessaging
 import okhttp3.OkHttpClient
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
 /**
  * Thin TurboModule entry: every Spec method (T4) delegates one line into
@@ -33,6 +35,14 @@ class NuntisModule(reactContext: ReactApplicationContext) :
       ?.registerActivityLifecycleCallbacks(NuntisActivityLifecycleListener())
   }
 
+  /**
+   * Shared by [NuntisCore] (blocking HTTP + retry backoff) and the FCM-token
+   * `Task` listener below, so neither ever runs on the main looper.
+   */
+  private val ioExecutor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
+    Thread(runnable, "nuntis-io").apply { isDaemon = true }
+  }
+
   private val core: NuntisCore by lazy {
     NuntisCore(
       deviceStore = NuntisDeviceStore(
@@ -42,7 +52,9 @@ class NuntisModule(reactContext: ReactApplicationContext) :
         NuntisApiClient(OkHttpClient(), baseUrl, appId, clientKey)
       },
       tokenProvider = { callback -> fetchFcmToken(callback) },
-      permissionRequester = { callback -> requestNativePermission(callback) }
+      permissionRequester = { callback -> requestNativePermission(callback) },
+      logger = { message -> Log.e(NAME, message) },
+      executor = ioExecutor
     ).also { activeCore = it }
   }
 
@@ -94,12 +106,16 @@ class NuntisModule(reactContext: ReactApplicationContext) :
    * configured / no `google-services.json`): any failure - synchronous
    * (Firebase not initialized) or asynchronous (`addOnFailureListener`) - is
    * logged and resolves the callback with `null`, never throws.
+   *
+   * Both listeners take [ioExecutor] explicitly: the no-executor overloads
+   * run on the main looper, which would put the whole registration path
+   * (blocking OkHttp call + retry backoff) on the UI thread.
    */
   private fun fetchFcmToken(callback: (String?) -> Unit) {
     try {
       FirebaseMessaging.getInstance().token
-        .addOnSuccessListener { token -> callback(token) }
-        .addOnFailureListener { e ->
+        .addOnSuccessListener(ioExecutor) { token -> callback(token) }
+        .addOnFailureListener(ioExecutor) { e ->
           Log.e(NAME, "Nuntis: failed to fetch FCM token - ${e.message}")
           callback(null)
         }
