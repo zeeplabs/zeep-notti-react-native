@@ -558,14 +558,22 @@ T18 -> T19
 - Skill: NONE
 
 **Done when**:
-- [ ] Plugin adds the Google Services Gradle plugin + `google-services.json` reference on Android
-- [ ] Plugin adds the push-notification entitlement/capability on iOS
-- [ ] `pnpm typecheck` and `pnpm lint` pass on the new plugin code
+- [x] Plugin adds the Google Services Gradle plugin + `google-services.json` reference on Android
+- [x] Plugin adds the push-notification entitlement/capability on iOS
+- [x] `pnpm typecheck` and `pnpm lint` pass on the new plugin code
 
 **Tests**: none (config-mutation script, per coverage matrix)
 **Gate**: build
 
+**Status**: ✅ Complete
+
 **Commit**: `feat(plugin): add Expo config plugin for Nuntis push setup`
+
+**Deviations**:
+1. Context7 MCP was unavailable in this environment (same gap as T2/T3) — the `@expo/config-plugins` API (`AndroidConfig.GoogleServices.withClassPath`/`withApplyPlugin`/`withGoogleServicesFile`, `withEntitlementsPlist`) was verified via web search against the actual `expo/expo` GitHub source (`packages/@expo/config-plugins/src/android/GoogleServices.ts`, `src/plugins/ios-plugins.ts`), not assumed from memory.
+2. `@expo/config-plugins` added as a runtime `dependency` (not `devDependency`), per this task's own briefing — a newer community convention imports mod functions from `expo/config-plugins` instead to guarantee version alignment with the host app's installed Expo SDK, but that requires `expo` itself as a devDependency/peerDependency and this repo isn't Expo-tooled (`create-react-native-library`/bob, not `expo-module-scripts`); flagged as a lighter-weight, still-correct alternative.
+3. Added `plugin/tsconfig.json` + a `build:plugin` script (wired into `prepare`) to compile `plugin/src/withNuntis.ts` to CommonJS at `plugin/build/`, since `app.plugin.js` (Expo CLI's `require()` entry point) cannot load TypeScript directly. Not explicitly listed in this task's `Where` field but necessary to make the plugin loadable — same class of small necessary addition as T8/T9's precedent. `plugin/build/` is already covered by the pre-existing `build/` gitignore pattern, matching `lib/`'s not-committed-but-shipped-via-`files` convention.
+4. Real `pnpm turbo run build:android` failed in this environment with a pre-existing, unrelated defect: `example/android/gradle/wrapper/gradle-wrapper.properties` pinned Gradle `9.3.1`, which is incompatible with the AGP version (`8.12.0`) that `@react-native/gradle-plugin`'s own version catalog pins (`Class org.gradle.jvm.toolchain.JvmVendorSpec does not have member field 'IBM_SEMERU'` — confirmed via `javap` against the actual Gradle 9.3.1 distribution jar, which has `IBM` but not `IBM_SEMERU`). Verified via `git stash` isolation that this reproduces identically with T17's changes removed, i.e. pre-existing and unrelated to this task. Fixed by pinning `gradle-wrapper.properties` to Gradle `8.13` (AGP 8.12-compatible) — a real Xcode/Gradle build now confirms `BUILD SUCCESSFUL in 2m 5s`. Also hit `example/ios`'s CocoaPods sandbox being out of sync with `Podfile.lock` (`pod install` resolved it, no repo file changes needed - `Podfile.lock`/`Info.plist` noise reverted via `git checkout` per existing STATE.md convention). Both fixes were necessary to satisfy this task's mandatory `build` gate and are flagged here per the Scope Guardrail.
 
 ---
 

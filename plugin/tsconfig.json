@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES2019",
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "ignoreDeprecations": "6.0",
+    "esModuleInterop": true,
+    "outDir": "build",
+    "rootDir": "src",
+    "declaration": true,
+    "skipLibCheck": true,
+    "strict": true
+  },
+  "include": ["src"]
+}
