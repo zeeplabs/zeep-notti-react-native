@@ -42,6 +42,16 @@ public class NuntisCore {
   private var baseUrl: String?
   private var apiClient: NuntisApiClient?
 
+  /// Mutations issued before device registration finished, replayed in order
+  /// once it does. Bounded so a never-registering device cannot grow it
+  /// without limit.
+  private struct PendingMutation {
+    let description: String
+    let work: (_ client: NuntisApiClient, _ deviceId: String, _ token: String) -> Void
+  }
+  private static let maxPendingMutations = 32
+  private var pendingMutations: [PendingMutation] = []
+
   public init(
     deviceStore: NuntisDeviceStore,
     apiClientFactory: @escaping (_ appId: String, _ clientKey: String, _ baseUrl: String) -> NuntisApiClient,
@@ -103,8 +113,8 @@ public class NuntisCore {
         // minutes-long retry cycle on a dead network.
         self.onWorkQueue {
           callback(granted)
-          if let result = self.patchIfRegistered(client, ["subscribed": granted]) {
-            if case .success = result { self.deviceStore.setSubscribed(granted) }
+          self.performOrQueue(client, description: "permission-result subscription update") { [weak self] client, deviceId, token in
+            self?.patchSubscribed(client, deviceId: deviceId, token: token, granted)
           }
         }
       }
@@ -114,8 +124,13 @@ public class NuntisCore {
   public func login(_ externalUserId: String) {
     workQueue.async { [weak self] in
       guard let self = self, let client = self.apiClient else { return }
-      if let result = self.patchIfRegistered(client, ["external_user_id": externalUserId]) {
-        if case .success = result { self.deviceStore.setExternalUserId(externalUserId) }
+      self.performOrQueue(client, description: "login") { [weak self] client, deviceId, token in
+        let result = client.patchDevice(
+          deviceId: deviceId,
+          token: token,
+          fields: ["external_user_id": externalUserId]
+        )
+        if case .success = result { self?.deviceStore.setExternalUserId(externalUserId) }
       }
     }
   }
@@ -131,8 +146,8 @@ public class NuntisCore {
   public func setSubscription(_ enabled: Bool) {
     workQueue.async { [weak self] in
       guard let self = self, let client = self.apiClient else { return }
-      if let result = self.patchIfRegistered(client, ["subscribed": enabled]) {
-        if case .success = result { self.deviceStore.setSubscribed(enabled) }
+      self.performOrQueue(client, description: "setSubscription") { [weak self] client, deviceId, token in
+        self?.patchSubscribed(client, deviceId: deviceId, token: token, enabled)
       }
     }
   }
@@ -140,11 +155,16 @@ public class NuntisCore {
   public func mutateTags(add: [String: String]?, remove: [String]?) {
     workQueue.async { [weak self] in
       guard let self = self, let client = self.apiClient else { return }
-      guard let deviceId = self.deviceStore.getDeviceId(), let token = self.deviceStore.getLastToken() else { return }
-
-      let merged = NuntisDeviceStore.mergeTags(self.deviceStore.getTags(), add: add, remove: remove)
-      if case .success(let response) = client.patchDevice(deviceId: deviceId, token: token, fields: ["tags": merged]) {
-        self.deviceStore.setTags(response.tags)
+      self.performOrQueue(client, description: "tag mutation") { [weak self] client, deviceId, token in
+        guard let self = self else { return }
+        // The merge deliberately reads the tag cache at *send* time, not at
+        // call time: a mutation queued before registration must merge onto
+        // whatever tags the registration response seeded.
+        let merged = NuntisDeviceStore.mergeTags(self.deviceStore.getTags(), add: add, remove: remove)
+        let result = client.patchDevice(deviceId: deviceId, token: token, fields: ["tags": merged])
+        if case .success(let response) = result {
+          self.deviceStore.setTags(response.tags)
+        }
       }
     }
   }
@@ -198,13 +218,55 @@ public class NuntisCore {
       deviceStore.setDeviceId(response.id)
       deviceStore.setLastToken(token)
       deviceStore.setTags(response.tags)
+      flushPendingMutations(client, deviceId: response.id, token: token)
     case .failure(let message):
       logger("Nuntis.initialize: device registration failed: \(message)")
     }
   }
 
-  private func patchIfRegistered(_ client: NuntisApiClient, _ fields: [String: Any]) -> ApiResult? {
-    guard let deviceId = deviceStore.getDeviceId(), let token = deviceStore.getLastToken() else { return nil }
-    return client.patchDevice(deviceId: deviceId, token: token, fields: fields)
+  /// Runs `work` right away when the device already has an id + token, or
+  /// parks it in `pendingMutations` when registration has not completed yet.
+  /// Registration is inherently async on iOS (the APNs token only arrives via
+  /// `didRegisterForRemoteNotificationsWithDeviceToken`), so `login`/
+  /// `addTags`/`requestPermission` called right after `initialize()` would
+  /// otherwise be silently and permanently dropped.
+  private func performOrQueue(
+    _ client: NuntisApiClient,
+    description: String,
+    _ work: @escaping (_ client: NuntisApiClient, _ deviceId: String, _ token: String) -> Void
+  ) {
+    guard let deviceId = deviceStore.getDeviceId(), let token = deviceStore.getLastToken() else {
+      if pendingMutations.count >= Self.maxPendingMutations {
+        let dropped = pendingMutations.removeFirst()
+        logger("Nuntis: pending-mutation queue full - dropping the oldest queued mutation (\(dropped.description))")
+      }
+      pendingMutations.append(PendingMutation(description: description, work: work))
+      logger("Nuntis: device not registered yet - queued \(description) until registration completes")
+      return
+    }
+    work(client, deviceId, token)
+  }
+
+  /// Flushes, in call order, every mutation issued before registration
+  /// completed. In-memory only: anything still queued when the process dies
+  /// is dropped rather than replayed with stale state (spec Edge Case).
+  private func flushPendingMutations(_ client: NuntisApiClient, deviceId: String, token: String) {
+    guard !pendingMutations.isEmpty else { return }
+    let queued = pendingMutations
+    pendingMutations.removeAll()
+    logger("Nuntis: registration complete - flushing \(queued.count) queued mutation(s)")
+    for mutation in queued {
+      mutation.work(client, deviceId, token)
+    }
+  }
+
+  private func patchSubscribed(
+    _ client: NuntisApiClient,
+    deviceId: String,
+    token: String,
+    _ subscribed: Bool
+  ) {
+    let result = client.patchDevice(deviceId: deviceId, token: token, fields: ["subscribed": subscribed])
+    if case .success = result { deviceStore.setSubscribed(subscribed) }
   }
 }

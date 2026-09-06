@@ -314,6 +314,117 @@ final class NuntisCoreTests: XCTestCase {
     XCTAssertEqual(store.getTags(), ["cohort": "beta"])
   }
 
+  // MARK: - Mutations issued before registration completes
+
+  func test_tagsAddedBeforeTheApnsTokenArrivesAreSentOnceRegistrationCompletes() {
+    // `initialize()` cannot register synchronously on iOS: the APNs token only
+    // shows up later via didRegisterForRemoteNotificationsWithDeviceToken. A
+    // mutation issued in that window must be queued, not dropped.
+    var deliverToken: ((String?) -> Void)?
+    let core = newCore(tokenProvider: { cb in deliverToken = cb })
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    core.mutateTags(add: ["plan": "vip"], remove: nil)
+    drain(core)
+    XCTAssertEqual(StubURLProtocol.recordedRequests().count, 0, "nothing can be sent before the device has an id")
+
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{"plan":"vip"}}"#))
+    deliverToken?("apns-token")
+    drain(core)
+
+    let requests = StubURLProtocol.recordedRequests()
+    XCTAssertEqual(requests.count, 2, "the queued tag mutation must be flushed after registration")
+    XCTAssertEqual(requests.last!.httpMethod, "PATCH")
+    let body = try! JSONSerialization.jsonObject(with: bodyData(requests.last!)) as! [String: Any]
+    XCTAssertEqual(body["tags"] as? [String: String], ["plan": "vip"])
+    XCTAssertEqual(store.getTags(), ["plan": "vip"])
+  }
+
+  func test_permissionGrantedBeforeTheApnsTokenArrivesStillPatchesSubscribedAfterRegistration() {
+    // Worst case of the same window: permission granted before the token
+    // round-trip finished used to leave the device permanently ineligible for
+    // push - subscribed was never PATCHed nor persisted, and nothing retried.
+    var deliverToken: ((String?) -> Void)?
+    let core = newCore(tokenProvider: { cb in deliverToken = cb }, permissionRequester: { cb in cb(true) })
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    let resolved = expectation(description: "permission callback")
+    core.requestPermission { granted in
+      XCTAssertTrue(granted)
+      resolved.fulfill()
+    }
+    wait(for: [resolved], timeout: 5)
+    drain(core)
+    XCTAssertFalse(store.getSubscribed())
+
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
+    deliverToken?("apns-token")
+    drain(core)
+
+    let requests = StubURLProtocol.recordedRequests()
+    XCTAssertEqual(requests.count, 2)
+    XCTAssertEqual(requests.last!.httpMethod, "PATCH")
+    let body = try! JSONSerialization.jsonObject(with: bodyData(requests.last!)) as! [String: Any]
+    XCTAssertEqual(body["subscribed"] as? Bool, true)
+    XCTAssertEqual(body["token"] as? String, "apns-token")
+    XCTAssertTrue(store.getSubscribed())
+  }
+
+  func test_loginBeforeTheApnsTokenArrivesIsSentOnceRegistrationCompletes() {
+    var deliverToken: ((String?) -> Void)?
+    let core = newCore(tokenProvider: { cb in deliverToken = cb })
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    core.login("user-42")
+    drain(core)
+    XCTAssertEqual(StubURLProtocol.recordedRequests().count, 0)
+
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
+    deliverToken?("apns-token")
+    drain(core)
+
+    let requests = StubURLProtocol.recordedRequests()
+    XCTAssertEqual(requests.count, 2)
+    let body = try! JSONSerialization.jsonObject(with: bodyData(requests.last!)) as! [String: Any]
+    XCTAssertEqual(body["external_user_id"] as? String, "user-42")
+    XCTAssertEqual(store.getExternalUserId(), "user-42")
+  }
+
+  func test_mutationsQueuedBeforeRegistrationAreFlushedInCallOrder() {
+    var deliverToken: ((String?) -> Void)?
+    let core = newCore(tokenProvider: { cb in deliverToken = cb })
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    core.mutateTags(add: ["plan": "vip"], remove: nil)
+    core.login("user-42")
+    core.mutateTags(add: nil, remove: ["plan"])
+    drain(core)
+
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{"plan":"vip"}}"#))
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{"plan":"vip"}}"#))
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
+    deliverToken?("apns-token")
+    drain(core)
+
+    let requests = StubURLProtocol.recordedRequests()
+    XCTAssertEqual(requests.count, 4)
+    let bodies = requests.dropFirst().map { try! JSONSerialization.jsonObject(with: bodyData($0)) as! [String: Any] }
+    XCTAssertEqual(bodies[0]["tags"] as? [String: String], ["plan": "vip"])
+    XCTAssertEqual(bodies[1]["external_user_id"] as? String, "user-42")
+    // The last mutation removes the key the first one added: the queued merge
+    // must read the tag cache at send time, so it sees "plan" and drops it.
+    XCTAssertEqual(bodies[2]["tags"] as? [String: String], [:])
+    XCTAssertEqual(store.getTags(), [:])
+  }
+
   // MARK: - Threading contract (main thread must never block on the API client)
 
   func test_initializeDoesNotBlockTheCallingThreadAndRunsTheApiCallOffTheMainThread() {
