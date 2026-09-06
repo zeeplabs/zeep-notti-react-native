@@ -1,5 +1,6 @@
 package com.nuntis
 
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 
@@ -68,15 +69,30 @@ class NuntisCore(
       return
     }
 
+    // Validated and normalized exactly once, here (SDK-03 crash safety): a
+    // scheme-less or otherwise malformed host would otherwise only blow up
+    // later, deep inside `Request.Builder().url(...)`, as an
+    // IllegalArgumentException on whatever thread the call landed on. A
+    // trailing slash is also stripped here, since every path is built as
+    // "$baseUrl/v1/..." and would otherwise produce a "//v1/..." request path.
+    val normalizedBaseUrl = baseUrl.toHttpUrlOrNull()?.toString()?.trimEnd('/')
+    if (normalizedBaseUrl == null) {
+      logger(
+        "Nuntis.initialize: baseUrl \"$baseUrl\" is not a valid http(s) URL " +
+          "(expected e.g. https://push.example.com) - SDK stays disabled, no registration attempted"
+      )
+      return
+    }
+
     // Repeat call with identical args in the same session: no-op (SDK-07).
-    if (appId == this.appId && clientKey == this.clientKey && baseUrl == this.baseUrl) {
+    if (appId == this.appId && clientKey == this.clientKey && normalizedBaseUrl == this.baseUrl) {
       return
     }
 
     this.appId = appId
     this.clientKey = clientKey
-    this.baseUrl = baseUrl
-    val client = apiClientFactory(appId, clientKey, baseUrl)
+    this.baseUrl = normalizedBaseUrl
+    val client = apiClientFactory(appId, clientKey, normalizedBaseUrl)
     this.apiClient = client
 
     tokenProvider { token ->

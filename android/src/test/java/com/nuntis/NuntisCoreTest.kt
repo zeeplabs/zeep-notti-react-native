@@ -111,6 +111,45 @@ class NuntisCoreTest {
   }
 
   @Test
+  fun `initialize with a malformed baseUrl logs, registers nothing, and leaves the SDK non-crashing`() {
+    val logs = mutableListOf<String>()
+    val core = newCore(logs = logs)
+
+    // Scheme-less host: accepted by the old validation-free path, then thrown
+    // as an IllegalArgumentException out of Request.Builder().url(...) - a
+    // config mistake must never be able to reach a throw (spec SDK-03).
+    core.initialize("app-1", "key", "push.example.com")
+    awaitIdle()
+
+    assertEquals(0, server.requestCount)
+    assertTrue(logs.any { it.contains("not a valid http(s) URL") })
+
+    // Disabled-but-alive: every other public entry point stays a safe no-op.
+    core.login("user-42")
+    core.setSubscription(true)
+    core.mutateTags(add = mapOf("plan" to "vip"), remove = null)
+    core.onTokenRefreshed("new-token")
+    awaitIdle()
+
+    assertEquals(0, server.requestCount)
+    assertEquals(null, store.getDeviceId())
+  }
+
+  @Test
+  fun `initialize normalizes a trailing-slash baseUrl instead of building a double-slash path`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    val core = newCore()
+
+    // server.url("/") keeps its trailing slash - the shape an integrator gets
+    // from copy-pasting their Nuntis host out of a browser address bar.
+    core.initialize("app-1", "key", server.url("/").toString())
+    awaitIdle()
+
+    val recorded = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+    assertEquals("/v1/apps/app-1/devices", recorded.path)
+  }
+
+  @Test
   fun `initialize with no available push token logs and does not register`() {
     val logs = mutableListOf<String>()
     val core = newCore(tokenProvider = { cb -> cb(null) }, logs = logs)
