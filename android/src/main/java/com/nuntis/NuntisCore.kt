@@ -112,15 +112,25 @@ class NuntisCore(
     dispatch("onTokenRefreshed") { registerDevice(client, newToken) }
   }
 
+  /**
+   * Holds [mutationLock] across the whole call/response/store-write sequence,
+   * for the same reason `mutateTags` does: the POST response carries the
+   * device's server-side `tags`, so registration is itself a read-modify-write
+   * on the cached tag map. An `onNewToken` re-registration landing (on the FCM
+   * thread) mid-`addTags` would otherwise answer from the server's pre-PATCH
+   * state and overwrite the tag that was just merged and persisted.
+   */
   private fun registerDevice(client: NuntisApiClient, token: String) {
-    when (val result = client.createOrUpdateDevice(token, platform)) {
-      is ApiResult.Success -> {
-        deviceStore.setDeviceId(result.response.id)
-        deviceStore.setLastToken(token)
-        deviceStore.setTags(result.response.tags)
-      }
-      is ApiResult.Failure -> {
-        logger("Nuntis.initialize: device registration failed: ${result.message}")
+    synchronized(mutationLock) {
+      when (val result = client.createOrUpdateDevice(token, platform)) {
+        is ApiResult.Success -> {
+          deviceStore.setDeviceId(result.response.id)
+          deviceStore.setLastToken(token)
+          deviceStore.setTags(result.response.tags)
+        }
+        is ApiResult.Failure -> {
+          logger("Nuntis.initialize: device registration failed: ${result.message}")
+        }
       }
     }
   }

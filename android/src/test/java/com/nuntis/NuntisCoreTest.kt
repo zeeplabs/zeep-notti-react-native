@@ -12,6 +12,13 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Protocol
+import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
+import okio.Buffer
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executor
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -57,7 +64,7 @@ class NuntisCoreTest {
     permissionRequester: (callback: (Boolean) -> Unit) -> Unit = { it(true) },
     logs: MutableList<String>? = null,
     interceptor: Interceptor? = null,
-    coreExecutor: ExecutorService = executor
+    coreExecutor: Executor = executor
   ) = NuntisCore(
     deviceStore = store,
     apiClientFactory = { appId, clientKey, baseUrl ->
@@ -415,6 +422,102 @@ class NuntisCoreTest {
     assertEquals(mapOf("plan" to "vip"), store.getTags())
     assertEquals(1, patchThreads.size)
     assertNotEquals(callerThread, patchThreads.single())
+  }
+
+  /**
+   * In-memory stand-in for the Nuntis devices endpoint, as an OkHttp
+   * interceptor (no socket at all), so a POST and a PATCH can be interleaved
+   * deterministically with latches instead of timing: it keeps real
+   * server-side tag state, a PATCH replaces it wholesale (the backend's
+   * documented replace-only contract), and a POST answers with whatever the
+   * server holds at the moment it is served - which is exactly how a
+   * concurrent registration can hand the SDK a stale tag map.
+   */
+  private class FakeDeviceApi(
+    private val gatePostNumber: Int,
+    private val postGateReached: CountDownLatch,
+    private val releasePost: CountDownLatch
+  ) : Interceptor {
+    private val lock = Any()
+    private var serverTags: Map<String, String> = emptyMap()
+    private var postCount = 0
+
+    override fun intercept(chain: Interceptor.Chain): Response {
+      val request = chain.request()
+      val bodyText = request.body?.let { body ->
+        Buffer().also { body.writeTo(it) }.readUtf8()
+      }.orEmpty()
+
+      val responseTags: Map<String, String> = when (request.method) {
+        "PATCH" -> {
+          val sent = JSONObject(bodyText).optJSONObject("tags")
+          val parsed = mutableMapOf<String, String>()
+          sent?.keys()?.forEach { key -> parsed[key] = sent.getString(key) }
+          synchronized(lock) {
+            serverTags = parsed
+            serverTags
+          }
+        }
+        else -> {
+          val gated = synchronized(lock) { ++postCount == gatePostNumber }
+          val snapshot = synchronized(lock) { serverTags }
+          if (gated) {
+            // Registration has read the server's tag map; hold the response
+            // open so the tag PATCH below happens strictly in between.
+            postGateReached.countDown()
+            releasePost.await()
+          }
+          snapshot
+        }
+      }
+
+      val tagsJson = JSONObject()
+      responseTags.forEach { (key, value) -> tagsJson.put(key, value) }
+      val json = JSONObject().put("id", "device-1").put("tags", tagsJson).toString()
+
+      return Response.Builder()
+        .request(request)
+        .protocol(Protocol.HTTP_1_1)
+        .code(200)
+        .message("OK")
+        .body(json.toResponseBody("application/json".toMediaType()))
+        .build()
+    }
+  }
+
+  @Test
+  fun `a concurrent registration cannot clobber the tag map an in-flight addTags just merged`() {
+    val postGateReached = CountDownLatch(1)
+    val releasePost = CountDownLatch(1)
+    // Direct executor: NuntisCore runs each call inline on the thread that
+    // made it, so the two threads below - a JS-thread tag mutation and an FCM
+    // onNewToken re-registration - contend exactly as they do in production,
+    // with the interleaving pinned by latches rather than by sleeps.
+    val core = newCore(
+      interceptor = FakeDeviceApi(gatePostNumber = 2, postGateReached, releasePost),
+      coreExecutor = Executor { it.run() }
+    )
+    core.initialize("app-1", "key", "https://nuntis.test")
+    assertEquals("device-1", store.getDeviceId())
+
+    val registerThread = Thread { core.onTokenRefreshed("refreshed-token") }
+    registerThread.start()
+    assertTrue(postGateReached.await(5, TimeUnit.SECONDS))
+
+    val tagThread = Thread { core.mutateTags(add = mapOf("plan" to "vip"), remove = null) }
+    tagThread.start()
+    // Long enough for the tag mutation to complete on its own if nothing
+    // serializes it against the registration currently holding the gate.
+    Thread.sleep(200)
+    releasePost.countDown()
+
+    tagThread.join(5000)
+    registerThread.join(5000)
+
+    // The registration response was computed from the server's pre-PATCH tag
+    // state; writing it must not be able to erase the tag that was just
+    // merged and persisted server-side (spec P3-AC1).
+    assertEquals(mapOf("plan" to "vip"), store.getTags())
   }
 
   @Test
