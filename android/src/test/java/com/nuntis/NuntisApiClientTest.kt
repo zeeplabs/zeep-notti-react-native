@@ -180,6 +180,32 @@ class NuntisApiClientTest {
   }
 
   @Test
+  fun `a 2xx body with a null tags field registers successfully with no tags`() {
+    // A nil map[string]string in Go serializes to `"tags": null`. has("tags")
+    // is true for it and getJSONObject then threw, which since the malformed
+    // -body fix meant a terminal registration failure on a perfectly
+    // legitimate "this device has no tags" response.
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":null}"""))
+
+    val result = client.createOrUpdateDevice(token = "t", platform = "android")
+
+    assertTrue("expected a Success, got $result", result is ApiResult.Success)
+    val response = (result as ApiResult.Success).response
+    assertEquals("device-1", response.id)
+    assertEquals(emptyMap<String, String>(), response.tags)
+  }
+
+  @Test
+  fun `a 2xx body with no tags field at all registers successfully with no tags`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1"}"""))
+
+    val result = client.createOrUpdateDevice(token = "t", platform = "android")
+
+    assertTrue("expected a Success, got $result", result is ApiResult.Success)
+    assertEquals(emptyMap<String, String>(), (result as ApiResult.Success).response.tags)
+  }
+
+  @Test
   fun `a map field is stored as a nested JSONObject, not as a raw Map`() {
     val json = client.buildPatchJson("fcm-token", mapOf("tags" to mapOf("plan" to "vip")))
 

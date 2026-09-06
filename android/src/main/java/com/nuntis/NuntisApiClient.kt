@@ -165,9 +165,15 @@ class NuntisApiClient(
     if (id.isNullOrBlank()) {
       throw JSONException("response has no usable \"id\" field")
     }
+    // `optJSONObject` rather than `has` + `getJSONObject`: `has("tags")` is
+    // true for `"tags": null` (AOSP stores JSONObject.NULL there) and
+    // `getJSONObject` then throws, which since 9c685e9 fails the whole
+    // registration terminally. A nil `map[string]string` in Go serializes to
+    // exactly that, so a legitimate "device has no tags" response could park
+    // registration - and every queued mutation - forever. Absent, null and
+    // non-object all mean "no tags", matching iOS' `as? [String: String] ?? [:]`.
     val tags = mutableMapOf<String, String>()
-    if (json.has("tags")) {
-      val tagsJson = json.getJSONObject("tags")
+    json.optJSONObject("tags")?.let { tagsJson ->
       tagsJson.keys().forEach { key -> tags[key] = tagsJson.getString(key) }
     }
     return DeviceResponse(id = id, tags = tags)

@@ -844,6 +844,25 @@ class NuntisCoreTest {
     assertEquals(2, server.requestCount)
     assertEquals("device-1", store.getDeviceId())
   }
+
+  @Test
+  fun `a registration response whose tags are null completes registration and flushes queued mutations`() {
+    // The backend's own "no tags on this device" shape (a nil Go map).
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":null}"""))
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    val core = newCore()
+
+    core.initialize("app-1", "key", validBaseUrl)
+    core.login("user-42")
+    awaitIdle()
+
+    // Registration completed rather than failing terminally, so the mutation
+    // queued behind it went out instead of being stranded for the process' life.
+    assertEquals("device-1", store.getDeviceId())
+    assertEquals(emptyMap<String, String>(), store.getTags())
+    assertEquals("user-42", store.getExternalUserId())
+    assertEquals(2, server.requestCount)
+  }
 }
 
 /** Same in-memory SharedPreferences fake used by NuntisDeviceStoreTest. */
