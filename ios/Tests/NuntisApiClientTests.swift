@@ -4,14 +4,18 @@ final class NuntisApiClientTests: XCTestCase {
 
   private var client: NuntisApiClient!
   private var sleeps: [UInt64] = []
+  /// A `URLSession` is not released until it is invalidated, so one left
+  /// behind per test keeps its delegate queue and CFNetwork worker threads
+  /// alive for the rest of the process — including the whole of
+  /// `NuntisCoreTests`, which runs after this class and pays for it in
+  /// per-request latency on a shared CI runner.
+  private var sessions: [URLSession] = []
 
   override func setUp() {
     super.setUp()
     StubURLProtocol.reset()
     sleeps = []
-    let config = URLSessionConfiguration.ephemeral
-    config.protocolClasses = [StubURLProtocol.self]
-    let session = URLSession(configuration: config)
+    let session = stubSession()
     client = NuntisApiClient(
       session: session,
       baseUrl: "https://nuntis.example.com",
@@ -19,6 +23,20 @@ final class NuntisApiClientTests: XCTestCase {
       clientKey: "secret-key",
       sleeper: { ms in self.sleeps.append(ms) }
     )
+  }
+
+  override func tearDown() {
+    for session in sessions { session.invalidateAndCancel() }
+    sessions.removeAll()
+    super.tearDown()
+  }
+
+  private func stubSession() -> URLSession {
+    let config = URLSessionConfiguration.ephemeral
+    config.protocolClasses = [StubURLProtocol.self]
+    let session = URLSession(configuration: config)
+    sessions.append(session)
+    return session
   }
 
   func test_validatedBaseUrlAcceptsAbsoluteHttpUrlsAndRejectsEverythingElse() {
@@ -39,10 +57,8 @@ final class NuntisApiClientTests: XCTestCase {
     // cannot form a URL at all (invalid percent-escape here — current
     // Foundation percent-encodes most other garbage instead of returning nil),
     // it must return a failure rather than force-unwrap.
-    let config = URLSessionConfiguration.ephemeral
-    config.protocolClasses = [StubURLProtocol.self]
     let brokenClient = NuntisApiClient(
-      session: URLSession(configuration: config),
+      session: stubSession(),
       baseUrl: "https://ex ample.com/%zz",
       appId: "app-1",
       clientKey: "secret-key",

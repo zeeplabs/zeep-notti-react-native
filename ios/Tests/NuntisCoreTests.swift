@@ -8,6 +8,28 @@ final class NuntisCoreTests: XCTestCase {
   private var store: NuntisDeviceStore!
   private let baseUrl = "https://nuntis.example.com"
 
+  /// Everything a test built, so `tearDown` can dispose of it deterministically.
+  ///
+  /// Both of these used to be dropped on the floor at the end of each test
+  /// method, which leaks in two ways that compound over a 36-test class:
+  ///
+  /// * a `URLSession` is only released once it is invalidated ("if you do not
+  ///   invalidate the session, your app leaks memory until it exits"), so every
+  ///   `newCore()` left a live session behind — each with its own delegate
+  ///   queue and CFNetwork worker threads. By the end of the class dozens of
+  ///   them were competing for a 3-core CI runner, and a stubbed request that
+  ///   costs ~10ms on a dev machine was taking well over a second there. Five
+  ///   of those in one blocking retry loop no longer fit inside a test's drain
+  ///   budget.
+  /// * a `NuntisCore` whose work queue is still busy stays alive through its
+  ///   own in-flight blocks. Once a drain timed out, that core kept running
+  ///   *into the next test* — consuming responses from the process-global
+  ///   `StubURLProtocol` queue and recording requests against the next test's
+  ///   freshly reset counters, which is how one slow test cascaded into three
+  ///   unrelated failures on CI.
+  private var sessions: [URLSession] = []
+  private var cores: [NuntisCore] = []
+
   override func setUp() {
     super.setUp()
     StubURLProtocol.reset()
@@ -17,6 +39,12 @@ final class NuntisCoreTests: XCTestCase {
   }
 
   override func tearDown() {
+    // Let whatever is still queued finish before the next test resets the
+    // shared stub, so no core outlives the test that created it.
+    for core in cores { core.waitForPendingWork(timeout: 20) }
+    cores.removeAll()
+    for session in sessions { session.invalidateAndCancel() }
+    sessions.removeAll()
     defaults.removePersistentDomain(forName: suiteName)
     super.tearDown()
   }
@@ -24,7 +52,9 @@ final class NuntisCoreTests: XCTestCase {
   private func stubSession() -> URLSession {
     let config = URLSessionConfiguration.ephemeral
     config.protocolClasses = [StubURLProtocol.self]
-    return URLSession(configuration: config)
+    let session = URLSession(configuration: config)
+    sessions.append(session)
+    return session
   }
 
   private func newCore(
@@ -34,7 +64,7 @@ final class NuntisCoreTests: XCTestCase {
     logs: LogSink? = nil
   ) -> NuntisCore {
     let session = stubSession()
-    return NuntisCore(
+    let core = NuntisCore(
       deviceStore: store,
       apiClientFactory: { appId, clientKey, baseUrl in
         apiClient
@@ -44,6 +74,8 @@ final class NuntisCoreTests: XCTestCase {
       permissionRequester: permissionRequester,
       logger: { message in logs?.append(message) }
     )
+    cores.append(core)
+    return core
   }
 
   func test_initializeWithBlankAppIdLogsAndDoesNotCallTheApiClient() {
@@ -175,7 +207,7 @@ final class NuntisCoreTests: XCTestCase {
       callbackResult = granted
       expectation.fulfill()
     }
-    wait(for: [expectation], timeout: 2)
+    wait(for: [expectation], timeout: 15)
     drain(core)
 
     XCTAssertTrue(promptInvoked)
@@ -194,7 +226,7 @@ final class NuntisCoreTests: XCTestCase {
 
     let expectation = expectation(description: "permission callback")
     core.requestPermission { _ in expectation.fulfill() }
-    wait(for: [expectation], timeout: 2)
+    wait(for: [expectation], timeout: 15)
     drain(core)
 
     XCTAssertFalse(store.getSubscribed())
@@ -211,7 +243,7 @@ final class NuntisCoreTests: XCTestCase {
       callbackResult = granted
       expectation.fulfill()
     }
-    wait(for: [expectation], timeout: 2)
+    wait(for: [expectation], timeout: 15)
     drain(core)
 
     XCTAssertFalse(promptInvoked)
@@ -332,8 +364,8 @@ final class NuntisCoreTests: XCTestCase {
     Thread.sleep(forTimeInterval: 0.05) // ensure thread1's mutation is enqueued first
     thread2.start()
 
-    wait(for: [done1, done2], timeout: 5)
-    drain(core, timeout: 10)
+    wait(for: [done1, done2], timeout: 15)
+    drain(core, timeout: 20)
 
     XCTAssertEqual(StubURLProtocol.recordedRequests().count, 3)
     XCTAssertEqual(store.getTags(), ["cohort": "beta"])
@@ -438,7 +470,7 @@ final class NuntisCoreTests: XCTestCase {
       XCTAssertTrue(granted)
       resolved.fulfill()
     }
-    wait(for: [resolved], timeout: 5)
+    wait(for: [resolved], timeout: 15)
     drain(core)
     XCTAssertFalse(store.getSubscribed())
 
@@ -523,7 +555,7 @@ final class NuntisCoreTests: XCTestCase {
 
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
     NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
-    drain(core, timeout: 10)
+    drain(core, timeout: 20)
 
     XCTAssertEqual(StubURLProtocol.recordedRequests().count, 6, "foreground must re-trigger registration")
     XCTAssertEqual(store.getDeviceId(), "device-1")
@@ -539,7 +571,7 @@ final class NuntisCoreTests: XCTestCase {
     for _ in 0..<3 {
       NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
     }
-    drain(core, timeout: 10)
+    drain(core, timeout: 20)
 
     XCTAssertEqual(StubURLProtocol.recordedRequests().count, 1)
   }
@@ -551,11 +583,11 @@ final class NuntisCoreTests: XCTestCase {
     let core = newCore()
     core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
 
-    XCTAssertTrue(waitForRequestCount(1, timeout: 5), "registration request never went out")
+    XCTAssertTrue(waitForRequestCount(1, timeout: 15), "registration request never went out")
     for _ in 0..<5 {
       NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
     }
-    drain(core, timeout: 10)
+    drain(core, timeout: 20)
 
     XCTAssertEqual(StubURLProtocol.recordedRequests().count, 1)
     XCTAssertEqual(store.getDeviceId(), "device-1")
@@ -584,7 +616,7 @@ final class NuntisCoreTests: XCTestCase {
     // The foreground retry asks the platform for a token again; registration
     // happens once that (async) request resolves.
     deliverToken?("apns-token")
-    drain(core, timeout: 10)
+    drain(core, timeout: 20)
 
     XCTAssertEqual(StubURLProtocol.recordedRequests().count, 1)
     XCTAssertEqual(store.getDeviceId(), "device-1")
@@ -604,7 +636,7 @@ final class NuntisCoreTests: XCTestCase {
 
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
     NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
-    drain(core, timeout: 10)
+    drain(core, timeout: 20)
 
     XCTAssertEqual(
       StubURLProtocol.recordedRequests().count, 0,
@@ -613,7 +645,7 @@ final class NuntisCoreTests: XCTestCase {
 
     // The real token lands right after: exactly one registration, with it.
     deliverToken?("fresh-apns-token")
-    drain(core, timeout: 10)
+    drain(core, timeout: 20)
 
     let requests = StubURLProtocol.recordedRequests()
     XCTAssertEqual(requests.count, 1, "no duplicate registration")
@@ -638,7 +670,7 @@ final class NuntisCoreTests: XCTestCase {
     let logs = LogSink()
     let core = newCore(logs: logs)
     core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
-    drain(core, timeout: 10)
+    drain(core, timeout: 20)
 
     XCTAssertEqual(StubURLProtocol.recordedRequests().count, 5)
     XCTAssertEqual(store.getDeviceId(), "device-old", "an empty device id must never be persisted")
@@ -648,7 +680,7 @@ final class NuntisCoreTests: XCTestCase {
     // Still marked failed, so the next foreground gets another go and can win.
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{"plan":"vip"}}"#))
     NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
-    drain(core, timeout: 10)
+    drain(core, timeout: 20)
 
     XCTAssertEqual(StubURLProtocol.recordedRequests().count, 6)
     XCTAssertEqual(store.getDeviceId(), "device-1")
@@ -684,7 +716,7 @@ final class NuntisCoreTests: XCTestCase {
 
     // Deterministic interleaving: only start the mutation once the
     // registration request is provably in flight inside the API client.
-    XCTAssertTrue(waitForRequestCount(2, timeout: 5), "registration request never went out")
+    XCTAssertTrue(waitForRequestCount(2, timeout: 15), "registration request never went out")
 
     let mutationThread = Thread {
       core.mutateTags(add: ["plan": "vip"], remove: nil)
@@ -692,8 +724,8 @@ final class NuntisCoreTests: XCTestCase {
     }
     mutationThread.start()
 
-    wait(for: [refreshIssued, mutationIssued], timeout: 5)
-    drain(core, timeout: 10)
+    wait(for: [refreshIssued, mutationIssued], timeout: 15)
+    drain(core, timeout: 20)
 
     XCTAssertEqual(StubURLProtocol.recordedRequests().count, 3)
     XCTAssertEqual(store.getTags(), ["plan": "vip"], "the registration response must not clobber the merged tags")
@@ -728,7 +760,7 @@ final class NuntisCoreTests: XCTestCase {
     let elapsed = Date().timeIntervalSince(started)
 
     XCTAssertLessThan(elapsed, 0.2, "initialize() must return without waiting on the network call")
-    drain(core, timeout: 10)
+    drain(core, timeout: 20)
     XCTAssertEqual(probe.callCount, 1)
     XCTAssertEqual(probe.sawMainThread, false, "the API client must never run on the main thread")
   }
@@ -737,14 +769,14 @@ final class NuntisCoreTests: XCTestCase {
     let probe = ThreadProbeApiClient(blockForSeconds: 1.0)
     let core = newCore(apiClient: probe)
     core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
-    drain(core, timeout: 10)
+    drain(core, timeout: 20)
 
     let started = Date()
     core.onTokenRefreshed("new-apns-token")
     let elapsed = Date().timeIntervalSince(started)
 
     XCTAssertLessThan(elapsed, 0.2)
-    drain(core, timeout: 10)
+    drain(core, timeout: 20)
     XCTAssertEqual(probe.callCount, 2)
     XCTAssertEqual(probe.sawMainThread, false)
   }
@@ -759,12 +791,12 @@ final class NuntisCoreTests: XCTestCase {
       apiClient: probe
     )
     core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
-    drain(core, timeout: 10)
+    drain(core, timeout: 20)
 
     let resolved = expectation(description: "permission callback")
     core.requestPermission { _ in resolved.fulfill() }
-    wait(for: [resolved], timeout: 5)
-    drain(core, timeout: 10)
+    wait(for: [resolved], timeout: 15)
+    drain(core, timeout: 20)
 
     XCTAssertEqual(probe.patchCallCount, 1)
     XCTAssertEqual(probe.sawMainThread, false)
@@ -774,14 +806,14 @@ final class NuntisCoreTests: XCTestCase {
     let probe = ThreadProbeApiClient(blockForSeconds: 1.0)
     let core = newCore(apiClient: probe)
     core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
-    drain(core, timeout: 10)
+    drain(core, timeout: 20)
 
     let started = Date()
     core.mutateTags(add: ["plan": "vip"], remove: nil)
     let elapsed = Date().timeIntervalSince(started)
 
     XCTAssertLessThan(elapsed, 0.2)
-    drain(core, timeout: 10)
+    drain(core, timeout: 20)
     XCTAssertEqual(probe.patchCallCount, 1)
     XCTAssertEqual(probe.sawMainThread, false)
   }
@@ -790,7 +822,13 @@ final class NuntisCoreTests: XCTestCase {
   /// internal serial work queue to finish. Every public `NuntisCore` method is
   /// fire-and-forget now, so assertions on the store/recorded requests must
   /// drain first.
-  private func drain(_ core: NuntisCore, timeout: TimeInterval = 5) {
+  /// The timeout is a liveness bound, not an assertion about how fast the SDK
+  /// is: the work being awaited is a handful of instantly-answered stub
+  /// requests, so a healthy run drains in milliseconds regardless of the value.
+  /// It is generous because the shared CI runner is an order of magnitude
+  /// slower per request than a dev machine, and a drain that expires there
+  /// leaves the core running into the next test.
+  private func drain(_ core: NuntisCore, timeout: TimeInterval = 15) {
     XCTAssertTrue(core.waitForPendingWork(timeout: timeout), "NuntisCore work queue did not drain in \(timeout)s")
   }
 
