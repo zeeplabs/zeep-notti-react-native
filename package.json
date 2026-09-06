@@ -86,7 +86,8 @@
     "react-native-builder-bob": "^0.43.0",
     "release-it": "^20.2.0",
     "turbo": "^2.9.16",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "@expo/config-plugins": "^57.0.9"
   },
   "peerDependencies": {
     "react": "*",
@@ -174,8 +175,5 @@
       "release-it"
     ],
     "version": "0.63.0"
-  },
-  "dependencies": {
-    "@expo/config-plugins": "^57.0.9"
   }
 }
