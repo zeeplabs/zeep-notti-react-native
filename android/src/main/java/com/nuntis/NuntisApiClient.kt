@@ -148,13 +148,28 @@ class NuntisApiClient(
     return ApiResult.Failure(lastError)
   }
 
+  /**
+   * Throws [JSONException] - reported by the caller as a terminal failure -
+   * for a body that is not a device object. `id` must be present, a real
+   * JSON string and non-blank: Android's `org.json` (AOSP) `getString` coerces
+   * instead of validating, so `{"id":""}` yielded `""` and `{"id":123}`
+   * yielded `"123"`, both reported as a successful registration. The caller
+   * then persisted that id, wiped its local tags, and aimed every later PATCH
+   * at `.../devices/` (or a fabricated id) with no way to recover - the
+   * foreground retry only re-arms on a FAILED registration. Same rule as iOS'
+   * `parseDeviceResponse` (`ios/NuntisApiClient.swift`).
+   */
   private fun parseDeviceResponse(bodyString: String): DeviceResponse {
     val json = JSONObject(bodyString)
+    val id = json.opt("id") as? String
+    if (id.isNullOrBlank()) {
+      throw JSONException("response has no usable \"id\" field")
+    }
     val tags = mutableMapOf<String, String>()
     if (json.has("tags")) {
       val tagsJson = json.getJSONObject("tags")
       tagsJson.keys().forEach { key -> tags[key] = tagsJson.getString(key) }
     }
-    return DeviceResponse(id = json.getString("id"), tags = tags)
+    return DeviceResponse(id = id, tags = tags)
   }
 }

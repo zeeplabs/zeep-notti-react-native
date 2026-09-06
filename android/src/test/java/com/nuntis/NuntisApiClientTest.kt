@@ -156,6 +156,30 @@ class NuntisApiClientTest {
   }
 
   @Test
+  fun `a 2xx JSON body with an empty id is a terminal failure`() {
+    // AOSP's JSONObject.getString coerces rather than validates, so this used
+    // to be reported as a successful registration carrying id "". The caller
+    // then persisted "" (non-null, so nothing retried it) and PATCHed
+    // `/v1/apps/app-1/devices/` - the collection, not a device - forever.
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"","tags":{"plan":"vip"}}"""))
+
+    val result = client.createOrUpdateDevice(token = "t", platform = "android")
+
+    assertTrue("expected a Failure, got $result", result is ApiResult.Failure)
+  }
+
+  @Test
+  fun `a 2xx JSON body whose id is not a string is a terminal failure`() {
+    // Same coercion trap from the other side: getString(123) returns "123",
+    // fabricating a device id the backend never issued.
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":123,"tags":{}}"""))
+
+    val result = client.createOrUpdateDevice(token = "t", platform = "android")
+
+    assertTrue("expected a Failure, got $result", result is ApiResult.Failure)
+  }
+
+  @Test
   fun `a map field is stored as a nested JSONObject, not as a raw Map`() {
     val json = client.buildPatchJson("fcm-token", mapOf("tags" to mapOf("plan" to "vip")))
 

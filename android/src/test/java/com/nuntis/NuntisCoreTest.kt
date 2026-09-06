@@ -816,6 +816,34 @@ class NuntisCoreTest {
     assertEquals("device-1", store.getDeviceId())
     assertEquals("user-42", store.getExternalUserId())
   }
+
+  @Test
+  fun `a 2xx registration response with an empty id persists nothing and keeps the local tags`() {
+    // Tags this install already carries from an earlier session.
+    store.setTags(mapOf("plan" to "vip"))
+    // A 200 that is shaped like the device object but carries no real id -
+    // a renamed/emptied backend field, or a proxy replaying a stub. Treating
+    // it as success persisted "" as the device id and replaced the local tags
+    // with the response's empty map, with no path back: the foreground retry
+    // only re-arms a FAILED registration, and this one looked registered.
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"","tags":{}}"""))
+    val core = newCore()
+
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    assertEquals(1, server.requestCount)
+    assertEquals(null, store.getDeviceId())
+    assertEquals(mapOf("plan" to "vip"), store.getTags())
+
+    // And it is a *failed* registration, so the next foreground retries it.
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    core.onAppForegrounded()
+    awaitIdle()
+
+    assertEquals(2, server.requestCount)
+    assertEquals("device-1", store.getDeviceId())
+  }
 }
 
 /** Same in-memory SharedPreferences fake used by NuntisDeviceStoreTest. */
