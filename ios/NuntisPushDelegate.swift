@@ -32,8 +32,9 @@ public class NuntisBridge: NSObject {
 /// `AppDelegate`-forwarding approach — documented as an integrator
 /// prerequisite in the README, T19). Handles foreground receive (`willPresent`)
 /// and any-app-state click (`didReceive response:`), parsing the raw payload
-/// via the pure `parseUserInfo` function and emitting the corresponding
-/// Codegen event through the live `NuntisImpl` instance.
+/// via the pure `parseUserInfo` function and handing the corresponding
+/// Codegen event to `NuntisEventBuffer` (which emits it through the live
+/// `NuntisImpl` instance, or buffers it until one exists).
 @objc(NuntisPushDelegate)
 public class NuntisPushDelegate: NSObject, UNUserNotificationCenterDelegate {
 
@@ -49,7 +50,11 @@ public class NuntisPushDelegate: NSObject, UNUserNotificationCenterDelegate {
     withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
   ) {
     let parsed = parseUserInfo(notification.request.content.userInfo)
-    NuntisImpl.activeInstance?.emitReceivedHandler?(parsed.toEventPayload())
+    NuntisEventBuffer.shared.emit(
+      .received,
+      identifier: notification.request.identifier,
+      payload: parsed.toEventPayload()
+    )
     completionHandler([.banner, .sound, .badge])
   }
 
@@ -59,7 +64,14 @@ public class NuntisPushDelegate: NSObject, UNUserNotificationCenterDelegate {
     withCompletionHandler completionHandler: @escaping () -> Void
   ) {
     let parsed = parseUserInfo(response.notification.request.content.userInfo)
-    NuntisImpl.activeInstance?.emitClickedHandler?(parsed.toEventPayload())
+    // Cold launch from a tap fires this before the RN bridge (and therefore
+    // the Codegen emitter) exists — `NuntisEventBuffer` holds the payload
+    // until the TurboModule attaches its emitter, then replays it once.
+    NuntisEventBuffer.shared.emit(
+      .clicked,
+      identifier: response.notification.request.identifier,
+      payload: parsed.toEventPayload()
+    )
     completionHandler()
   }
 }

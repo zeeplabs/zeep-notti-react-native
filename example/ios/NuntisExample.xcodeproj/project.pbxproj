@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		0C80B921A6F3F58F76C31292 /* libPods-NuntisExample.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 5DCACB8F33CDC322A6C60F78 /* libPods-NuntisExample.a */; };
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
+		20010A737E96A9EDF397382E /* NuntisEventBufferTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D773528AA0DC9AF4437AA31 /* NuntisEventBufferTests.swift */; };
 		20F21722749D363B750A38F9 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */; };
 		227ED15BDA75DECF463FC812 /* NuntisNotificationParsing.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD432AFD45EE2CB59BB9A11C /* NuntisNotificationParsing.swift */; };
 		6B58EE0B7DF4BE0449113A52 /* NuntisApiClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3F52CBFE06F315AB26D629E /* NuntisApiClient.swift */; };
@@ -17,6 +18,7 @@
 		81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */; };
 		8D322FCF630D19C71C2DABFC /* NuntisNotificationParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7815D06C60911EB6700CF44D /* NuntisNotificationParsingTests.swift */; };
 		ADDDDAD11B3275F030FDE5DA /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21CFCCD5C376ED5BDA3F591C /* Foundation.framework */; };
+		C3B35F1FF90D796D94E4CFD0 /* NuntisEventBuffer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40D3C4FFC4B44CDF88EB5472 /* NuntisEventBuffer.swift */; };
 		D0FCD1D1E721EBA17221E9FE /* NuntisCoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46D6073908A65F6250CB30D9 /* NuntisCoreTests.swift */; };
 		EC4A7D89F80C44E9E2AC39C3 /* NuntisApiClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5112E264FB65968CEA8B9A1B /* NuntisApiClientTests.swift */; };
 		F84378136AEBA4711642174A /* NuntisDeviceStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 426B42B3BA73ABC080A1B717 /* NuntisDeviceStoreTests.swift */; };
@@ -34,11 +36,13 @@
 		2D977C699E4908D806CEA914 /* NuntisCore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NuntisCore.swift; sourceTree = "<group>"; };
 		33216B0956254CF362007CD7 /* NuntisDeviceStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NuntisDeviceStore.swift; sourceTree = "<group>"; };
 		3B4392A12AC88292D35C810B /* Pods-NuntisExample.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-NuntisExample.debug.xcconfig"; path = "Target Support Files/Pods-NuntisExample/Pods-NuntisExample.debug.xcconfig"; sourceTree = "<group>"; };
+		40D3C4FFC4B44CDF88EB5472 /* NuntisEventBuffer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NuntisEventBuffer.swift; sourceTree = "<group>"; };
 		426B42B3BA73ABC080A1B717 /* NuntisDeviceStoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NuntisDeviceStoreTests.swift; sourceTree = "<group>"; };
 		46D6073908A65F6250CB30D9 /* NuntisCoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NuntisCoreTests.swift; sourceTree = "<group>"; };
 		5112E264FB65968CEA8B9A1B /* NuntisApiClientTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NuntisApiClientTests.swift; sourceTree = "<group>"; };
 		5709B34CF0A7D63546082F79 /* Pods-NuntisExample.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-NuntisExample.release.xcconfig"; path = "Target Support Files/Pods-NuntisExample/Pods-NuntisExample.release.xcconfig"; sourceTree = "<group>"; };
 		5DCACB8F33CDC322A6C60F78 /* libPods-NuntisExample.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-NuntisExample.a"; sourceTree = BUILT_PRODUCTS_DIR; };
+		6D773528AA0DC9AF4437AA31 /* NuntisEventBufferTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = NuntisEventBufferTests.swift; path = Tests/NuntisEventBufferTests.swift; sourceTree = "<group>"; };
 		761780EC2CA45674006654EE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = NuntisExample/AppDelegate.swift; sourceTree = "<group>"; };
 		7815D06C60911EB6700CF44D /* NuntisNotificationParsingTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NuntisNotificationParsingTests.swift; sourceTree = "<group>"; };
 		7DB377A3B0D5458D4B4A0B7C /* NuntisTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NuntisTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -129,6 +133,8 @@
 				B3F52CBFE06F315AB26D629E /* NuntisApiClient.swift */,
 				2D977C699E4908D806CEA914 /* NuntisCore.swift */,
 				CD432AFD45EE2CB59BB9A11C /* NuntisNotificationParsing.swift */,
+				40D3C4FFC4B44CDF88EB5472 /* NuntisEventBuffer.swift */,
+				6D773528AA0DC9AF4437AA31 /* NuntisEventBufferTests.swift */,
 			);
 			name = NuntisSources;
 			path = ../../ios;
@@ -354,6 +360,8 @@
 				D0FCD1D1E721EBA17221E9FE /* NuntisCoreTests.swift in Sources */,
 				227ED15BDA75DECF463FC812 /* NuntisNotificationParsing.swift in Sources */,
 				8D322FCF630D19C71C2DABFC /* NuntisNotificationParsingTests.swift in Sources */,
+				C3B35F1FF90D796D94E4CFD0 /* NuntisEventBuffer.swift in Sources */,
+				20010A737E96A9EDF397382E /* NuntisEventBufferTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

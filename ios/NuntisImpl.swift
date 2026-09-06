@@ -24,9 +24,16 @@ public class NuntisImpl: NSObject {
   static var activeCore: NuntisCore?
 
   /// Set by `Nuntis.mm`'s `-init` to forward parsed notification payloads
-  /// into the Codegen event emitters it alone has access to.
-  @objc public var emitReceivedHandler: (([String: Any]) -> Void)?
-  @objc public var emitClickedHandler: (([String: Any]) -> Void)?
+  /// into the Codegen event emitters it alone has access to. Assigning them
+  /// registers the emitter with `NuntisEventBuffer`, which immediately
+  /// replays any notification that arrived before the module existed (cold
+  /// launch from a notification tap).
+  @objc public var emitReceivedHandler: (([String: Any]) -> Void)? {
+    didSet { NuntisEventBuffer.shared.setHandler(.received, emitReceivedHandler) }
+  }
+  @objc public var emitClickedHandler: (([String: Any]) -> Void)? {
+    didSet { NuntisEventBuffer.shared.setHandler(.clicked, emitClickedHandler) }
+  }
 
   let core: NuntisCore
 
