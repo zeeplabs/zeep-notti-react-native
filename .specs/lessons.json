@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "promote_threshold": 2,
+  "window_days": 45,
+  "quarantine_threshold": 2,
+  "next_id": 4,
+  "lessons": [
+    {
+      "id": "L-001",
+      "key": "ac_gap::a thin facade layer s mocked call argument test does not substitute for a business logic test of the layer it delegates to test the layer that actually implements the acceptance criterion not just the layer that calls it",
+      "text": "A thin facade layer's mocked call-argument test does not substitute for a business-logic test of the layer it delegates to - test the layer that actually implements the acceptance criterion, not just the layer that calls it.",
+      "signal": "ac_gap",
+      "scope": "test-coverage",
+      "status": "candidate",
+      "features": [
+        "sdk-core-v1"
+      ],
+      "recurrence": 1,
+      "harmful": 0,
+      "evidence": [
+        "SDK-14,SDK-15,SDK-16 (test-coverage)"
+      ],
+      "created": "2026-09-06T00:25:37Z",
+      "last_seen": "2026-09-06T00:25:37Z"
+    },
+    {
+      "id": "L-002",
+      "key": "ac_gap::a task s own completion note claiming a property is proven must be independently re derived by the verifier not trusted a presence check test on a pure parsing function does not prove a stateful dedup exactly once property",
+      "text": "A task's own completion note claiming a property is proven must be independently re-derived by the Verifier, not trusted - a presence-check test on a pure parsing function does not prove a stateful dedup/exactly-once property.",
+      "signal": "ac_gap",
+      "scope": "verification",
+      "status": "candidate",
+      "features": [
+        "sdk-core-v1"
+      ],
+      "recurrence": 1,
+      "harmful": 0,
+      "evidence": [
+        "android/src/test/java/com/nuntis/NuntisActivityLifecycleListenerTest.kt (SDK-18) (verification)"
+      ],
+      "created": "2026-09-06T00:25:37Z",
+      "last_seen": "2026-09-06T00:25:37Z"
+    },
+    {
+      "id": "L-003",
+      "key": "gate_fail::every mockwebserver takerequest call must pass an explicit timeout timeunit argument an unbounded call is a live test hang risk even while currently passing",
+      "text": "Every MockWebServer.takeRequest() call must pass an explicit (timeout, TimeUnit) argument - an unbounded call is a live test-hang risk even while currently passing.",
+      "signal": "gate_fail",
+      "scope": "android-tests",
+      "status": "candidate",
+      "features": [
+        "sdk-core-v1"
+      ],
+      "recurrence": 1,
+      "harmful": 0,
+      "evidence": [
+        "android/src/test/java/com/nuntis/NuntisApiClientTest.kt:46,71 (android-tests)"
+      ],
+      "created": "2026-09-06T00:25:37Z",
+      "last_seen": "2026-09-06T00:25:37Z"
+    }
+  ]
+}
