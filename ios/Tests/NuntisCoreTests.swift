@@ -482,6 +482,62 @@ final class NuntisCoreTests: XCTestCase {
     XCTAssertEqual(store.getTags(), [:])
   }
 
+  // MARK: - Registration tag write vs. addTags read-merge-write
+
+  func test_aRegistrationLandingDuringAnInFlightAddTagsCannotClobberTheMergedTags() {
+    // The registration path also writes the tag cache (from the register
+    // response). If that write is not mutually exclusive with addTags'
+    // read-merge-write, a token-refresh registration that *started* before the
+    // mutation but *finishes* after it overwrites the merged map with its own
+    // stale tags, silently dropping the tag the app just added.
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
+    let core = newCore()
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    // Token-refresh registration: slow, and its response carries the server's
+    // pre-mutation tag state (empty).
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#, delayMs: 400))
+    // The tag PATCH that follows: fast, echoing the merged map back.
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{"plan":"vip"}}"#))
+
+    let refreshIssued = expectation(description: "token refresh issued")
+    let mutationIssued = expectation(description: "tag mutation issued")
+
+    let refreshThread = Thread {
+      core.onTokenRefreshed("apns-token-2")
+      refreshIssued.fulfill()
+    }
+    refreshThread.start()
+
+    // Deterministic interleaving: only start the mutation once the
+    // registration request is provably in flight inside the API client.
+    XCTAssertTrue(waitForRequestCount(2, timeout: 5), "registration request never went out")
+
+    let mutationThread = Thread {
+      core.mutateTags(add: ["plan": "vip"], remove: nil)
+      mutationIssued.fulfill()
+    }
+    mutationThread.start()
+
+    wait(for: [refreshIssued, mutationIssued], timeout: 5)
+    drain(core, timeout: 10)
+
+    XCTAssertEqual(StubURLProtocol.recordedRequests().count, 3)
+    XCTAssertEqual(store.getTags(), ["plan": "vip"], "the registration response must not clobber the merged tags")
+  }
+
+  /// Bounded poll until the stub has seen `count` requests. Used to force a
+  /// deterministic interleaving instead of relying on sleep timings.
+  private func waitForRequestCount(_ count: Int, timeout: TimeInterval) -> Bool {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+      if StubURLProtocol.recordedRequests().count >= count { return true }
+      Thread.sleep(forTimeInterval: 0.01)
+    }
+    return false
+  }
+
   // MARK: - Threading contract (main thread must never block on the API client)
 
   func test_initializeDoesNotBlockTheCallingThreadAndRunsTheApiCallOffTheMainThread() {
