@@ -51,8 +51,13 @@ public class NuntisImpl: NSObject {
         }
       },
       permissionRequester: { callback in
+        // No main-thread hop: `NuntisCore` hops the result onto its own
+        // background work queue (where the blocking PATCH runs), and an
+        // RCTPromiseResolveBlock may be resolved from any thread. Hopping to
+        // main here would have put the blocking API-client call chain back on
+        // the main thread.
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { granted, _ in
-          DispatchQueue.main.async { callback(granted) }
+          callback(granted)
         }
       }
     )

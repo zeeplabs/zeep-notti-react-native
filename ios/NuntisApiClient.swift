@@ -20,6 +20,13 @@ private struct NuntisApiClientTimeoutError: Error, LocalizedError {
 /// design.md's Tech Decisions — mirrors `NuntisApiClient.kt` exactly.
 /// `sleeper` is injectable so tests can skip the real delay; production
 /// callers use the default (real thread sleep via `Thread.sleep`).
+///
+/// **Threading**: every method here blocks the calling thread — for up to
+/// ~5x65s of request timeouts plus 2+4+8+16s of backoff on a dead network.
+/// It must therefore only ever be called from `NuntisCore`'s private serial
+/// work queue, never from the main thread (see NuntisCore's threading
+/// contract). Nothing in this file may be invoked directly from an
+/// `AppDelegate`/TurboModule entry point.
 public class NuntisApiClient {
 
   private static let maxAttempts = 5
