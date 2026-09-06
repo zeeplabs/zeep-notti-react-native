@@ -10,6 +10,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.json.JSONObject
+import java.util.concurrent.TimeUnit
 
 class NuntisApiClientTest {
 
@@ -43,7 +44,7 @@ class NuntisApiClientTest {
 
     val result = client.createOrUpdateDevice(token = "fcm-token", platform = "android")
 
-    val recorded = server.takeRequest()
+    val recorded = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
     assertEquals("POST", recorded.method)
     assertEquals("/v1/apps/app-1/devices", recorded.path)
     assertEquals("Bearer secret-key", recorded.getHeader("Authorization"))
@@ -68,7 +69,7 @@ class NuntisApiClientTest {
       fields = mapOf("subscribed" to true)
     )
 
-    val recorded = server.takeRequest()
+    val recorded = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
     assertEquals("PATCH", recorded.method)
     assertEquals("/v1/apps/app-1/devices/device-1", recorded.path)
 

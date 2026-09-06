@@ -10,6 +10,10 @@ public enum ApiResult {
   case failure(String)
 }
 
+private struct NuntisApiClientTimeoutError: Error, LocalizedError {
+  var errorDescription: String? { "Nuntis API request timed out" }
+}
+
 /// Talks to Nuntis' `/v1/apps/{app_id}/devices` endpoints (design.md
 /// NuntisApiClient). Retries a 5xx response or network failure with
 /// exponential backoff (2s, 4s, 8s, 16s, 32s), capped at 5 attempts, per
@@ -110,7 +114,14 @@ public class NuntisApiClient {
       semaphore.signal()
     }.resume()
 
-    semaphore.wait()
+    // Independent bound on top of URLSession's own default request timeout
+    // (60s) - if a session with no timeout configured is ever passed in,
+    // this still guarantees executeWithRetry's retry loop resumes instead of
+    // hanging indefinitely (SDK reliability fix - see
+    // .specs/features/sdk-core-v1/validation.md Fix 4).
+    if semaphore.wait(timeout: .now() + 65) == .timedOut {
+      return (nil, nil, NuntisApiClientTimeoutError())
+    }
     return (resultData, resultResponse, resultError)
   }
 
