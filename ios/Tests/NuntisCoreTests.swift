@@ -828,7 +828,7 @@ final class NuntisCoreTests: XCTestCase {
   /// It is generous because the shared CI runner is an order of magnitude
   /// slower per request than a dev machine, and a drain that expires there
   /// leaves the core running into the next test.
-  private func drain(_ core: NuntisCore, timeout: TimeInterval = 15) {
+  private func drain(_ core: NuntisCore, timeout: TimeInterval = 25) {
     XCTAssertTrue(core.waitForPendingWork(timeout: timeout), "NuntisCore work queue did not drain in \(timeout)s")
   }
 

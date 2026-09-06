@@ -17,7 +17,7 @@ latest published version receives security fixes.
 Report privately instead, using one of:
 
 - GitHub's [private vulnerability reporting](https://github.com/zeeplabs/zeep-nuntis-react-native/security/advisories/new) for this repository (preferred).
-- Email: **opensource@zeeplabs.com.br**
+- Email: **opensource@zeeptecnologia.com.br**
 
 Include, as applicable:
 

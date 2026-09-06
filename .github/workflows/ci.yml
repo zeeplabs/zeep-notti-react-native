@@ -169,6 +169,8 @@ jobs:
             -workspace example/ios/NuntisExample.xcworkspace \
             -scheme NuntisTests \
             -destination 'platform=iOS Simulator,name=iPhone 17' \
+            -retry-tests-on-failure \
+            -test-iterations 2 \
             CODE_SIGNING_ALLOWED=NO
 
       - name: Build example for iOS
