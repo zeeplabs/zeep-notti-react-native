@@ -120,13 +120,22 @@ public class NuntisApiClient {
         lastError = error.localizedDescription
       } else if let http = response as? HTTPURLResponse {
         if (200..<300).contains(http.statusCode) {
-          return .success(parseDeviceResponse(data ?? Data()))
-        }
-        if http.statusCode < 500 {
+          // A 2xx whose body is not a device object (captive portal/proxy HTML,
+          // a renamed/missing `id` field, truncated JSON) is *not* a success:
+          // reporting one made the caller persist an empty deviceId and wipe
+          // its local tags, then build every later request against
+          // `.../devices/` — a wrong resource. Treated as a retriable failure
+          // instead, exactly like a 5xx.
+          if let device = parseDeviceResponse(data ?? Data()) {
+            return .success(device)
+          }
+          lastError = "HTTP \(http.statusCode) with an unparseable device response body"
+        } else if http.statusCode < 500 {
           // 4xx: not retried, terminal failure.
           return .failure("HTTP \(http.statusCode)")
+        } else {
+          lastError = "HTTP \(http.statusCode)"
         }
-        lastError = "HTTP \(http.statusCode)"
       }
 
       if attempt < Self.maxAttempts {
@@ -162,12 +171,16 @@ public class NuntisApiClient {
     return (resultData, resultResponse, resultError)
   }
 
-  private func parseDeviceResponse(_ data: Data) -> DeviceResponse {
+  /// Returns nil when the body is not a device object — no JSON, no `id`, or
+  /// an empty `id`. Callers must treat nil as a failed request rather than
+  /// substituting an empty `DeviceResponse`.
+  private func parseDeviceResponse(_ data: Data) -> DeviceResponse? {
     guard
       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-      let id = json["id"] as? String
+      let id = json["id"] as? String,
+      !id.isEmpty
     else {
-      return DeviceResponse(id: "", tags: [:])
+      return nil
     }
     let tags = (json["tags"] as? [String: String]) ?? [:]
     return DeviceResponse(id: id, tags: tags)

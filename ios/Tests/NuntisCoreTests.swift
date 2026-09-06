@@ -566,6 +566,38 @@ final class NuntisCoreTests: XCTestCase {
     XCTAssertEqual(store.getDeviceId(), "device-1")
   }
 
+  // MARK: - A 2xx that is not a device object must not fake a successful registration
+
+  func test_registrationWith2xxButAnUnparseableBodyDoesNotFakeSuccessAndRetriesOnForeground() {
+    // Captive-portal/proxy 200-with-HTML (or a renamed `id` field) used to be
+    // reported as a successful registration carrying an empty device id: the
+    // SDK then persisted "" as the deviceId, wiped its local tags, and aimed
+    // every later PATCH at `.../devices/`. It must fail honestly instead, and
+    // stay eligible for the foreground retry.
+    store.setDeviceId("device-old")
+    store.setLastToken("apns-token")
+    store.setTags(["plan": "vip"])
+
+    for _ in 0..<5 { StubURLProtocol.enqueue(.status(200, body: "<html>captive portal</html>")) }
+    let logs = LogSink()
+    let core = newCore(logs: logs)
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core, timeout: 10)
+
+    XCTAssertEqual(StubURLProtocol.recordedRequests().count, 5)
+    XCTAssertEqual(store.getDeviceId(), "device-old", "an empty device id must never be persisted")
+    XCTAssertEqual(store.getTags(), ["plan": "vip"], "local tags must survive a failed registration")
+    XCTAssertTrue(logs.messages.contains { $0.contains("registration failed") })
+
+    // Still marked failed, so the next foreground gets another go and can win.
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{"plan":"vip"}}"#))
+    NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+    drain(core, timeout: 10)
+
+    XCTAssertEqual(StubURLProtocol.recordedRequests().count, 6)
+    XCTAssertEqual(store.getDeviceId(), "device-1")
+  }
+
   // MARK: - Registration tag write vs. addTags read-merge-write
 
   func test_aRegistrationLandingDuringAnInFlightAddTagsCannotClobberTheMergedTags() {

@@ -140,6 +140,45 @@ final class NuntisApiClientTests: XCTestCase {
     XCTAssertEqual(StubURLProtocol.recordedRequests().count, 2)
   }
 
+  func test_a2xxWhoseBodyIsNotADeviceObjectIsAFailureAndIsRetried() {
+    // A captive portal / proxy / gateway happily answers 200 with HTML, and a
+    // backend can rename or omit `id`. Reporting that as success handed the
+    // caller a device with an empty id.
+    let garbageBodies = [
+      "<html><body>Sign in to the WiFi</body></html>", // not JSON at all
+      #"{"device_id":"device-1"}"#, // renamed field: no `id`
+      #"{"id":"","tags":{}}"#, // present but empty
+      #"{"id":123}"#, // wrong type
+      "", // empty body
+    ]
+
+    for body in garbageBodies {
+      StubURLProtocol.reset()
+      sleeps = []
+      for _ in 0..<5 { StubURLProtocol.enqueue(.status(200, body: body)) }
+
+      let result = client.createOrUpdateDevice(token: "t", platform: "ios")
+
+      guard case .failure = result else {
+        return XCTFail("a 200 with body '\(body)' must not be reported as success")
+      }
+      XCTAssertEqual(StubURLProtocol.recordedRequests().count, 5, "body '\(body)' must be retried like a 5xx")
+      XCTAssertEqual(sleeps, [2000, 4000, 8000, 16000])
+    }
+  }
+
+  func test_anUnparseable2xxThatLaterTurnsIntoAValidBodySucceeds() {
+    StubURLProtocol.enqueue(.status(200, body: "<html>captive portal</html>"))
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{"plan":"vip"}}"#))
+
+    let result = client.createOrUpdateDevice(token: "t", platform: "ios")
+
+    XCTAssertEqual(StubURLProtocol.recordedRequests().count, 2)
+    guard case .success(let response) = result else { return XCTFail("expected success") }
+    XCTAssertEqual(response.id, "device-1")
+    XCTAssertEqual(response.tags, ["plan": "vip"])
+  }
+
   private func bodyData(_ request: URLRequest) -> Data {
     if let body = request.httpBody { return body }
     guard let stream = request.httpBodyStream else { return Data() }
