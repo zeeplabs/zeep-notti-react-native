@@ -27,12 +27,21 @@ import java.util.concurrent.Executors
 class NuntisModule(reactContext: ReactApplicationContext) :
   NativeNuntisSpec(reactContext) {
 
+  /**
+   * The Activity-lifecycle hook that detects notification clicks is registered
+   * once per process by [NuntisInitProvider], not here: this module is lazy
+   * (so on a cold start it does not exist yet when the launching Activity
+   * reads its intent) and is reconstructed on every RN reload. This instance
+   * only attaches itself as the relay's current emitter, picking up any click
+   * buffered before it existed.
+   */
+  private val clickEmitter: (ParsedNotification) -> Unit = { parsed ->
+    emitClicked(parsed.toWritableMap())
+  }
+
   init {
     activeInstance = this
-    // T10: detect notification clicks from cold-start/background launch
-    // intents without requiring integrator code (Application-level hook).
-    (reactApplicationContext.applicationContext as? android.app.Application)
-      ?.registerActivityLifecycleCallbacks(NuntisActivityLifecycleListener())
+    NuntisNotificationClickRelay.attach(clickEmitter)
   }
 
   /**
@@ -166,8 +175,5 @@ class NuntisModule(reactContext: ReactApplicationContext) :
       activeInstance?.emitReceived(payload)
     }
 
-    internal fun emitNotificationClicked(payload: WritableMap) {
-      activeInstance?.emitClicked(payload)
-    }
   }
 }

@@ -6,12 +6,16 @@ import android.os.Bundle
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.JavaOnlyMap
 import com.facebook.react.bridge.WritableMap
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.Implementation
 import org.robolectric.annotation.Implements
@@ -23,6 +27,56 @@ import org.robolectric.annotation.Implements
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], shadows = [ShadowArguments::class])
 class NuntisActivityLifecycleListenerTest {
+
+  @Before
+  @After
+  fun resetProcessWideState() {
+    NuntisNotificationClickRelay.reset()
+    NuntisActivityLifecycleListener.resetRegistrationForTest()
+  }
+
+  @Test
+  fun `a cold-start click detected before any module exists is delivered once a module attaches`() {
+    // Process start: the ContentProvider runs before any Activity, and long
+    // before the lazy TurboModule is constructed (spec P3-AC7 - a tap from a
+    // killed app). Nothing is attached to emit on yet.
+    Robolectric.buildContentProvider(NuntisInitProvider::class.java).create()
+
+    val intent = Intent().apply {
+      putExtra("google.message_id", "msg-1")
+      putExtra("gcm.n.title", "Hello")
+      putExtra("plan", "vip")
+    }
+    Robolectric.buildActivity(Activity::class.java, intent).create().resume()
+
+    val delivered = mutableListOf<ParsedNotification>()
+    NuntisNotificationClickRelay.attach { delivered.add(it) }
+
+    assertEquals(1, delivered.size)
+    assertEquals("Hello", delivered.single().title)
+    assertEquals(mapOf("plan" to "vip"), delivered.single().data)
+  }
+
+  @Test
+  fun `registerOnce installs a single listener no matter how many times it runs`() {
+    val application = RuntimeEnvironment.getApplication()
+    repeat(3) { NuntisActivityLifecycleListener.registerOnce(application) }
+
+    val delivered = mutableListOf<ParsedNotification>()
+    NuntisNotificationClickRelay.attach { delivered.add(it) }
+
+    val intent = Intent().apply {
+      putExtra("google.message_id", "msg-1")
+      putExtra("gcm.n.title", "Hello")
+    }
+    Robolectric.buildActivity(Activity::class.java, intent).create().resume()
+
+    // One tap, one event - repeated registration (the RN-reload shape, where
+    // the module used to add a fresh listener per instance) must not multiply
+    // emissions.
+    assertEquals(1, delivered.size)
+    assertTrue(delivered.single().title == "Hello")
+  }
 
   /**
    * Proves the "exactly once per tap" dedup property (spec SDK-18):

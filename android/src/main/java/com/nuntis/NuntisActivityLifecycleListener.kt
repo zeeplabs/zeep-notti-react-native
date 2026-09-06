@@ -47,8 +47,27 @@ fun parseClickIntentExtras(intent: Intent?): ParsedNotification? {
  * requires explicit forwarding per AD-002/T3). Clears the handled intent's
  * extras after firing so a later `onActivityResumed` for the same Activity
  * instance doesn't re-fire for the same tap.
+ *
+ * Registered exactly once per process by [NuntisInitProvider] - not by
+ * [NuntisModule], which is lazily constructed after the launching Activity has
+ * already read its intent (and reconstructed on every RN reload, which used to
+ * stack a fresh listener per instance and multiply every click).
  */
 class NuntisActivityLifecycleListener : Application.ActivityLifecycleCallbacks {
+
+  companion object {
+    private val registered = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** Idempotent: repeated calls (e.g. a second provider/process init) are no-ops. */
+    fun registerOnce(application: Application) {
+      if (registered.compareAndSet(false, true)) {
+        application.registerActivityLifecycleCallbacks(NuntisActivityLifecycleListener())
+      }
+    }
+
+    /** Test-only: this is process-wide state that outlives a single test case. */
+    internal fun resetRegistrationForTest() = registered.set(false)
+  }
 
   override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = handle(activity)
   override fun onActivityStarted(activity: Activity) = Unit
@@ -61,7 +80,9 @@ class NuntisActivityLifecycleListener : Application.ActivityLifecycleCallbacks {
   private fun handle(activity: Activity) {
     val intent = activity.intent
     val parsed = parseClickIntentExtras(intent) ?: return
-    NuntisModule.emitNotificationClicked(parsed.toWritableMap())
+    // Buffered when no module is attached yet - the cold-start case, where
+    // this runs before the lazy TurboModule is ever constructed (P3-AC7).
+    NuntisNotificationClickRelay.emit(parsed)
     intent.replaceExtras(Bundle())
   }
 }

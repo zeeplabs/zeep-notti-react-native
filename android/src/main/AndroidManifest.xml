@@ -2,6 +2,17 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application>
+        <!--
+          Runs at process start, before any Activity - the only hook early
+          enough to see a cold-start notification tap's launch intent, since
+          the TurboModule is lazily constructed much later (spec P3-AC7).
+        -->
+        <provider
+            android:name=".NuntisInitProvider"
+            android:authorities="${applicationId}.nuntisinitprovider"
+            android:exported="false"
+            android:initOrder="100" />
+
         <service
             android:name=".NuntisFirebaseMessagingService"
             android:exported="false">
