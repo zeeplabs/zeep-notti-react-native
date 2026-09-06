@@ -590,14 +590,22 @@ T18 -> T19
 - Skill: NONE
 
 **Done when**:
-- [ ] Example app builds for both platforms (`pnpm run build:android`, `pnpm run build:ios`)
-- [ ] No real credentials/keys committed (`.gitignore` covers the local-only config slot)
+- [x] Example app builds for both platforms (`pnpm run build:android`, `pnpm run build:ios`)
+- [x] No real credentials/keys committed (`.gitignore` covers the local-only config slot)
 - [ ] Manual run against a local Nuntis instance shows a new Device row created (recorded as a note in the task's completion, not an automated test)
 
 **Tests**: none (example app, manual verification)
 **Gate**: build
 
+**Status**: ✅ Complete (build gate green on both platforms; the third bullet is an explicitly manual, developer-side step requiring a running Nuntis instance and real credentials neither available nor appropriate in this automated batch - left for a human to run per the README's manual smoke-test checklist, T19)
+
 **Commit**: `feat(example): wire example app for manual SDK smoke testing`
+
+**Deviations**:
+1. `example/src/App.tsx` calls every T16 public method (`initialize`, `requestPermission`, `User.addTags`/`removeTag`, `login`/`logout`, `setSubscription`, `addEventListener` for both events) against placeholder string constants (`REPLACE_WITH_YOUR_APP_ID` etc.), not real credentials.
+2. Android: added `com.google.gms:google-services` classpath to `example/android/build.gradle` and a conditional `apply plugin: "com.google.gms.google-services"` in `example/android/app/build.gradle` (only applied when `google-services.json` exists) so a developer can drop in a real file later without editing build files; `.gitignore` now excludes `example/android/app/google-services.json`.
+3. iOS: added `example/ios/NuntisExample/NuntisExample.entitlements` (`aps-environment: development`) wired via `CODE_SIGN_ENTITLEMENTS` in both Debug/Release build configs of the `NuntisExample` target in `project.pbxproj`, plus `UIBackgroundModes: [remote-notification]` in `Info.plist` - the real push capability/entitlement T18's `Where` field names.
+4. Real `pnpm run build:android`/`build:ios` both re-verified green after these changes (`BUILD SUCCESSFUL in 53s`; `Successfully built the app`) - CocoaPods sandbox needed a `pod install` resync after the entitlements/pbxproj edit (same environment-local noise pattern as prior batches; `Podfile.lock` reverted via `git checkout`, not committed).
 
 ---
 
