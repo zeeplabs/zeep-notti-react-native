@@ -50,6 +50,15 @@ const clicked = Nuntis.addEventListener('notificationClicked', (payload) => {
 // (e.g. in a useEffect cleanup function).
 received.remove();
 clicked.remove();
+
+// Cold start: the tap that launched the app happens before any listener
+// above can be registered, so 'notificationClicked' never fires for it.
+// Check once at startup instead.
+Nuntis.getInitialNotificationClick().then((payload) => {
+  if (payload) {
+    console.log('app was launched by a notification tap', payload);
+  }
+});
 ```
 
 ### API reference
@@ -63,7 +72,8 @@ clicked.remove();
 | `Nuntis.login(externalUserId)` | Associates the device with your own user id. |
 | `Nuntis.logout()` | Clears the external user id locally. Note: Nuntis' backend doesn't support clearing `external_user_id` server-side, so the previously-set value remains on the Device row server-side — `logout()` only affects local SDK state. |
 | `Nuntis.setSubscription(enabled)` | Enables/disables push delivery for the device without unregistering it. |
-| `Nuntis.addEventListener(eventName, callback)` | Subscribes to `'notificationReceived'` (foreground) or `'notificationClicked'` (any app state, including cold start). Returns an `EventSubscription` — call `.remove()` to unsubscribe. |
+| `Nuntis.addEventListener(eventName, callback)` | Subscribes to `'notificationReceived'` (foreground) or `'notificationClicked'` (warm: app already running, backgrounded or foregrounded). Returns an `EventSubscription` — call `.remove()` to unsubscribe. Does **not** fire for a cold-start click — use `getInitialNotificationClick()` for that. |
+| `Nuntis.getInitialNotificationClick(): Promise<NotificationPayload \| null>` | Resolves the notification that cold-launched the app from a tap, or `null` if the app wasn't launched that way. Only resolves once per cold start — the native side clears it after this reads it. Call at startup, before/alongside `addEventListener`. |
 
 All tag/external-id/subscription mutations are serialized client-side (one in-flight network call at a time, last-write-wins on the merged local state) — calling them back-to-back is safe.
 

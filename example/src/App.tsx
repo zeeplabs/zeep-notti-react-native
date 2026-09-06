@@ -14,6 +14,16 @@ export default function App() {
   useEffect(() => {
     Nuntis.initialize(NUNTIS_APP_ID, NUNTIS_CLIENT_KEY, NUNTIS_BASE_URL);
 
+    // Cold start only: a tap that launched the process happens before this
+    // effect runs, so `notificationClicked` below never fires for it. Pull it
+    // once here instead - warm clicks (app already running) keep using the
+    // event listener.
+    Nuntis.getInitialNotificationClick().then((payload) => {
+      if (payload) {
+        console.log('Nuntis getInitialNotificationClick', payload);
+      }
+    });
+
     const received = Nuntis.addEventListener(
       'notificationReceived',
       (payload) => {
