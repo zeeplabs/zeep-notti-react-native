@@ -11,7 +11,15 @@ runs:
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
       with:
         node-version-file: .nvmrc
-        cache: pnpm
+        # No `cache: pnpm` here - the step below already caches node_modules
+        # directly, so this action's own built-in pnpm-store cache is
+        # redundant. On a node_modules cache hit (Install dependencies is
+        # skipped below), pnpm's local store is never populated on the
+        # runner, and this action's post-step cache save then fails with
+        # "Path Validation Error: Path(s) specified in the action for
+        # caching do(es) not exist" - which counts as a job failure once a
+        # later step (e.g. the iOS build) runs long enough for GitHub to
+        # surface it.
 
     - name: Restore dependencies
       id: pnpm-cache
