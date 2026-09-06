@@ -251,9 +251,16 @@ class NuntisCore(
   /**
    * The backend does not support clearing `external_user_id` server-side
    * (spec Edge Case) - only the SDK's locally-held association is cleared.
+   *
+   * Handed to [executor] like every other mutation (and like iOS' `logout`,
+   * which hops onto its `workQueue`) rather than written straight from the
+   * caller's thread: `login("u1")` immediately followed by `logout()` would
+   * otherwise clear the id synchronously *first*, and login's PATCH - still
+   * queued on the executor - would then re-persist "u1" onto a device the
+   * user had already logged out of.
    */
   fun logout() {
-    deviceStore.setExternalUserId(null)
+    dispatch("logout") { deviceStore.setExternalUserId(null) }
   }
 
   fun setSubscription(enabled: Boolean) {

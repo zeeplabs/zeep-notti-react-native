@@ -345,6 +345,30 @@ class NuntisCoreTest {
   }
 
   @Test
+  fun `logout called right after login leaves the device logged out`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    // The login PATCH is slow, so its store write lands well after the
+    // logout() call - the exact window in which a synchronous, off-executor
+    // logout gets silently undone by the login it was meant to supersede.
+    server.enqueue(
+      MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}""")
+        .setBodyDelay(300, TimeUnit.MILLISECONDS)
+    )
+    val core = newCore()
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    // Both from the same (JS) thread, back to back, as an app signing a user
+    // out immediately after a failed/aborted sign-in does.
+    core.login("user-42")
+    core.logout()
+    awaitIdle()
+
+    assertEquals(2, server.requestCount)
+    assertEquals(null, store.getExternalUserId())
+  }
+
+  @Test
   fun `setSubscription PATCHes the given subscribed value and the cached token, and persists it locally on success`() {
     server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
     server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
