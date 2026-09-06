@@ -4,33 +4,48 @@ description: Setup Node.js and install dependencies
 runs:
   using: composite
   steps:
+    - name: Setup pnpm
+      uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+
     - name: Setup Node.js
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
       with:
         node-version-file: .nvmrc
+        cache: pnpm
 
     - name: Restore dependencies
-      id: yarn-cache
+      id: pnpm-cache
       uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
       with:
+        # Root node_modules only - `example/node_modules` is a symlink to it
+        # (see scripts/link-example-node-modules.js), not a real tree. A
+        # `**/node_modules` glob archives both the symlink entry AND, by
+        # recursing into what it points to, the same files again under
+        # `example/node_modules/...`; restoring that tar left an
+        # inconsistent example/node_modules on disk that later steps
+        # couldn't read from.
         path: |
-          **/node_modules
-          .yarn/install-state.gz
-        key: ${{ runner.os }}-yarn-${{ hashFiles('yarn.lock') }}-${{ hashFiles('**/package.json', '!node_modules/**') }}
+          node_modules
+        key: ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('**/package.json', '!node_modules/**') }}
         restore-keys: |
-          ${{ runner.os }}-yarn-${{ hashFiles('yarn.lock') }}
-          ${{ runner.os }}-yarn-
+          ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          ${{ runner.os }}-pnpm-
 
     - name: Install dependencies
-      if: steps.yarn-cache.outputs.cache-hit != 'true'
-      run: yarn install --immutable
+      if: steps.pnpm-cache.outputs.cache-hit != 'true'
+      run: pnpm install --frozen-lockfile
       shell: bash
 
     - name: Cache dependencies
-      if: steps.yarn-cache.outputs.cache-hit != 'true'
+      if: steps.pnpm-cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
       with:
         path: |
-          **/node_modules
-          .yarn/install-state.gz
-        key: ${{ steps.yarn-cache.outputs.cache-primary-key }}
+          node_modules
+        key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
+
+    - name: Link example/node_modules
+      # Runs unconditionally: on a cache hit, `pnpm install` (and its
+      # postinstall) never ran at all, so the symlink still needs creating.
+      run: node scripts/link-example-node-modules.js
+      shell: bash

@@ -28,6 +28,7 @@ DerivedData
 *.ipa
 *.xcuserstate
 project.xcworkspace
+*.xcworkspace
 **/.xcode.env.local
 
 # Android/IJ
@@ -51,6 +52,10 @@ example/vendor/
 # node.js
 #
 node_modules/
+# pnpm-hoisted layout: CocoaPods needs a node_modules symlink inside example/
+# for REACT_NATIVE_PATH resolution. A trailing-slash pattern only matches a
+# real directory, not a symlink, so it needs its own explicit entry.
+example/node_modules
 npm-debug.log
 yarn-debug.log
 yarn-error.log
@@ -84,3 +89,7 @@ android/generated
 
 # React Native Nitro Modules
 nitrogen/
+
+# Nuntis SDK example app (T18): local-only credentials for manual smoke
+# testing against a real Nuntis instance - never commit real values.
+example/android/app/google-services.json

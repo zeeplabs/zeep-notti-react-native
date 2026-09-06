@@ -2,6 +2,15 @@ apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
 
+// Nuntis SDK (T18): applies the Google Services Gradle plugin only when the
+// integrator has placed their own google-services.json here (a fresh
+// clone/checkout has no real credentials committed - see .gitignore).
+// Bare-RN integrators do this manually per the README; the Expo config
+// plugin (T17) does the equivalent automatically on `expo prebuild`.
+if (file("google-services.json").exists()) {
+    apply plugin: "com.google.gms.google-services"
+}
+
 /**
  * This is the configuration block to customize your React Native Android app.
  * By default you don't need to apply any configuration, just uncomment the lines you need.
@@ -77,9 +86,9 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace "nuntisexample"
+    namespace "com.nuntisexample"
     defaultConfig {
-        applicationId "nuntisexample"
+        applicationId "com.nuntisexample"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

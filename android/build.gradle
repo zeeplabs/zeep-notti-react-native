@@ -48,4 +48,21 @@ android {
 
 dependencies {
   implementation "com.facebook.react:react-android"
+  implementation "com.google.firebase:firebase-messaging:25.1.2"
+  // ProcessLifecycleOwner: app-level foreground signal used to resume device
+  // registration after the retry cap is exhausted (spec SDK-05). Same
+  // androidx.lifecycle version line react-android already pulls in; the
+  // artifact itself is not transitively available.
+  implementation "androidx.lifecycle:lifecycle-process:2.6.2"
+
+  testImplementation "junit:junit:4.13.2"
+  testImplementation "com.squareup.okhttp3:mockwebserver:4.12.0"
+  // org.json is part of the Android platform at runtime, but its unit-test
+  // stub throws "not mocked" on the plain JVM without Robolectric - this
+  // real implementation shadows the stub for tests only.
+  testImplementation "org.json:json:20240303"
+  // RemoteMessage (T9) is backed by android.os.Bundle, unmockable on the
+  // plain JVM - Robolectric provides a real (non-throwing) framework
+  // implementation for just that test class.
+  testImplementation "org.robolectric:robolectric:4.14.1"
 }

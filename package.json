@@ -18,6 +18,8 @@
     "android",
     "ios",
     "cpp",
+    "plugin/build",
+    "app.plugin.js",
     "*.podspec",
     "react-native.config.js",
     "!ios/build",
@@ -32,9 +34,11 @@
     "!**/.*"
   ],
   "scripts": {
+    "postinstall": "node scripts/link-example-node-modules.js",
     "example": "pnpm --filter react-native-nuntis-example --",
-    "clean": "del-cli android/build example/android/build example/android/app/build example/ios/build lib",
-    "prepare": "bob build",
+    "clean": "del-cli android/build example/android/build example/android/app/build example/ios/build lib plugin/build",
+    "build:plugin": "tsc --project plugin/tsconfig.json",
+    "prepare": "bob build && pnpm build:plugin",
     "typecheck": "tsc",
     "lint": "eslint \"**/*.{js,ts,tsx}\"",
     "test": "jest",
@@ -68,6 +72,7 @@
     "@react-native/eslint-config": "0.85.0",
     "@react-native/jest-preset": "0.85.0",
     "@release-it/conventional-changelog": "^11.0.1",
+    "@types/node": "^24.0.0",
     "@types/react": "^19.2.0",
     "commitlint": "^21.0.2",
     "del-cli": "^7.0.0",
@@ -83,11 +88,18 @@
     "react-native-builder-bob": "^0.43.0",
     "release-it": "^20.2.0",
     "turbo": "^2.9.16",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "@expo/config-plugins": "^57.0.9"
   },
   "peerDependencies": {
+    "@expo/config-plugins": "*",
     "react": "*",
     "react-native": "*"
+  },
+  "peerDependenciesMeta": {
+    "@expo/config-plugins": {
+      "optional": true
+    }
   },
   "packageManager": "pnpm@10.15.0",
   "react-native-builder-bob": {
