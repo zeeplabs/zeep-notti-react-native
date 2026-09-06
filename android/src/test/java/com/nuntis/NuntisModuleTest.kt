@@ -12,6 +12,8 @@ import com.facebook.react.bridge.UIManager
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.turbomodule.core.interfaces.CallInvokerHolder
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -66,6 +68,28 @@ class NuntisModuleTest {
     // silently resolving something.
     assertEquals(true, resolvedValue)
   }
+
+  @Test
+  fun `invalidate releases the process-wide hooks so a torn-down instance stops receiving clicks`() {
+    NuntisNotificationClickRelay.reset()
+    val module = NuntisModule(FakeReactApplicationContext())
+    module.initialize("app-1", "key", "https://nuntis.example.com")
+    assertNotNull(NuntisModule.activeCore)
+
+    // RN destroys and rebuilds modules on every dev reload; without cleanup
+    // each dead instance stayed hooked up and re-emitted every later tap.
+    module.invalidate()
+
+    assertNull(NuntisModule.activeCore)
+
+    val delivered = mutableListOf<ParsedNotification>()
+    NuntisNotificationClickRelay.emit(ParsedNotification("Hello", null, emptyMap()))
+    NuntisNotificationClickRelay.attach { delivered.add(it) }
+
+    // Buffered rather than delivered to the dead module: it detached itself.
+    assertEquals(listOf("Hello"), delivered.map { it.title })
+  }
+
 }
 
 /**

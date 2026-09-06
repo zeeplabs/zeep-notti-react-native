@@ -40,7 +40,7 @@ class NuntisModule(reactContext: ReactApplicationContext) :
   }
 
   init {
-    activeInstance = this
+    synchronized(NuntisModule::class.java) { activeInstance = this }
     NuntisNotificationClickRelay.attach(clickEmitter)
   }
 
@@ -64,7 +64,30 @@ class NuntisModule(reactContext: ReactApplicationContext) :
       permissionRequester = { callback -> requestNativePermission(callback) },
       logger = { message -> Log.e(NAME, message) },
       executor = ioExecutor
-    ).also { activeCore = it }
+    ).also {
+      ownCore = it
+      activeCore = it
+    }
+  }
+
+  /** Non-null only once [core] has actually been constructed (it is lazy). */
+  private var ownCore: NuntisCore? = null
+
+  /**
+   * RN tears a module down on context destruction and on every dev reload. The
+   * module used to leave its process-wide references (and, previously, a fresh
+   * Activity-lifecycle listener) behind, so a single notification tap emitted
+   * once per past instance. Everything this instance published is released
+   * here, guarded by identity so a newer instance is never unhooked.
+   */
+  override fun invalidate() {
+    NuntisNotificationClickRelay.detach(clickEmitter)
+    synchronized(NuntisModule::class.java) {
+      if (activeInstance === this) activeInstance = null
+      if (ownCore != null && activeCore === ownCore) activeCore = null
+    }
+    ioExecutor.shutdown()
+    super.invalidate()
   }
 
   // T9 forces a Codegen event-emit bridge onto this already-wired module:

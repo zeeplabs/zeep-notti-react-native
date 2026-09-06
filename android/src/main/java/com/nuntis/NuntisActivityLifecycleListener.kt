@@ -4,6 +4,8 @@ import android.app.Activity
 import android.app.Application
 import android.content.Intent
 import android.os.Bundle
+import java.util.Collections
+import java.util.WeakHashMap
 
 private const val GOOGLE_MESSAGE_ID_KEY = "google.message_id"
 private const val NOTIFICATION_KEY_PREFIX = "gcm.n."
@@ -44,9 +46,9 @@ fun parseClickIntentExtras(intent: Intent?): ParsedNotification? {
  * Detects a notification click that launched (cold start) or resumed
  * (background) the host Activity, without requiring integrator code -
  * Android's equivalent of the zero-`AppDelegate`-code goal (contrast: iOS
- * requires explicit forwarding per AD-002/T3). Clears the handled intent's
- * extras after firing so a later `onActivityResumed` for the same Activity
- * instance doesn't re-fire for the same tap.
+ * requires explicit forwarding per AD-002/T3). Each Intent instance is
+ * emitted for at most once, so the `onActivityCreated` + `onActivityResumed`
+ * pair (and any later resume/config change) can't re-fire the same tap.
  *
  * Registered exactly once per process by [NuntisInitProvider] - not by
  * [NuntisModule], which is lazily constructed after the launching Activity has
@@ -77,12 +79,24 @@ class NuntisActivityLifecycleListener : Application.ActivityLifecycleCallbacks {
   override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
   override fun onActivityDestroyed(activity: Activity) = Unit
 
+  /**
+   * Identity-keyed record of the Intent instances already emitted for. This
+   * used to be done by wiping the intent's extras (`replaceExtras(Bundle())`),
+   * which destroyed the host app's own launch data - its deep-link/extras
+   * handling reads the same intent. Weak keys so a finished Activity's intent
+   * is collectable; a genuinely new tap arrives as a new Intent instance
+   * (`Activity.setIntent`) and is emitted normally.
+   */
+  private val handledIntents: MutableSet<Intent> =
+    Collections.newSetFromMap(WeakHashMap<Intent, Boolean>())
+
   private fun handle(activity: Activity) {
-    val intent = activity.intent
+    val intent = activity.intent ?: return
     val parsed = parseClickIntentExtras(intent) ?: return
+    val firstTimeForThisIntent = synchronized(handledIntents) { handledIntents.add(intent) }
+    if (!firstTimeForThisIntent) return
     // Buffered when no module is attached yet - the cold-start case, where
     // this runs before the lazy TurboModule is ever constructed (P3-AC7).
     NuntisNotificationClickRelay.emit(parsed)
-    intent.replaceExtras(Bundle())
   }
 }

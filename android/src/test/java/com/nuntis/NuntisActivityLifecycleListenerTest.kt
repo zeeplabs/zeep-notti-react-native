@@ -2,7 +2,6 @@ package com.nuntis
 
 import android.app.Activity
 import android.content.Intent
-import android.os.Bundle
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.JavaOnlyMap
 import com.facebook.react.bridge.WritableMap
@@ -78,46 +77,55 @@ class NuntisActivityLifecycleListenerTest {
     assertTrue(delivered.single().title == "Hello")
   }
 
-  /**
-   * Proves the "exactly once per tap" dedup property (spec SDK-18):
-   * `onActivityResumed`'s `handle()` only reaches its emit call when
-   * `parseClickIntentExtras` finds `google.message_id`, and it clears the
-   * intent's extras (`intent.replaceExtras(Bundle())`) right after - so a
-   * second `replaceExtras` call happening at all would mean the click path
-   * fired again for the same tap. Counting `replaceExtras` calls on the real
-   * Intent instance is a direct, non-shallow proxy for that: it only runs on
-   * the branch guarded by a successful parse, immediately alongside the
-   * emit call in `handle()`.
-   */
-  private class CountingIntent : Intent() {
-    var replaceExtrasCallCount = 0
-      private set
-
-    override fun replaceExtras(extras: Bundle?): Intent {
-      replaceExtrasCallCount++
-      return super.replaceExtras(extras)
-    }
-  }
-
   @Test
-  fun `onActivityResumed called twice with the same click intent fires the dedup clear exactly once`() {
-    val intent = CountingIntent().apply {
+  fun `the same click intent handled twice emits once and leaves the host app's extras intact`() {
+    val delivered = mutableListOf<ParsedNotification>()
+    NuntisNotificationClickRelay.attach { delivered.add(it) }
+
+    val intent = Intent().apply {
       putExtra("google.message_id", "msg-1")
       putExtra("gcm.n.title", "Hello")
-      putExtra("gcm.n.body", "World")
+      putExtra("deep_link", "app://orders/42")
     }
     val activity = Robolectric.buildActivity(Activity::class.java, intent).create().get()
     val listener = NuntisActivityLifecycleListener()
 
     listener.onActivityResumed(activity)
-    assertEquals(1, intent.replaceExtrasCallCount)
-
-    // Same Activity/Intent instance, second resume for the same tap - the
-    // extras were already cleared by the first call, so parseClickIntentExtras
-    // now finds no google.message_id and handle() must return before ever
-    // clearing extras (or emitting) again.
     listener.onActivityResumed(activity)
-    assertEquals(1, intent.replaceExtrasCallCount)
+
+    // Exactly once per tap (spec SDK-18)...
+    assertEquals(1, delivered.size)
+    // ...without destroying the launching Intent the host app reads too: the
+    // SDK used to wipe every extra to dedup, breaking the host's own
+    // deep-link/extras handling.
+    assertEquals("app://orders/42", activity.intent.getStringExtra("deep_link"))
+    assertEquals("msg-1", activity.intent.getStringExtra("google.message_id"))
+  }
+
+  @Test
+  fun `a second tap delivering a new intent to the same activity emits again`() {
+    val delivered = mutableListOf<ParsedNotification>()
+    NuntisNotificationClickRelay.attach { delivered.add(it) }
+
+    val activity = Robolectric.buildActivity(
+      Activity::class.java,
+      Intent().apply {
+        putExtra("google.message_id", "msg-1")
+        putExtra("gcm.n.title", "First")
+      }
+    ).create().get()
+    val listener = NuntisActivityLifecycleListener()
+    listener.onActivityResumed(activity)
+
+    // A real second tap arrives as a new Intent instance (onNewIntent /
+    // setIntent) - dedup must not swallow it.
+    activity.intent = Intent().apply {
+      putExtra("google.message_id", "msg-2")
+      putExtra("gcm.n.title", "Second")
+    }
+    listener.onActivityResumed(activity)
+
+    assertEquals(listOf("First", "Second"), delivered.map { it.title })
   }
 
   @Test
