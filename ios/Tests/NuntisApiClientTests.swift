@@ -80,6 +80,19 @@ final class NuntisApiClientTests: XCTestCase {
     XCTAssertEqual(response.id, "device-1")
   }
 
+  func test_aNonStringTagValueIsSkippedNotTheWholeDictionary() {
+    // `json["tags"] as? [String: String]` used to fail the ENTIRE cast if even
+    // one value wasn't a string, silently dropping every valid tag over one
+    // bad value from the backend. Matches Android's per-key tolerance.
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{"plan":"vip","score":42}}"#))
+
+    let result = client.createOrUpdateDevice(token: "t", platform: "ios")
+
+    guard case .success(let response) = result else { return XCTFail("expected success") }
+    XCTAssertEqual(response.id, "device-1")
+    XCTAssertEqual(response.tags, ["plan": "vip"])
+  }
+
   func test_patchDeviceAlwaysIncludesTheCachedTokenField() {
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{"plan":"vip"}}"#))
 

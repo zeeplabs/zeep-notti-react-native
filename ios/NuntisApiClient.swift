@@ -214,7 +214,11 @@ public class NuntisApiClient {
     else {
       return nil
     }
-    let tags = (json["tags"] as? [String: String]) ?? [:]
+    // Per-key filtering rather than `json["tags"] as? [String: String]`: that
+    // cast fails the ENTIRE dictionary if even one value isn't a string,
+    // silently dropping every valid tag over one bad value. Matches Android's
+    // per-key tolerance (see NuntisApiClient.kt's parseDeviceResponse).
+    let tags = (json["tags"] as? [String: Any])?.compactMapValues { $0 as? String } ?? [:]
     return DeviceResponse(id: id, tags: tags)
   }
 }
