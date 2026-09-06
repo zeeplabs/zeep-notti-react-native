@@ -8,12 +8,23 @@ import java.util.Collections
 import java.util.WeakHashMap
 
 private const val GOOGLE_MESSAGE_ID_KEY = "google.message_id"
-private const val NOTIFICATION_KEY_PREFIX = "gcm.n."
-private val RESERVED_EXTRA_KEYS = setOf(
-  "google.message_id", "google.sent_time", "google.ttl", "google.original_priority",
-  "google.priority", "google.delivered_priority", "google.priority_reduced", "from",
-  "collapse_key", "google.c.sender.id", "google.to"
-)
+
+/**
+ * Transport metadata FCM injects into the launch Intent, which must never
+ * reach `payload.data` - that map is the integrator's own custom data and
+ * nothing else. Filtered by prefix rather than by an enumerated list, which
+ * is what iOS does (`ios/NuntisNotificationParsing.swift`): FCM's Analytics
+ * labels (`google.c.a.e`, `google.c.a.c_id`, `google.c.a.c_l`,
+ * `google.c.a.ts`, `google.c.a.udt`, `google.c.a.m_l`, `google.c.fid`, …)
+ * are added and renamed by the FCM SDK over time, so any closed list leaks
+ * whatever Google ships next. `aps.` is iOS/APNs-only and has no meaning
+ * here, so it is deliberately not part of the Android policy.
+ */
+private val INTERNAL_EXTRA_PREFIXES = listOf("gcm.", "google.")
+private val INTERNAL_EXTRA_KEYS = setOf("from", "collapse_key")
+
+private fun isInternalExtraKey(key: String): Boolean =
+  key in INTERNAL_EXTRA_KEYS || INTERNAL_EXTRA_PREFIXES.any { key.startsWith(it) }
 
 /**
  * Pure parse of a launch/resume [Intent]'s extras into the SDK's
@@ -35,7 +46,7 @@ fun parseClickIntentExtras(intent: Intent?): ParsedNotification? {
     when {
       key == "gcm.n.title" -> title = value
       key == "gcm.n.body" -> body = value
-      key.startsWith(NOTIFICATION_KEY_PREFIX) || key in RESERVED_EXTRA_KEYS -> Unit
+      isInternalExtraKey(key) -> Unit
       else -> data[key] = value
     }
   }

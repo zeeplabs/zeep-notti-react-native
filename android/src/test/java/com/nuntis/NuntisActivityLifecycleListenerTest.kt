@@ -150,6 +150,37 @@ class NuntisActivityLifecycleListenerTest {
   }
 
   @Test
+  fun `parseClickIntentExtras keeps FCM's analytics labels out of the integrator's data`() {
+    val intent = Intent().apply {
+      putExtra("google.message_id", "msg-1")
+      putExtra("gcm.n.title", "Hello")
+      // FCM Analytics labels the SDK injects into the launch Intent. The
+      // closed reserved-key list never named these, so they leaked into
+      // payload.data on Android while iOS' prefix filter already dropped them.
+      putExtra("google.c.a.e", "1")
+      putExtra("google.c.a.c_id", "10123456789")
+      putExtra("google.c.a.c_l", "campaign-label")
+      putExtra("google.c.a.ts", "1717171717")
+      putExtra("google.c.a.udt", "0")
+      putExtra("google.c.a.m_l", "")
+      putExtra("google.c.fid", "fid-token")
+      putExtra("gcm.notification.e", "1")
+      putExtra("from", "1234567890")
+      putExtra("collapse_key", "com.example.app")
+      // The integrator's own data - the only thing payload.data is for.
+      putExtra("orderId", "42")
+      putExtra("deep_link", "app://orders/42")
+    }
+
+    val parsed = parseClickIntentExtras(intent)
+
+    assertEquals(
+      mapOf("orderId" to "42", "deep_link" to "app://orders/42"),
+      parsed?.data
+    )
+  }
+
+  @Test
   fun `parseClickIntentExtras returns null for a null intent or one with no extras at all`() {
     assertNull(parseClickIntentExtras(null))
     assertNull(parseClickIntentExtras(Intent()))
