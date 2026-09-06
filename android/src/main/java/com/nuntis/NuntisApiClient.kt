@@ -116,24 +116,25 @@ class NuntisApiClient(
         httpClient.newCall(request).execute().use { response ->
           if (response.isSuccessful) {
             val bodyString = response.body?.string().orEmpty()
-            return try {
-              ApiResult.Success(parseDeviceResponse(bodyString))
+            try {
+              return ApiResult.Success(parseDeviceResponse(bodyString))
             } catch (e: JSONException) {
               // A 2xx that is not the documented device JSON: a captive
-              // portal/proxy answering with HTML, or a renamed field.
-              // JSONException is not an IOException, so without this it would
-              // escape the retry loop entirely and unwind into NuntisCore,
-              // leaving registration parked mid-flight forever. Reported as a
-              // normal terminal failure instead, so the caller's failure
-              // handling (and the app-foreground retry) applies.
-              ApiResult.Failure("malformed response body: ${e.message}")
+              // portal/proxy answering with HTML, a renamed field, or a
+              // transient proxy glitch. Treated as retriable - same as a 5xx
+              // and matching iOS' NuntisApiClient.executeWithRetry - instead
+              // of a terminal failure, since retrying is safe (registration
+              // is idempotent) and gives a genuine transient hiccup a chance
+              // to resolve instead of parking registration on the first bad
+              // response.
+              lastError = "malformed response body: ${e.message}"
             }
-          }
-          if (response.code < 500) {
+          } else if (response.code < 500) {
             // 4xx: not retried, terminal failure.
             return ApiResult.Failure("HTTP ${response.code}")
+          } else {
+            lastError = "HTTP ${response.code}"
           }
-          lastError = "HTTP ${response.code}"
         }
       } catch (e: IOException) {
         lastError = e.message ?: "network error"
@@ -172,9 +173,17 @@ class NuntisApiClient(
     // exactly that, so a legitimate "device has no tags" response could park
     // registration - and every queued mutation - forever. Absent, null and
     // non-object all mean "no tags", matching iOS' `as? [String: String] ?? [:]`.
+    // `opt(key) as? String` rather than `getString(key)`: a non-string tag
+    // value (a stray number/bool/object from a misbehaving backend) used to
+    // throw JSONException, which the caller above catches and turns into a
+    // whole-registration failure over one bad tag. Skipping just that key
+    // matches iOS' per-value tolerance (see NuntisApiClient.swift's
+    // parseDeviceResponse) instead of discarding the entire response.
     val tags = mutableMapOf<String, String>()
     json.optJSONObject("tags")?.let { tagsJson ->
-      tagsJson.keys().forEach { key -> tags[key] = tagsJson.getString(key) }
+      tagsJson.keys().forEach { key ->
+        (tagsJson.opt(key) as? String)?.let { value -> tags[key] = value }
+      }
     }
     return DeviceResponse(id = id, tags = tags)
   }

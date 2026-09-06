@@ -792,16 +792,20 @@ class NuntisCoreTest {
     // fix it unwound past every branch that assigns registrationState, parking
     // it at IN_FLIGHT - which onAppForegrounded early-returns on, permanently
     // disabling the only retry path and stranding queued mutations.
-    server.enqueue(
-      MockResponse().setResponseCode(200).setBody("<html><body>Sign in to the network</body></html>")
-    )
+    // A malformed 2xx is retriable (matches iOS), so the client exhausts all
+    // 5 attempts on this response before reporting the registration FAILED.
+    repeat(5) {
+      server.enqueue(
+        MockResponse().setResponseCode(200).setBody("<html><body>Sign in to the network</body></html>")
+      )
+    }
     val core = newCore()
 
     core.initialize("app-1", "key", validBaseUrl)
     core.login("user-42")
     awaitIdle()
 
-    assertEquals(1, server.requestCount)
+    assertEquals(5, server.requestCount)
     assertEquals(null, store.getDeviceId())
     assertEquals(null, store.getExternalUserId())
 
@@ -812,7 +816,7 @@ class NuntisCoreTest {
 
     // Registration recovered on the next foreground, and the mutation that was
     // queued behind it finally flushed.
-    assertEquals(3, server.requestCount)
+    assertEquals(7, server.requestCount)
     assertEquals("device-1", store.getDeviceId())
     assertEquals("user-42", store.getExternalUserId())
   }
@@ -826,13 +830,17 @@ class NuntisCoreTest {
     // it as success persisted "" as the device id and replaced the local tags
     // with the response's empty map, with no path back: the foreground retry
     // only re-arms a FAILED registration, and this one looked registered.
-    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"","tags":{}}"""))
+    // An empty id is retriable (matches iOS), so the client exhausts all 5
+    // attempts on this response before reporting the registration FAILED.
+    repeat(5) {
+      server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"","tags":{}}"""))
+    }
     val core = newCore()
 
     core.initialize("app-1", "key", validBaseUrl)
     awaitIdle()
 
-    assertEquals(1, server.requestCount)
+    assertEquals(5, server.requestCount)
     assertEquals(null, store.getDeviceId())
     assertEquals(mapOf("plan" to "vip"), store.getTags())
 
@@ -841,7 +849,7 @@ class NuntisCoreTest {
     core.onAppForegrounded()
     awaitIdle()
 
-    assertEquals(2, server.requestCount)
+    assertEquals(6, server.requestCount)
     assertEquals("device-1", store.getDeviceId())
   }
 

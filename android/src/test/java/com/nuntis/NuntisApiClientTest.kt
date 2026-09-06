@@ -132,51 +132,75 @@ class NuntisApiClientTest {
   }
 
   @Test
-  fun `a 2xx whose body is not JSON is a terminal failure, not a thrown exception`() {
-    // Captive portal / proxy shape: HTTP 200, HTML body.
+  fun `a 2xx whose body is not JSON is retried like a 5xx, not a terminal failure`() {
+    // Captive portal / proxy shape: HTTP 200, HTML body - retriable since a
+    // transient proxy glitch may clear on the next attempt, matching iOS'
+    // executeWithRetry (a malformed 2xx returns nil from parseSuccess there
+    // and falls into the same retry path as a 5xx).
     server.enqueue(
       MockResponse().setResponseCode(200).setBody("<html><body>Sign in to the network</body></html>")
     )
-    // Only consumed if the client wrongly retried a non-retryable body.
     server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
 
     val result = client.createOrUpdateDevice(token = "t", platform = "android")
 
-    assertTrue("expected a Failure, got $result", result is ApiResult.Failure)
-    assertEquals(1, server.requestCount)
+    assertEquals(2, server.requestCount)
+    assertEquals(listOf(2000L), sleeps)
+    assertTrue("expected a Success, got $result", result is ApiResult.Success)
   }
 
   @Test
-  fun `a 2xx JSON body missing the id field is a terminal failure`() {
-    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"device_id":"device-1"}"""))
+  fun `malformed 2xx bodies exhaust the retry cap at exactly 5 attempts`() {
+    repeat(5) {
+      server.enqueue(MockResponse().setResponseCode(200).setBody("""{"device_id":"device-1"}"""))
+    }
 
     val result = client.createOrUpdateDevice(token = "t", platform = "android")
 
+    assertEquals(5, server.requestCount)
+    assertEquals(listOf(2000L, 4000L, 8000L, 16000L), sleeps)
     assertTrue("expected a Failure, got $result", result is ApiResult.Failure)
   }
 
   @Test
-  fun `a 2xx JSON body with an empty id is a terminal failure`() {
+  fun `a 2xx JSON body missing the id field is retried, not a terminal failure`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"device_id":"device-1"}"""))
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+
+    val result = client.createOrUpdateDevice(token = "t", platform = "android")
+
+    assertEquals(2, server.requestCount)
+    assertTrue("expected a Success, got $result", result is ApiResult.Success)
+  }
+
+  @Test
+  fun `a 2xx JSON body with an empty id is retried, not a terminal failure`() {
     // AOSP's JSONObject.getString coerces rather than validates, so this used
     // to be reported as a successful registration carrying id "". The caller
     // then persisted "" (non-null, so nothing retried it) and PATCHed
     // `/v1/apps/app-1/devices/` - the collection, not a device - forever.
+    // Now retriable instead of terminal: same treatment as any other
+    // unusable 2xx body.
     server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"","tags":{"plan":"vip"}}"""))
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
 
     val result = client.createOrUpdateDevice(token = "t", platform = "android")
 
-    assertTrue("expected a Failure, got $result", result is ApiResult.Failure)
+    assertEquals(2, server.requestCount)
+    assertTrue("expected a Success, got $result", result is ApiResult.Success)
   }
 
   @Test
-  fun `a 2xx JSON body whose id is not a string is a terminal failure`() {
+  fun `a 2xx JSON body whose id is not a string is retried, not a terminal failure`() {
     // Same coercion trap from the other side: getString(123) returns "123",
     // fabricating a device id the backend never issued.
     server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":123,"tags":{}}"""))
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
 
     val result = client.createOrUpdateDevice(token = "t", platform = "android")
 
-    assertTrue("expected a Failure, got $result", result is ApiResult.Failure)
+    assertEquals(2, server.requestCount)
+    assertTrue("expected a Success, got $result", result is ApiResult.Success)
   }
 
   @Test
@@ -193,6 +217,24 @@ class NuntisApiClientTest {
     val response = (result as ApiResult.Success).response
     assertEquals("device-1", response.id)
     assertEquals(emptyMap<String, String>(), response.tags)
+  }
+
+  @Test
+  fun `a non-string tag value is skipped, not a terminal failure for the whole response`() {
+    // getString(key) on a non-string value used to throw JSONException,
+    // which the caller wraps as a malformed-body failure - discarding a
+    // perfectly good "id" and every other valid tag over one bad value.
+    server.enqueue(
+      MockResponse().setResponseCode(200)
+        .setBody("""{"id":"device-1","tags":{"plan":"vip","score":42}}""")
+    )
+
+    val result = client.createOrUpdateDevice(token = "t", platform = "android")
+
+    assertTrue("expected a Success, got $result", result is ApiResult.Success)
+    val response = (result as ApiResult.Success).response
+    assertEquals("device-1", response.id)
+    assertEquals(mapOf("plan" to "vip"), response.tags)
   }
 
   @Test
