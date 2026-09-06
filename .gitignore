@@ -52,6 +52,10 @@ example/vendor/
 # node.js
 #
 node_modules/
+# pnpm-hoisted layout: CocoaPods needs a node_modules symlink inside example/
+# for REACT_NATIVE_PATH resolution. A trailing-slash pattern only matches a
+# real directory, not a symlink, so it needs its own explicit entry.
+example/node_modules
 npm-debug.log
 yarn-debug.log
 yarn-error.log
