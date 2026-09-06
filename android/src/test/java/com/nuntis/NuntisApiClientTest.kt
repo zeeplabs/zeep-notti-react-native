@@ -9,6 +9,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
@@ -128,5 +129,67 @@ class NuntisApiClientTest {
     client.createOrUpdateDevice(token = "t", platform = "android")
 
     assertEquals(2, server.requestCount)
+  }
+
+  @Test
+  fun `a map field is stored as a nested JSONObject, not as a raw Map`() {
+    val json = client.buildPatchJson("fcm-token", mapOf("tags" to mapOf("plan" to "vip")))
+
+    // The distinction that matters: `put(String, Any)` happily stores a raw
+    // Map, and only the *encoder* decides what that becomes. Android's
+    // platform JSONStringer has no Map branch and would emit it as a string.
+    val tags = json.get("tags")
+    assertTrue(
+      "tags must be a JSONObject node, was ${tags.javaClass.name}",
+      tags is JSONObject
+    )
+    assertEquals("vip", (tags as JSONObject).getString("plan"))
+    assertEquals("fcm-token", json.getString("token"))
+  }
+
+  @Test
+  fun `a map field survives Android's org json encoder as a nested object`() {
+    val json = client.buildPatchJson("fcm-token", mapOf("tags" to mapOf("plan" to "vip")))
+
+    // Encoded the way the AOSP JSONStringer does it (JSONObject/JSONArray/
+    // primitives only, everything else stringified via toString) rather than
+    // via the JVM org.json artifact on the test classpath, which has an extra
+    // Map branch the device does not have. Structural comparison, since key
+    // order is not guaranteed by either implementation.
+    val encoded = JSONObject(aospEncode(json))
+    assertEquals(setOf("tags", "token"), encoded.keys().asSequence().toSet())
+    assertEquals("fcm-token", encoded.getString("token"))
+    // Fails with `JSONException: Value {plan=vip} at tags of type
+    // java.lang.String cannot be converted to JSONObject` if the map is put raw.
+    assertEquals("vip", encoded.getJSONObject("tags").getString("plan"))
+  }
+
+  @Test
+  fun `a list field survives Android's org json encoder as a nested array`() {
+    val json = client.buildPatchJson("t", mapOf("topics" to listOf("a", "b")))
+
+    val topics = JSONObject(aospEncode(json)).getJSONArray("topics")
+    assertEquals(2, topics.length())
+    assertEquals("a", topics.getString(0))
+    assertEquals("b", topics.getString(1))
+  }
+
+  /**
+   * Minimal re-implementation of AOSP's `JSONStringer.value(Object)` dispatch:
+   * only JSONObject/JSONArray/Boolean/Number/null are encoded structurally,
+   * anything else is written as `String.valueOf(value)`. Used so these tests
+   * assert against the encoder the SDK actually runs on in production instead
+   * of the more forgiving JVM `org.json` artifact.
+   */
+  private fun aospEncode(value: Any?): String = when (value) {
+    null, JSONObject.NULL -> "null"
+    is JSONObject -> value.keys().asSequence().joinToString(
+      prefix = "{", postfix = "}", separator = ","
+    ) { key -> JSONObject.quote(key) + ":" + aospEncode(value.get(key)) }
+    is JSONArray -> (0 until value.length()).joinToString(
+      prefix = "[", postfix = "]", separator = ","
+    ) { index -> aospEncode(value.get(index)) }
+    is Boolean, is Number -> value.toString()
+    else -> JSONObject.quote(value.toString())
   }
 }

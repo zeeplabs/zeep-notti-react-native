@@ -4,6 +4,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 
@@ -54,9 +55,7 @@ class NuntisApiClient(
 
   /** PATCH always includes the cached `token` field (AD-009 ownership proof). */
   fun patchDevice(deviceId: String, token: String, fields: Map<String, Any>): ApiResult {
-    val json = JSONObject()
-    fields.forEach { (key, value) -> json.put(key, value) }
-    json.put("token", token)
+    val json = buildPatchJson(token, fields)
 
     val body = json.toString().toRequestBody(jsonMediaType)
 
@@ -67,6 +66,42 @@ class NuntisApiClient(
       .build()
 
     return executeWithRetry(request)
+  }
+
+  /**
+   * Builds the PATCH payload, converting composite values (maps, lists) into
+   * real `JSONObject`/`JSONArray` nodes instead of handing them to
+   * `JSONObject.put(String, Any)` as-is.
+   *
+   * `put` only *stores* the value; the encoding happens later in
+   * `JSONStringer.value(Object)`. Android's platform `org.json` (AOSP) has no
+   * branch there for `Map` or `Collection` - it falls through to
+   * `string(value.toString())`, so `mapOf("tags" to mapOf("plan" to "vip"))`
+   * ships as `{"tags":"{plan=vip}"}` (a *string*) instead of a nested object,
+   * and the backend rejects or misreads it. iOS' `JSONSerialization` encodes
+   * the nested dictionary correctly, so the two platforms silently disagreed.
+   *
+   * This is invisible to unit tests because the JVM `org.json:json` artifact
+   * used in the test source set (Crockford's implementation) *does* have a
+   * `Map` branch - hence the explicit conversion here rather than relying on
+   * whichever `org.json` happens to be on the classpath.
+   */
+  internal fun buildPatchJson(token: String, fields: Map<String, Any>): JSONObject {
+    val json = JSONObject()
+    fields.forEach { (key, value) -> json.put(key, toJsonValue(value)) }
+    json.put("token", token)
+    return json
+  }
+
+  private fun toJsonValue(value: Any?): Any = when (value) {
+    null -> JSONObject.NULL
+    is Map<*, *> -> JSONObject().also { nested ->
+      value.forEach { (key, nestedValue) -> nested.put(key.toString(), toJsonValue(nestedValue)) }
+    }
+    is Collection<*> -> JSONArray().also { array ->
+      value.forEach { element -> array.put(toJsonValue(element)) }
+    }
+    else -> value
   }
 
   private fun executeWithRetry(request: Request): ApiResult {
