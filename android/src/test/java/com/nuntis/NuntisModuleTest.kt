@@ -8,6 +8,7 @@ import com.facebook.react.bridge.JavaScriptModule
 import com.facebook.react.bridge.NativeModule
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
+import com.facebook.react.bridge.RuntimeExecutor
 import com.facebook.react.bridge.UIManager
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.turbomodule.core.interfaces.CallInvokerHolder
@@ -195,6 +196,8 @@ private class FakeReactApplicationContext :
   override fun <T : NativeModule> getNativeModule(nativeModuleInterface: Class<T>): T? = null
 
   override fun getNativeModule(nativeModuleName: String): NativeModule? = null
+
+  override fun getRuntimeExecutor(): RuntimeExecutor? = null
 
   override fun getCatalystInstance(): CatalystInstance =
     throw UnsupportedOperationException("not used by the SDK<33 auto-grant path")
