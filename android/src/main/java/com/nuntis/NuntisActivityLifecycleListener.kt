@@ -50,7 +50,15 @@ fun parseClickIntentExtras(intent: Intent?): ParsedNotification? {
       else -> data[key] = value
     }
   }
-  return ParsedNotification(title = title, body = body, data = data)
+  // `gcm.n.title`/`gcm.n.body` only exist when FCM re-injects the notification
+  // block into the click Intent, which it does not do for a combined
+  // notification+data message once the system tray already auto-displayed it
+  // (see NuntisFirebaseMessagingService's doc comment). Nuntis duplicates
+  // title/body into `data` for exactly this case - fall back to that so the
+  // click payload isn't null when the only source left is `data`. Left in
+  // `data` too, matching the foreground shape (parseRemoteMessage doesn't
+  // strip them out of `remoteMessage.data` either).
+  return ParsedNotification(title = title ?: data["title"], body = body ?: data["body"], data = data)
 }
 
 /**

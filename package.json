@@ -34,11 +34,10 @@
     "!**/.*"
   ],
   "scripts": {
-    "postinstall": "node scripts/link-example-node-modules.js",
     "example": "pnpm --filter react-native-nuntis-example --",
     "clean": "del-cli android/build example/android/build example/android/app/build example/ios/build lib plugin/build",
     "build:plugin": "tsc --project plugin/tsconfig.json",
-    "prepare": "bob build && pnpm build:plugin",
+    "prepare": "node scripts/link-example-node-modules.js && bob build && pnpm build:plugin",
     "typecheck": "tsc",
     "lint": "eslint \"**/*.{js,ts,tsx}\"",
     "test": "jest",

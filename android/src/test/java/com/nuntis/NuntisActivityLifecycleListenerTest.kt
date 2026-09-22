@@ -181,6 +181,43 @@ class NuntisActivityLifecycleListenerTest {
   }
 
   @Test
+  fun `parseClickIntentExtras falls back to data title and body when gcm n title and gcm n body are absent`() {
+    // FCM does not re-inject the notification block into the click Intent
+    // once the system tray has already auto-displayed it for a combined
+    // notification+data message - only `data` survives. Nuntis duplicates
+    // title/body into `data` for this case.
+    val intent = Intent().apply {
+      putExtra("google.message_id", "msg-1")
+      putExtra("title", "Hello")
+      putExtra("body", "World")
+      putExtra("plan", "vip")
+    }
+
+    val parsed = parseClickIntentExtras(intent)
+
+    assertEquals(
+      ParsedNotification(title = "Hello", body = "World", data = mapOf("title" to "Hello", "body" to "World", "plan" to "vip")),
+      parsed
+    )
+  }
+
+  @Test
+  fun `parseClickIntentExtras prefers gcm n title and gcm n body over data when both are present`() {
+    val intent = Intent().apply {
+      putExtra("google.message_id", "msg-1")
+      putExtra("gcm.n.title", "From notification block")
+      putExtra("gcm.n.body", "From notification block body")
+      putExtra("title", "From data")
+      putExtra("body", "From data body")
+    }
+
+    val parsed = parseClickIntentExtras(intent)
+
+    assertEquals("From notification block", parsed?.title)
+    assertEquals("From notification block body", parsed?.body)
+  }
+
+  @Test
   fun `parseClickIntentExtras returns null for a null intent or one with no extras at all`() {
     assertNull(parseClickIntentExtras(null))
     assertNull(parseClickIntentExtras(Intent()))

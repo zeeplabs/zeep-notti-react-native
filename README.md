@@ -18,6 +18,7 @@ Nuntis is self-hosted or SaaS per deployment, so the SDK never hardcodes a host:
 - [Usage](#usage)
 - [API reference](#api-reference)
 - [Bare React Native setup](#bare-react-native-setup)
+- [Forwarding events manually](#forwarding-events-manually)
 - [Expo setup](#expo-setup)
 - [Manual smoke testing](#manual-smoke-testing)
 - [Contributing](#contributing)
@@ -147,6 +148,16 @@ The Expo config plugin (below) automates all of this on `expo prebuild`. For a b
 
 The library's own manifest already registers its `FirebaseMessagingService` and merges into your app automatically via Gradle manifest merging — no manual step needed for that part. The `com.google.firebase:firebase-messaging` dependency is likewise already pulled in by this library.
 
+4. If your main `Activity`'s `launchMode` is `singleTask` or `singleTop` (the RN/Expo default), override `onNewIntent` and call `setIntent(intent)`. Without it, tapping a notification while the app is already running (backgrounded, not killed) reuses the existing `Activity`, `onNewIntent` fires, but `Activity.getIntent()` keeps returning the **stale** launch intent — which is what this SDK reads to detect a click. Result: `notificationClicked` silently never fires on that path, while a cold-start tap (killed app, fresh `Activity`/intent) works fine, making the bug easy to miss in testing.
+
+   ```kotlin
+   // MainActivity.kt
+   override fun onNewIntent(intent: Intent) {
+     super.onNewIntent(intent)
+     setIntent(intent)
+   }
+   ```
+
 ### iOS
 
 1. Enable the **Push Notifications** capability for your app target in Xcode (adds the `aps-environment` entitlement).
@@ -181,6 +192,38 @@ The library's own manifest already registers its `FirebaseMessagingService` and 
    ```
 
 Without this forwarding, the device token never reaches the SDK and `notificationReceived`/`notificationClicked` never fire — `initialize()` still registers the device (with a `subscribed: false` state) but push delivery won't complete until the callbacks are wired.
+
+## Forwarding events manually
+
+Both native setup paths above assume Nuntis owns the platform's single push hook (iOS's `UNUserNotificationCenter` delegate, Android's manifest-declared `FirebaseMessagingService`). If your app already owns that hook for another reason and can't hand it to Nuntis, forward events into the SDK manually instead — no delegate/manifest ownership required on either platform:
+
+**iOS** — `NuntisPushDelegate.shared`'s methods are plain `public func`s, callable from inside your own delegate:
+
+```swift
+func userNotificationCenter(
+  _ center: UNUserNotificationCenter,
+  willPresent notification: UNNotification,
+  withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+) {
+  NuntisPushDelegate.shared.userNotificationCenter(center, willPresent: notification, withCompletionHandler: completionHandler)
+}
+```
+
+**Android** — `NuntisBridge` exposes the same two callbacks your own `FirebaseMessagingService` would otherwise miss:
+
+```kotlin
+class YourFirebaseMessagingService : FirebaseMessagingService() {
+  override fun onNewToken(token: String) {
+    NuntisBridge.onNewToken(token)
+  }
+
+  override fun onMessageReceived(remoteMessage: RemoteMessage) {
+    NuntisBridge.onMessageReceived(remoteMessage)
+  }
+}
+```
+
+Note this only forwards the *events*; you're also responsible for removing this library's own manifest-declared `NuntisFirebaseMessagingService` in your merged manifest (`tools:node="remove"` on the `<service>` entry) so it doesn't race your own service for the same `com.google.firebase.MESSAGING_EVENT` intent-filter.
 
 ## Expo setup
 
