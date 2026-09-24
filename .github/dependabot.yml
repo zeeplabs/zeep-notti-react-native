@@ -8,6 +8,11 @@ updates:
     groups:
       dev-dependencies:
         dependency-type: "development"
+        exclude-patterns:
+          - "typescript"
+    ignore:
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
