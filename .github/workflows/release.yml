@@ -30,10 +30,21 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
 
       # Trusted publishing (OIDC) needs npm CLI >= 11.5.1 to mint the
-      # short-lived token; the version bundled with the pinned Node release
-      # may be older.
-      - name: Upgrade npm for trusted publishing support
-        run: npm install -g npm@latest
+      # short-lived token. The version bundled with .nvmrc's pinned Node
+      # release already satisfies this - don't `npm install -g npm@latest`
+      # here, it can resolve to an npm major that requires a newer Node
+      # than what's pinned (e.g. npm 12 requires Node >=24.15/26) and fail
+      # with EBADENGINE.
+      - name: Check npm version supports trusted publishing
+        run: |
+          NPM_VERSION=$(npm --version)
+          node -e "
+            const [major, minor, patch] = '$NPM_VERSION'.split('.').map(Number);
+            if (major < 11 || (major === 11 && minor < 5) || (major === 11 && minor === 5 && patch < 1)) {
+              console.error('npm $NPM_VERSION does not support trusted publishing (need >= 11.5.1)');
+              process.exit(1);
+            }
+          "
 
       - name: Build package
         run: pnpm prepare
