@@ -20,7 +20,7 @@ buildscript {
         // Applied conditionally in app/build.gradle only when the
         // integrator has placed their own google-services.json - a fresh
         // clone/checkout has no real credentials committed.
-        classpath("com.google.gms:google-services:4.4.4")
+        classpath("com.google.gms:google-services:4.5.0")
     }
 }
 
