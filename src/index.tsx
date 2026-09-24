@@ -1,56 +1,56 @@
 import type { EventSubscription } from 'react-native';
-import NativeNuntis, { type NotificationPayload } from './NativeNuntis';
+import NativeNotti, { type NotificationPayload } from './NativeNotti';
 
-// SPEC_DEVIATION: T4 replaced NativeNuntis.ts's scaffolded `multiply` method
+// SPEC_DEVIATION: T4 replaced NativeNotti.ts's scaffolded `multiply` method
 // with the real v1 Spec, orphaning the `multiply`/`multiply.native` files
 // (removed). T16 now implements the real public facade below - a thin
-// pass-through into NativeNuntis per design.md's AD-001 (no business logic
+// pass-through into NativeNotti per design.md's AD-001 (no business logic
 // in TS).
 
 export type { NotificationPayload };
 
-export type NuntisEventName = 'notificationReceived' | 'notificationClicked';
+export type NottiEventName = 'notificationReceived' | 'notificationClicked';
 
 /**
- * Add/remove device tags used for Nuntis Segments. Single-key convenience
+ * Add/remove device tags used for Notti Segments. Single-key convenience
  * wrappers around the Spec's plural `addTags`/`removeTags` methods.
  */
 const User = {
   addTag(key: string, value: string): void {
-    NativeNuntis.addTags({ [key]: value });
+    NativeNotti.addTags({ [key]: value });
   },
 
   addTags(tags: { [key: string]: string }): void {
-    NativeNuntis.addTags(tags);
+    NativeNotti.addTags(tags);
   },
 
   removeTag(key: string): void {
-    NativeNuntis.removeTags([key]);
+    NativeNotti.removeTags([key]);
   },
 
   removeTags(keys: string[]): void {
-    NativeNuntis.removeTags(keys);
+    NativeNotti.removeTags(keys);
   },
 };
 
 function initialize(appId: string, clientKey: string, baseUrl: string): void {
-  NativeNuntis.initialize(appId, clientKey, baseUrl);
+  NativeNotti.initialize(appId, clientKey, baseUrl);
 }
 
 function requestPermission(): Promise<boolean> {
-  return NativeNuntis.requestPermission();
+  return NativeNotti.requestPermission();
 }
 
 function login(externalUserId: string): void {
-  NativeNuntis.login(externalUserId);
+  NativeNotti.login(externalUserId);
 }
 
 function logout(): void {
-  NativeNuntis.logout();
+  NativeNotti.logout();
 }
 
 function setSubscription(enabled: boolean): void {
-  NativeNuntis.setSubscription(enabled);
+  NativeNotti.setSubscription(enabled);
 }
 
 /**
@@ -62,7 +62,7 @@ function setSubscription(enabled: boolean): void {
  * exist early enough to catch it via the event instead.
  */
 function getInitialNotificationClick(): Promise<NotificationPayload | null> {
-  return NativeNuntis.getInitialNotificationClick();
+  return NativeNotti.getInitialNotificationClick();
 }
 
 /**
@@ -74,18 +74,18 @@ function getInitialNotificationClick(): Promise<NotificationPayload | null> {
  * string-named API.
  */
 function addEventListener(
-  eventName: NuntisEventName,
+  eventName: NottiEventName,
   callback: (payload: NotificationPayload) => void
 ): EventSubscription {
   switch (eventName) {
     case 'notificationReceived':
-      return NativeNuntis.onNotificationReceived(callback);
+      return NativeNotti.onNotificationReceived(callback);
     case 'notificationClicked':
-      return NativeNuntis.onNotificationClicked(callback);
+      return NativeNotti.onNotificationClicked(callback);
   }
 }
 
-export const Nuntis = {
+export const Notti = {
   initialize,
   requestPermission,
   login,
@@ -96,4 +96,4 @@ export const Nuntis = {
   User,
 };
 
-export default Nuntis;
+export default Notti;

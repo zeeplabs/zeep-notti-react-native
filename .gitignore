@@ -90,8 +90,8 @@ android/generated
 # React Native Nitro Modules
 nitrogen/
 
-# Nuntis SDK example app (T18): local-only credentials for manual smoke
-# testing against a real Nuntis instance - never commit real values.
+# Notti SDK example app (T18): local-only credentials for manual smoke
+# testing against a real Notti instance - never commit real values.
 example/android/app/google-services.json
 
 # npm pack output, used for local real-device smoke testing

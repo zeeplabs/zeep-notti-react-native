@@ -27,9 +27,9 @@ The [example app](/example/) demonstrates usage of the library. You need to run 
 
 It is configured to use the local version of the library, so any changes you make to the library's source code will be reflected in the example app. Changes to the library's JavaScript code will be reflected in the example app without a rebuild, but native code changes will require a rebuild of the example app.
 
-If you want to use Android Studio or Xcode to edit the native code, you can open the `example/android` or `example/ios` directories respectively in those editors. To edit the Objective-C or Swift files, open `example/ios/NuntisExample.xcworkspace` in Xcode and find the source files at `Pods > Development Pods > react-native-nuntis`.
+If you want to use Android Studio or Xcode to edit the native code, you can open the `example/android` or `example/ios` directories respectively in those editors. To edit the Objective-C or Swift files, open `example/ios/NottiExample.xcworkspace` in Xcode and find the source files at `Pods > Development Pods > react-native-notti`.
 
-To edit the Java or Kotlin files, open `example/android` in Android Studio and find the source files at `react-native-nuntis` under `Android`.
+To edit the Java or Kotlin files, open `example/android` in Android Studio and find the source files at `react-native-notti` under `Android`.
 
 You can use various commands from the root directory to work with the project.
 
@@ -54,7 +54,7 @@ pnpm example ios
 To confirm that the app is running with the new architecture, check the Metro logs for a message like this:
 
 ```sh
-Running "NuntisExample" with {"fabric":true,"initialProps":{"concurrentRoot":true},"rootTag":1}
+Running "NottiExample" with {"fabric":true,"initialProps":{"concurrentRoot":true},"rootTag":1}
 ```
 
 Note the `"fabric":true` and `"concurrentRoot":true` properties.
@@ -89,12 +89,12 @@ Business logic lives natively (Kotlin + Swift, no shared code between platforms 
 
 ```sh
 # Android (from example/android)
-cd example/android && ./gradlew :react-native-nuntis:testDebugUnitTest
+cd example/android && ./gradlew :react-native-notti:testDebugUnitTest
 
 # iOS
 xcodebuild test \
-  -workspace example/ios/NuntisExample.xcworkspace \
-  -scheme NuntisTests \
+  -workspace example/ios/NottiExample.xcworkspace \
+  -scheme NottiTests \
   -destination 'platform=iOS Simulator,name=iPhone 17'
 ```
 

@@ -15,7 +15,7 @@ buildscript {
         classpath("com.android.tools.build:gradle")
         classpath("com.facebook.react:react-native-gradle-plugin")
         classpath("org.jetbrains.kotlin:kotlin-gradle-plugin")
-        // Nuntis SDK (T18): the Google Services Gradle plugin the SDK's
+        // Notti SDK (T18): the Google Services Gradle plugin the SDK's
         // Firebase Messaging dependency (android/build.gradle) requires.
         // Applied conditionally in app/build.gradle only when the
         // integrator has placed their own google-services.json - a fresh

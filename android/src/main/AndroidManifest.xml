@@ -8,13 +8,13 @@
           the TurboModule is lazily constructed much later (spec P3-AC7).
         -->
         <provider
-            android:name=".NuntisInitProvider"
-            android:authorities="${applicationId}.nuntisinitprovider"
+            android:name=".NottiInitProvider"
+            android:authorities="${applicationId}.nottiinitprovider"
             android:exported="false"
             android:initOrder="100" />
 
         <service
-            android:name=".NuntisFirebaseMessagingService"
+            android:name=".NottiFirebaseMessagingService"
             android:exported="false">
             <intent-filter>
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />

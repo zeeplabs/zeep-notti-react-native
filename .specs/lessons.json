@@ -36,7 +36,7 @@
       "recurrence": 1,
       "harmful": 0,
       "evidence": [
-        "android/src/test/java/com/nuntis/NuntisActivityLifecycleListenerTest.kt (SDK-18) (verification)"
+        "android/src/test/java/com/notti/NottiActivityLifecycleListenerTest.kt (SDK-18) (verification)"
       ],
       "created": "2026-09-06T00:25:37Z",
       "last_seen": "2026-09-06T00:25:37Z"
@@ -54,7 +54,7 @@
       "recurrence": 1,
       "harmful": 0,
       "evidence": [
-        "android/src/test/java/com/nuntis/NuntisApiClientTest.kt:46,71 (android-tests)"
+        "android/src/test/java/com/notti/NottiApiClientTest.kt:46,71 (android-tests)"
       ],
       "created": "2026-09-06T00:25:37Z",
       "last_seen": "2026-09-06T00:25:37Z"

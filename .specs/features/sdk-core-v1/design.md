@@ -7,20 +7,20 @@
 
 ## Architecture Overview
 
-Native-heavy split (AD-001): Kotlin and Swift each own the full behavior — token acquisition, HTTP calls to Nuntis, retry/backoff, tag-merge cache, notification receive/click detection. The Turbo Module (`NativeNuntis`) is the only bridge; the TS layer (`src/index.tsx`) is a thin facade that calls into it and re-exposes native events as a JS-friendly `addEventListener` API. No business logic lives in TS.
+Native-heavy split (AD-001): Kotlin and Swift each own the full behavior — token acquisition, HTTP calls to Notti, retry/backoff, tag-merge cache, notification receive/click detection. The Turbo Module (`NativeNotti`) is the only bridge; the TS layer (`src/index.tsx`) is a thin facade that calls into it and re-exposes native events as a JS-friendly `addEventListener` API. No business logic lives in TS.
 
 ```mermaid
 graph TD
-    JS["TS Facade (src/index.tsx)<br/>Nuntis.initialize / requestPermission /<br/>User.addTag(s) / login / setSubscription /<br/>addEventListener"]
-    TM["NativeNuntis Turbo Module Spec<br/>(Codegen contract)"]
+    JS["TS Facade (src/index.tsx)<br/>Notti.initialize / requestPermission /<br/>User.addTag(s) / login / setSubscription /<br/>addEventListener"]
+    TM["NativeNotti Turbo Module Spec<br/>(Codegen contract)"]
     JS --> TM
 
     subgraph Android
-        AMod["NuntisModule.kt<br/>(TurboModule entry, thin)"]
-        ACore["NuntisCore.kt<br/>(orchestration: init, register, tag-merge, queue)"]
-        AApi["NuntisApiClient.kt<br/>(OkHttp, POST/PATCH devices, retry+backoff)"]
-        AStore["NuntisDeviceStore.kt<br/>(SharedPreferences: deviceId, tags, externalUserId, subscribed)"]
-        AFcm["NuntisFirebaseMessagingService.kt<br/>(FCM token refresh + message receive)"]
+        AMod["NottiModule.kt<br/>(TurboModule entry, thin)"]
+        ACore["NottiCore.kt<br/>(orchestration: init, register, tag-merge, queue)"]
+        AApi["NottiApiClient.kt<br/>(OkHttp, POST/PATCH devices, retry+backoff)"]
+        AStore["NottiDeviceStore.kt<br/>(SharedPreferences: deviceId, tags, externalUserId, subscribed)"]
+        AFcm["NottiFirebaseMessagingService.kt<br/>(FCM token refresh + message receive)"]
         TM --> AMod --> ACore
         ACore --> AApi
         ACore --> AStore
@@ -28,10 +28,10 @@ graph TD
     end
 
     subgraph iOS
-        IMod["Nuntis.swift<br/>(TurboModule entry, thin — pending AD-002 spike)"]
-        ICore["NuntisCore.swift<br/>(orchestration: init, register, tag-merge, queue)"]
-        IApi["NuntisApiClient.swift<br/>(URLSession, POST/PATCH devices, retry+backoff)"]
-        IStore["NuntisDeviceStore.swift<br/>(UserDefaults: deviceId, tags, externalUserId, subscribed)"]
+        IMod["Notti.swift<br/>(TurboModule entry, thin — pending AD-002 spike)"]
+        ICore["NottiCore.swift<br/>(orchestration: init, register, tag-merge, queue)"]
+        IApi["NottiApiClient.swift<br/>(URLSession, POST/PATCH devices, retry+backoff)"]
+        IStore["NottiDeviceStore.swift<br/>(UserDefaults: deviceId, tags, externalUserId, subscribed)"]
         IDelegate["APNs delegate hooks<br/>(UNUserNotificationCenterDelegate,<br/>didRegisterForRemoteNotifications)"]
         TM --> IMod --> ICore
         ICore --> IApi
@@ -39,11 +39,11 @@ graph TD
         IDelegate --> ICore
     end
 
-    AApi -->|"Bearer clientKey"| Nuntis["Nuntis API<br/>POST/PATCH /v1/apps/:app_id/devices"]
-    IApi -->|"Bearer clientKey"| Nuntis
+    AApi -->|"Bearer clientKey"| Notti["Notti API<br/>POST/PATCH /v1/apps/:app_id/devices"]
+    IApi -->|"Bearer clientKey"| Notti
 ```
 
-Each platform independently satisfies the same spec ACs (SDK-01 through SDK-19) against the same Nuntis API contract — there is no shared Kotlin/Swift code (see Risks & Concerns for how this duplication is kept honest).
+Each platform independently satisfies the same spec ACs (SDK-01 through SDK-19) against the same Notti API contract — there is no shared Kotlin/Swift code (see Risks & Concerns for how this duplication is kept honest).
 
 ---
 
@@ -53,16 +53,16 @@ Each platform independently satisfies the same spec ACs (SDK-01 through SDK-19) 
 
 | Component | Location | How to Use |
 | --- | --- | --- |
-| `NativeNuntis` TurboModule spec skeleton | `src/NativeNuntis.ts` | Replace the scaffolded `multiply(a, b)` placeholder with the real v1 method surface (Data Models below) |
-| `NuntisModule.kt` / `Nuntis.h` + `Nuntis.mm` | `android/src/main/java/com/nuntis/`, `ios/` | Replace placeholder bodies; keep the TurboModule registration scaffolding (`NAME`, `getTurboModule`) as-is |
-| Nuntis API device contract | `zeep-nuntis` `internal/api/devices_handlers.go`, `design.md` | Both native clients implement this contract directly — no gateway/BFF in between |
-| AD-009 (Client-key ownership proof) | `zeep-nuntis` `.specs/STATE.md` | Every `PATCH` from either native client must include the device's own cached `token` field |
+| `NativeNotti` TurboModule spec skeleton | `src/NativeNotti.ts` | Replace the scaffolded `multiply(a, b)` placeholder with the real v1 method surface (Data Models below) |
+| `NottiModule.kt` / `Notti.h` + `Notti.mm` | `android/src/main/java/com/notti/`, `ios/` | Replace placeholder bodies; keep the TurboModule registration scaffolding (`NAME`, `getTurboModule`) as-is |
+| Notti API device contract | `zeep-notti` `internal/api/devices_handlers.go`, `design.md` | Both native clients implement this contract directly — no gateway/BFF in between |
+| AD-009 (Client-key ownership proof) | `zeep-notti` `.specs/STATE.md` | Every `PATCH` from either native client must include the device's own cached `token` field |
 
 ### Integration Points
 
 | System | Integration Method |
 | --- | --- |
-| Nuntis REST API | Direct HTTPS calls from native code (Android: OkHttp bundled via `react-native`'s existing transitive dependency; iOS: `URLSession`, no extra dependency), `Authorization: Bearer {clientKey}` |
+| Notti REST API | Direct HTTPS calls from native code (Android: OkHttp bundled via `react-native`'s existing transitive dependency; iOS: `URLSession`, no extra dependency), `Authorization: Bearer {clientKey}` |
 | Firebase Cloud Messaging | `com.google.firebase:firebase-messaging` Android dependency + `google-services.json` (host app owns the file; Expo config plugin wires the Gradle plugin) |
 | Apple Push Notification service | Native `UserNotifications` framework + host app's own APNs entitlement/capability (SDK cannot provision this — documented as an integrator prerequisite) |
 
@@ -70,10 +70,10 @@ Each platform independently satisfies the same spec ACs (SDK-01 through SDK-19) 
 
 ## Components
 
-### `NativeNuntis` (TurboModule Spec)
+### `NativeNotti` (TurboModule Spec)
 
 - **Purpose**: Codegen contract between JS and native — the only cross-language boundary.
-- **Location**: `src/NativeNuntis.ts`
+- **Location**: `src/NativeNotti.ts`
 - **Interfaces** (see Data Models for shared payload shapes):
   - `initialize(appId: string, clientKey: string, baseUrl: string): void`
   - `requestPermission(): Promise<boolean>`
@@ -86,50 +86,50 @@ Each platform independently satisfies the same spec ACs (SDK-01 through SDK-19) 
 - **Dependencies**: React Native Codegen (New Architecture), platform native implementations below.
 - **Reuses**: scaffolded Spec file structure from `create-react-native-library`.
 
-### `NuntisCore` (Android: `.kt`, iOS: `.swift` — independent implementations, same contract)
+### `NottiCore` (Android: `.kt`, iOS: `.swift` — independent implementations, same contract)
 
 - **Purpose**: Orchestrates init, device registration, token refresh, tag-merge, and serializes outgoing `PATCH` calls (spec P3-AC8).
-- **Location**: `android/src/main/java/com/nuntis/NuntisCore.kt`, `ios/NuntisCore.swift`
+- **Location**: `android/src/main/java/com/notti/NottiCore.kt`, `ios/NottiCore.swift`
 - **Interfaces** (internal, called by the thin TurboModule entry class):
-  - `initialize(appId, clientKey, baseUrl)` — no-ops on repeat calls with identical args (SDK-07); fetches current push token and calls `registerDevice`. `baseUrl` is the integrator's own Nuntis instance host (self-hosted or SaaS); missing/empty `baseUrl` is treated the same crash-safety way as missing `appId`/`clientKey` (log, no-op, never throw).
+  - `initialize(appId, clientKey, baseUrl)` — no-ops on repeat calls with identical args (SDK-07); fetches current push token and calls `registerDevice`. `baseUrl` is the integrator's own Notti instance host (self-hosted or SaaS); missing/empty `baseUrl` is treated the same crash-safety way as missing `appId`/`clientKey` (log, no-op, never throw).
   - `registerDevice(token, platform)` — `POST` upsert, retry per Tech Decisions below.
   - `onTokenRefreshed(newToken)` — re-invokes `registerDevice`.
   - `requestPermission()` → native OS prompt, then `PATCH {subscribed}`.
   - `mutateTags(add: Map?, remove: List<String>?)` — merges against the cached tag map, enqueues one `PATCH`.
   - `setExternalUserId(id | null)`, `setSubscription(bool)` — enqueue one `PATCH` each.
-- **Dependencies**: `NuntisApiClient`, `NuntisDeviceStore`.
+- **Dependencies**: `NottiApiClient`, `NottiDeviceStore`.
 - **Reuses**: n/a (new).
 
-### `NuntisApiClient` (Android: OkHttp, iOS: `URLSession`)
+### `NottiApiClient` (Android: OkHttp, iOS: `URLSession`)
 
-- **Purpose**: Talks to Nuntis' `/v1/apps/{app_id}/devices` endpoints; owns retry/backoff.
-- **Location**: `android/src/main/java/com/nuntis/NuntisApiClient.kt`, `ios/NuntisApiClient.swift`
+- **Purpose**: Talks to Notti' `/v1/apps/{app_id}/devices` endpoints; owns retry/backoff.
+- **Location**: `android/src/main/java/com/notti/NottiApiClient.kt`, `ios/NottiApiClient.swift`
 - **Interfaces**:
-  - `createOrUpdateDevice(token, platform): Result<DeviceResponse>` — `POST`, upsert semantics per Nuntis contract.
+  - `createOrUpdateDevice(token, platform): Result<DeviceResponse>` — `POST`, upsert semantics per Notti contract.
   - `patchDevice(deviceId, body): Result<DeviceResponse>` — `PATCH`, always includes the cached `token` field (AD-009 ownership proof).
-- **Dependencies**: `appId`/`clientKey`/`baseUrl` injected from `NuntisCore` at construction time (no hardcoded default host — each Nuntis deployment is self-hosted-or-SaaS with its own host), `NuntisDeviceStore` for the device id and last-known token.
+- **Dependencies**: `appId`/`clientKey`/`baseUrl` injected from `NottiCore` at construction time (no hardcoded default host — each Notti deployment is self-hosted-or-SaaS with its own host), `NottiDeviceStore` for the device id and last-known token.
 - **Reuses**: n/a (new); intentionally does not reuse any existing HTTP client already in the RN dependency tree beyond OkHttp (Android's existing transitive dep).
 
-### `NuntisDeviceStore` (Android: `SharedPreferences`, iOS: `UserDefaults`)
+### `NottiDeviceStore` (Android: `SharedPreferences`, iOS: `UserDefaults`)
 
 - **Purpose**: Persists device id, last-registered token, cached tag map, external user id, and subscribed flag across process restarts — the FCM/APNs delivery path can run in a different process lifecycle than the RN JS engine, so this cannot be in-memory-only like the spec's tag-mutation queue (Edge Case: in-flight-queue drop on kill is explicitly in-memory-only and separate from this persisted state).
-- **Location**: `android/src/main/java/com/nuntis/NuntisDeviceStore.kt`, `ios/NuntisDeviceStore.swift`
+- **Location**: `android/src/main/java/com/notti/NottiDeviceStore.kt`, `ios/NottiDeviceStore.swift`
 - **Interfaces**: `get()/set()` per field; `mergeTags(add, remove): Map<String,String>` (pure function, unit-testable per platform).
 - **Dependencies**: platform storage APIs only.
 - **Reuses**: n/a (new).
 
-### `NuntisFirebaseMessagingService` (Android only)
+### `NottiFirebaseMessagingService` (Android only)
 
-- **Purpose**: Receives FCM token refresh (`onNewToken`) and foreground data/notification messages (`onMessageReceived`); Nuntis always sends a `notification` payload (confirmed in `zeep-nuntis`'s `internal/providers/fcm/fcm.go`), so Android's system tray auto-displays it while the app is backgrounded/killed — `onMessageReceived` only fires reliably in the foreground, per standard FCM notification-message behavior. `onNotificationClicked` for a backgrounded/killed-state tap is instead detected by reading the launching `Intent`'s extras in the module's Activity-lifecycle hook.
-- **Location**: `android/src/main/java/com/nuntis/NuntisFirebaseMessagingService.kt`
-- **Interfaces**: standard `FirebaseMessagingService` overrides; forwards into `NuntisCore`/emits Codegen events.
+- **Purpose**: Receives FCM token refresh (`onNewToken`) and foreground data/notification messages (`onMessageReceived`); Notti always sends a `notification` payload (confirmed in `zeep-notti`'s `internal/providers/fcm/fcm.go`), so Android's system tray auto-displays it while the app is backgrounded/killed — `onMessageReceived` only fires reliably in the foreground, per standard FCM notification-message behavior. `onNotificationClicked` for a backgrounded/killed-state tap is instead detected by reading the launching `Intent`'s extras in the module's Activity-lifecycle hook.
+- **Location**: `android/src/main/java/com/notti/NottiFirebaseMessagingService.kt`
+- **Interfaces**: standard `FirebaseMessagingService` overrides; forwards into `NottiCore`/emits Codegen events.
 - **Dependencies**: `com.google.firebase:firebase-messaging`, registered in `AndroidManifest.xml` (Expo config plugin injects this; bare RN integrators add it manually per README).
 - **Reuses**: n/a (new).
 
 ### iOS APNs delegate hooks
 
 - **Purpose**: iOS equivalent of the FCM service — receives the APNs device token (`application(_:didRegisterForRemoteNotificationsWithDeviceToken:)`) and foreground/background/click notification callbacks (`UNUserNotificationCenterDelegate`).
-- **Location**: `ios/` — confirmed by T3 as a public entry point (e.g. `Nuntis.didRegisterForRemoteNotifications(deviceToken:)` / a `UNUserNotificationCenterDelegate`-conforming helper) that the **host app's own `AppDelegate` must call**, not a swizzled/zero-code hook (see T3 confirmation below).
+- **Location**: `ios/` — confirmed by T3 as a public entry point (e.g. `Notti.didRegisterForRemoteNotifications(deviceToken:)` / a `UNUserNotificationCenterDelegate`-conforming helper) that the **host app's own `AppDelegate` must call**, not a swizzled/zero-code hook (see T3 confirmation below).
 - **Dependencies**: host app's own APNs capability/entitlement (documented integrator prerequisite, not something the SDK can provision); host app's own `AppDelegate` forwarding the APNs callbacks into the SDK (T3 — a second, code-level integrator prerequisite beyond the entitlement).
 - **Reuses**: n/a (new).
 
@@ -150,14 +150,14 @@ React Native's own Turbo Native Modules docs (`reactnative.dev/docs/next/turbo-n
 
 Mechanism, empirically confirmed by a real `pod install` + `react-native build-ios --mode Debug` (RN 0.85.0, Xcode 26.6) succeeding in this repo:
 
-- The Obj-C++ scaffold (`ios/Nuntis.mm`/`ios/Nuntis.h`) stays as the thin TurboModule entry: it still implements `getTurboModule:` and `moduleName` (required — this is the one piece that must stay Obj-C++, since `getTurboModule:` returns a C++ `std::shared_ptr`, which Swift cannot express directly against the Codegen'd C++ JSI class).
-- The actual method bodies move to a plain Swift class (`ios/NuntisImpl.swift`), exposed back to Obj-C++ via `@objc(ClassName) public class ... : NSObject`.
-- `Nuntis.mm` imports the auto-generated `"Nuntis-Swift.h"` header (not a manual bridging header — bridging headers are an app-target mechanism; a CocoaPods pod's own Swift sources are exposed to its own Obj-C++ sources via this auto-generated umbrella header instead) and delegates each method one line into an instance of the Swift class.
-- `Nuntis.podspec` must declare `s.swift_version` explicitly (added: `"5.9"`) — CocoaPods refuses to `pod install` a pod containing Swift files without it.
+- The Obj-C++ scaffold (`ios/Notti.mm`/`ios/Notti.h`) stays as the thin TurboModule entry: it still implements `getTurboModule:` and `moduleName` (required — this is the one piece that must stay Obj-C++, since `getTurboModule:` returns a C++ `std::shared_ptr`, which Swift cannot express directly against the Codegen'd C++ JSI class).
+- The actual method bodies move to a plain Swift class (`ios/NottiImpl.swift`), exposed back to Obj-C++ via `@objc(ClassName) public class ... : NSObject`.
+- `Notti.mm` imports the auto-generated `"Notti-Swift.h"` header (not a manual bridging header — bridging headers are an app-target mechanism; a CocoaPods pod's own Swift sources are exposed to its own Obj-C++ sources via this auto-generated umbrella header instead) and delegates each method one line into an instance of the Swift class.
+- `Notti.podspec` must declare `s.swift_version` explicitly (added: `"5.9"`) — CocoaPods refuses to `pod install` a pod containing Swift files without it.
 
 This pattern matches (and is corroborated by) several independent 2025 community write-ups (e.g. "Creating Turbo Modules in React Native with Swift", "Build Native and Turbo Modules in React Native with Swift" — both Medium, found via web search) that converge on the same Obj-C++-shim-plus-Swift-class shape, but it is **not** an officially documented Meta pattern. AD-002 is resolved as "active-confirmed by spike" (see `.specs/STATE.md`) on that basis — confirmed by working code and cross-referenced community consensus, not by an authoritative React Native doc, and that distinction is preserved here rather than overstated.
 
-Spike files (kept, since the mechanism is confirmed working): `ios/NuntisImpl.swift` (placeholder `multiply` body only — T14 replaces this with the real Spec delegation), `ios/Nuntis.mm` (updated to delegate into `NuntisImpl`), `Nuntis.podspec` (`swift_version` added).
+Spike files (kept, since the mechanism is confirmed working): `ios/NottiImpl.swift` (placeholder `multiply` body only — T14 replaces this with the real Spec delegation), `ios/Notti.mm` (updated to delegate into `NottiImpl`), `Notti.podspec` (`swift_version` added).
 
 ---
 
@@ -169,13 +169,13 @@ Spike files (kept, since the mechanism is confirmed working): `ios/NuntisImpl.sw
 interface NotificationPayload {
   title?: string;
   body?: string;
-  data?: { [key: string]: string }; // arbitrary custom key/value from Nuntis' compose "Configurações avançadas"
+  data?: { [key: string]: string }; // arbitrary custom key/value from Notti' compose "Configurações avançadas"
 }
 ```
 
 **Relationships**: Emitted as-is from the FCM/APNs payload; the SDK does not interpret or route on `data` contents (spec's Out of Scope: deep-link routing is the integrator's job).
 
-### `DeviceState` (persisted in `NuntisDeviceStore`, not exposed to JS directly)
+### `DeviceState` (persisted in `NottiDeviceStore`, not exposed to JS directly)
 
 ```typescript
 interface DeviceState {
@@ -187,7 +187,7 @@ interface DeviceState {
 }
 ```
 
-**Relationships**: One instance per app install (per `(appId, clientKey)` pair); mirrors the Nuntis `Device` row this install owns.
+**Relationships**: One instance per app install (per `(appId, clientKey)` pair); mirrors the Notti `Device` row this install owns.
 
 ---
 
@@ -197,7 +197,7 @@ interface DeviceState {
 | --- | --- | --- |
 | Missing/invalid `appId`/`clientKey`/`baseUrl` at `initialize()` (SDK-03) | Native code logs an error via platform logger (`Log.e` / `os_log`), returns without throwing | No crash; no registration; silent from the JS caller's perspective (matches spec — `initialize` has no return value to reject) |
 | Missing native push prerequisite (SDK-04) | Native code catches the specific missing-config exception/error (e.g. Firebase's own "no google-services.json" failure, or a nil APNs environment) and logs, does not propagate | No crash; push simply doesn't initialize |
-| Registration HTTP failure (SDK-05) | `NuntisApiClient` retries with exponential backoff, capped at 5 attempts, per-platform `Handler`/`DispatchQueue` timer — no shared code, so **this exact policy (base delay, multiplier, jitter or not) must be pinned as a Tech Decision below and implemented identically on both platforms**, or the two clients will observably diverge | No user-visible impact; device just registers late |
+| Registration HTTP failure (SDK-05) | `NottiApiClient` retries with exponential backoff, capped at 5 attempts, per-platform `Handler`/`DispatchQueue` timer — no shared code, so **this exact policy (base delay, multiplier, jitter or not) must be pinned as a Tech Decision below and implemented identically on both platforms**, or the two clients will observably diverge | No user-visible impact; device just registers late |
 | `requestPermission()` called before `initialize()` (Edge Case) | Native code logs an error, does not prompt | No native permission dialog appears |
 | Queued tag/subscription mutation, app killed before it sends (Edge Case) | In-memory queue is lost on process death by design — no persistence attempted | The most recent mutation before kill is not applied; documented as accepted v1 behavior |
 
@@ -207,11 +207,11 @@ interface DeviceState {
 
 | Concern | Location (file:line) | Impact | Mitigation |
 | --- | --- | --- | --- |
-| Two independent native implementations (Kotlin + Swift) of the same retry/tag-merge/queue contract, no shared code (AD-001) | `android/src/main/java/com/nuntis/NuntisCore.kt`, `ios/NuntisCore.swift` (not yet created) | Behavioral drift between platforms is easy to introduce silently — e.g. one platform's retry backoff diverges from the other's, or tag-merge edge cases (empty string value, key collision) are handled differently | Tasks phase must include a **parallel platform test matrix**: the same behavioral scenarios (from spec ACs) written once as a checklist, then implemented as both an Android instrumented test and an iOS XCTest — not just "tests exist," but the same scenario list run on both, checked off together per task |
-| Swift Turbo Module Codegen bridging mechanism unconfirmed (AD-002) | `ios/Nuntis.h`, `ios/Nuntis.mm` (current Obj-C scaffold) | Blocks all iOS implementation work until resolved; wrong assumption here would require re-scaffolding iOS from scratch | First Tasks-phase task is a research spike (Context7 + official RN docs), validated by an actual Xcode build (not just a design read), before any push logic is written |
+| Two independent native implementations (Kotlin + Swift) of the same retry/tag-merge/queue contract, no shared code (AD-001) | `android/src/main/java/com/notti/NottiCore.kt`, `ios/NottiCore.swift` (not yet created) | Behavioral drift between platforms is easy to introduce silently — e.g. one platform's retry backoff diverges from the other's, or tag-merge edge cases (empty string value, key collision) are handled differently | Tasks phase must include a **parallel platform test matrix**: the same behavioral scenarios (from spec ACs) written once as a checklist, then implemented as both an Android instrumented test and an iOS XCTest — not just "tests exist," but the same scenario list run on both, checked off together per task |
+| Swift Turbo Module Codegen bridging mechanism unconfirmed (AD-002) | `ios/Notti.h`, `ios/Notti.mm` (current Obj-C scaffold) | Blocks all iOS implementation work until resolved; wrong assumption here would require re-scaffolding iOS from scratch | First Tasks-phase task is a research spike (Context7 + official RN docs), validated by an actual Xcode build (not just a design read), before any push logic is written |
 | iOS APNs wiring approach (swizzling vs. required `AppDelegate` integration code) unconfirmed | `ios/` (not yet created) | Determines whether bare-RN integrators need to add code to their own `AppDelegate`, which is a real integration-surface decision affecting the README/quickstart | Folded into the same AD-002 spike — resolve before writing the integrator-facing setup instructions |
-| Nuntis' FCM messages always include a `notification` block (confirmed in `zeep-nuntis/internal/providers/fcm/fcm.go:130-136`) | External dependency, not this repo | `onMessageReceived` won't reliably fire in background/killed states (standard FCM behavior) — a naive implementation might assume it always fires and miss background-click detection | Design already accounts for this: background/killed click detection reads the launch `Intent` extras instead of relying on `onMessageReceived` (see `NuntisFirebaseMessagingService` component) |
-| No backend rate limiting/key scoping yet (`zeep-nuntis` roadmap: public-API hardening is unstarted) | `zeep-nuntis` (external) | A buggy retry loop in either native client could hammer Nuntis' API with no server-side backstop | Out of this feature's scope per spec (deferred to `public-api-hardening`), but the 5-attempt retry cap (SDK-05) is itself a client-side backstop worth keeping conservative for this reason |
+| Notti' FCM messages always include a `notification` block (confirmed in `zeep-notti/internal/providers/fcm/fcm.go:130-136`) | External dependency, not this repo | `onMessageReceived` won't reliably fire in background/killed states (standard FCM behavior) — a naive implementation might assume it always fires and miss background-click detection | Design already accounts for this: background/killed click detection reads the launch `Intent` extras instead of relying on `onMessageReceived` (see `NottiFirebaseMessagingService` component) |
+| No backend rate limiting/key scoping yet (`zeep-notti` roadmap: public-API hardening is unstarted) | `zeep-notti` (external) | A buggy retry loop in either native client could hammer Notti' API with no server-side backstop | Out of this feature's scope per spec (deferred to `public-api-hardening`), but the 5-attempt retry cap (SDK-05) is itself a client-side backstop worth keeping conservative for this reason |
 
 ---
 

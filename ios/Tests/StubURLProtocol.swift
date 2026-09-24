@@ -2,7 +2,7 @@ import Foundation
 
 /// Records every request it intercepts and serves back a queued canned
 /// response (or a network error) per call, in FIFO order — the iOS
-/// equivalent of Android's `MockWebServer` used by `NuntisApiClientTest.kt`.
+/// equivalent of Android's `MockWebServer` used by `NottiApiClientTest.kt`.
 /// Call `StubURLProtocol.reset()` between tests to clear state.
 final class StubURLProtocol: URLProtocol {
 

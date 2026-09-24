@@ -111,7 +111,7 @@ jobs:
       - name: Run Android native unit tests
         working-directory: example/android
         run: |
-          ./gradlew :react-native-nuntis:testDebugUnitTest
+          ./gradlew :react-native-notti:testDebugUnitTest
 
       - name: Build example for Android
         env:
@@ -166,8 +166,8 @@ jobs:
       - name: Run iOS native unit tests
         run: |
           xcodebuild test \
-            -workspace example/ios/NuntisExample.xcworkspace \
-            -scheme NuntisTests \
+            -workspace example/ios/NottiExample.xcworkspace \
+            -scheme NottiTests \
             -destination 'platform=iOS Simulator,name=iPhone 17' \
             -retry-tests-on-failure \
             -test-iterations 2 \

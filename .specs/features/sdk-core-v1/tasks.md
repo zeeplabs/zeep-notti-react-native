@@ -19,10 +19,10 @@ Implement these tasks with the `tlc-spec-driven` skill: **activate it by name an
 
 | Code Layer | Required Test Type | Coverage Expectation | Location Pattern | Run Command |
 | --- | --- | --- | --- | --- |
-| Android business logic (`NuntisCore`, `NuntisApiClient`, `NuntisDeviceStore`, pure parsing functions) | unit (JUnit4) | All branches; 1:1 to spec ACs SDK-01–19 (Android-applicable subset); every listed Edge Case has a test | `android/src/test/java/com/nuntis/*Test.kt` | `cd example/android && ./gradlew :react-native-nuntis:testDebugUnitTest` |
-| iOS business logic (`NuntisCore`, `NuntisApiClient`, `NuntisDeviceStore`, pure parsing functions) | unit (XCTest) | All branches; 1:1 to spec ACs SDK-01–19 (iOS-applicable subset); every listed Edge Case has a test | `ios/Tests/*Tests.swift` | `xcodebuild test -workspace example/ios/NuntisExample.xcworkspace -scheme NuntisTests -destination 'platform=iOS Simulator,name=iPhone 16'` |
-| TurboModule thin entry (`NuntisModule.kt`, `Nuntis.swift`) | none (wiring only, exercised transitively by the business-logic tests above via manual construction) | build gate only | `android/src/main/java/com/nuntis/NuntisModule.kt`, `ios/Nuntis.swift` | `pnpm run build:android` / `pnpm run build:ios` (Turbo pipeline tasks already wired in `package.json`/`turbo.json`) |
-| TS facade (`src/index.tsx`, `src/NativeNuntis.ts`) | unit (Jest) | 1:1 to public API surface (every exported method/listener has at least one test); mirrors existing `src/__tests__/index.test.tsx` pattern | `src/__tests__/*.test.tsx` | `pnpm test` |
+| Android business logic (`NottiCore`, `NottiApiClient`, `NottiDeviceStore`, pure parsing functions) | unit (JUnit4) | All branches; 1:1 to spec ACs SDK-01–19 (Android-applicable subset); every listed Edge Case has a test | `android/src/test/java/com/notti/*Test.kt` | `cd example/android && ./gradlew :react-native-notti:testDebugUnitTest` |
+| iOS business logic (`NottiCore`, `NottiApiClient`, `NottiDeviceStore`, pure parsing functions) | unit (XCTest) | All branches; 1:1 to spec ACs SDK-01–19 (iOS-applicable subset); every listed Edge Case has a test | `ios/Tests/*Tests.swift` | `xcodebuild test -workspace example/ios/NottiExample.xcworkspace -scheme NottiTests -destination 'platform=iOS Simulator,name=iPhone 16'` |
+| TurboModule thin entry (`NottiModule.kt`, `Notti.swift`) | none (wiring only, exercised transitively by the business-logic tests above via manual construction) | build gate only | `android/src/main/java/com/notti/NottiModule.kt`, `ios/Notti.swift` | `pnpm run build:android` / `pnpm run build:ios` (Turbo pipeline tasks already wired in `package.json`/`turbo.json`) |
+| TS facade (`src/index.tsx`, `src/NativeNotti.ts`) | unit (Jest) | 1:1 to public API surface (every exported method/listener has at least one test); mirrors existing `src/__tests__/index.test.tsx` pattern | `src/__tests__/*.test.tsx` | `pnpm test` |
 | Config (Expo plugin, `AndroidManifest.xml`, `Info.plist`, CI files) | none | build gate only | `plugin/`, `android/src/main/AndroidManifest.xml`, `ios/`, `.github/` | `pnpm typecheck && pnpm lint` + CI build jobs |
 
 ## Gate Check Commands
@@ -32,7 +32,7 @@ Implement these tasks with the `tlc-spec-driven` skill: **activate it by name an
 | Gate Level | When to Use | Command |
 | --- | --- | --- |
 | Quick | After a TS-only task (facade, Spec) | `pnpm typecheck && pnpm lint && pnpm test` |
-| Native-quick | After an Android-only or iOS-only business-logic task | `cd example/android && ./gradlew :react-native-nuntis:testDebugUnitTest` (Android) or the `xcodebuild test` command above (iOS) |
+| Native-quick | After an Android-only or iOS-only business-logic task | `cd example/android && ./gradlew :react-native-notti:testDebugUnitTest` (Android) or the `xcodebuild test` command above (iOS) |
 | Full | After a task touching both a native module and its TS Spec | Quick + Native-quick for the platform(s) touched |
 | Build | After phase completion, or a config/wiring-only task | `pnpm typecheck && pnpm lint && pnpm test && pnpm run build:android && pnpm run build:ios` (mirrors CI's four jobs) |
 
@@ -115,10 +115,10 @@ T18 -> T19
 
 ### T2: Research spike — Swift Turbo Module Codegen bridging (AD-002, part 1)
 
-**What**: Determine, via official React Native docs/source (Context7 MCP first, web search fallback — never fabricate), the correct way to implement a Turbo Module's native class in Swift under the current scaffold's RN version (`0.85.0`), given the scaffold only generated an Objective-C++ (`Nuntis.mm`/`Nuntis.h`) bridge. Prove it with a minimal spike: convert the existing placeholder `multiply` implementation to Swift and get it building and callable from the example app. Record the confirmed mechanism in `design.md`'s "iOS APNs delegate hooks" component and update `.specs/STATE.md` AD-002 (resolve as active-confirmed, or supersede with a new AD-NNN if Swift bridging proves impractical).
+**What**: Determine, via official React Native docs/source (Context7 MCP first, web search fallback — never fabricate), the correct way to implement a Turbo Module's native class in Swift under the current scaffold's RN version (`0.85.0`), given the scaffold only generated an Objective-C++ (`Notti.mm`/`Notti.h`) bridge. Prove it with a minimal spike: convert the existing placeholder `multiply` implementation to Swift and get it building and callable from the example app. Record the confirmed mechanism in `design.md`'s "iOS APNs delegate hooks" component and update `.specs/STATE.md` AD-002 (resolve as active-confirmed, or supersede with a new AD-NNN if Swift bridging proves impractical).
 **Where**: `ios/` (spike files, kept if the mechanism is confirmed working), `.specs/features/sdk-core-v1/design.md`, `.specs/STATE.md`
 **Depends on**: None
-**Reuses**: existing `ios/Nuntis.h`/`ios/Nuntis.mm` scaffold as the starting point
+**Reuses**: existing `ios/Notti.h`/`ios/Notti.mm` scaffold as the starting point
 **Requirement**: N/A (spike backing AD-002)
 
 **Tools**:
@@ -127,7 +127,7 @@ T18 -> T19
 
 **Done when**:
 - [x] The `multiply` TurboModule method is reimplemented in Swift and the example app's iOS build succeeds (`xcodebuild`/`pod install` actually run, not just typecheck)
-- [x] The example app calling `NativeNuntis.multiply(2, 3)` still returns `6` from the Swift implementation (verified by the arithmetic delegating unchanged into `NuntisImpl.multiply`; full runtime UI launch not separately captured — see commit note)
+- [x] The example app calling `NativeNotti.multiply(2, 3)` still returns `6` from the Swift implementation (verified by the arithmetic delegating unchanged into `NottiImpl.multiply`; full runtime UI launch not separately captured — see commit note)
 - [x] `design.md` and `.specs/STATE.md` AD-002 updated with the confirmed mechanism (or a superseding decision if Swift proved impractical)
 
 **Tests**: none (spike)
@@ -164,12 +164,12 @@ T18 -> T19
 
 ---
 
-### T4: Define the full `NativeNuntis` TurboModule TS Spec
+### T4: Define the full `NativeNotti` TurboModule TS Spec
 
-**What**: Replace the scaffolded `multiply(a, b)` placeholder in `src/NativeNuntis.ts` with the real v1 Spec surface: `initialize(appId, clientKey)`, `requestPermission(): Promise<boolean>`, `login(externalUserId)`, `logout()`, `addTags(tags)`, `removeTags(keys)`, `setSubscription(enabled)`, plus Codegen-declared events `onNotificationReceived`/`onNotificationClicked` carrying a `NotificationPayload` (design.md Data Models).
-**Where**: `src/NativeNuntis.ts`
+**What**: Replace the scaffolded `multiply(a, b)` placeholder in `src/NativeNotti.ts` with the real v1 Spec surface: `initialize(appId, clientKey)`, `requestPermission(): Promise<boolean>`, `login(externalUserId)`, `logout()`, `addTags(tags)`, `removeTags(keys)`, `setSubscription(enabled)`, plus Codegen-declared events `onNotificationReceived`/`onNotificationClicked` carrying a `NotificationPayload` (design.md Data Models).
+**Where**: `src/NativeNotti.ts`
 **Depends on**: None (can run in parallel with T1–T3; sequenced here for phase tidiness since Phase 2/3's module-entry tasks T8/T14 need it)
-**Reuses**: scaffolded `TurboModuleRegistry.getEnforcing<Spec>('Nuntis')` pattern
+**Reuses**: scaffolded `TurboModuleRegistry.getEnforcing<Spec>('Notti')` pattern
 **Requirement**: SDK-01, SDK-08, SDK-12, SDK-13, SDK-14, SDK-15, SDK-16, SDK-17, SDK-18
 
 **Tools**:
@@ -186,14 +186,14 @@ T18 -> T19
 
 **Status**: ✅ Complete
 
-**Commit**: `feat(sdk): define full NativeNuntis TurboModule spec`
+**Commit**: `feat(sdk): define full NativeNotti TurboModule spec`
 
 ---
 
-### T5: `NuntisDeviceStore.kt` — persisted device state + tag-merge logic
+### T5: `NottiDeviceStore.kt` — persisted device state + tag-merge logic
 
-**What**: Implement `SharedPreferences`-backed storage for `deviceId`, `lastToken`, `tags`, `externalUserId`, `subscribed` (design.md `DeviceState`), plus a pure `mergeTags(current, add, remove): Map<String,String>` function. Create the `android/src/test/java/com/nuntis/` unit test source set (does not exist yet) with JUnit4.
-**Where**: `android/src/main/java/com/nuntis/NuntisDeviceStore.kt`, `android/src/test/java/com/nuntis/NuntisDeviceStoreTest.kt`, `android/build.gradle` (add `testImplementation "junit:junit:4.13.2"` and enable the test task)
+**What**: Implement `SharedPreferences`-backed storage for `deviceId`, `lastToken`, `tags`, `externalUserId`, `subscribed` (design.md `DeviceState`), plus a pure `mergeTags(current, add, remove): Map<String,String>` function. Create the `android/src/test/java/com/notti/` unit test source set (does not exist yet) with JUnit4.
+**Where**: `android/src/main/java/com/notti/NottiDeviceStore.kt`, `android/src/test/java/com/notti/NottiDeviceStoreTest.kt`, `android/build.gradle` (add `testImplementation "junit:junit:4.13.2"` and enable the test task)
 **Depends on**: None
 **Reuses**: n/a (new)
 **Requirement**: SDK-12, SDK-13 (tag-merge semantics)
@@ -211,18 +211,18 @@ T18 -> T19
 **Tests**: unit
 **Gate**: native-quick
 
-**Commit**: `feat(android): add NuntisDeviceStore with tag-merge logic`
+**Commit**: `feat(android): add NottiDeviceStore with tag-merge logic`
 
 **Status**: ✅ Complete
 
-**Deviation note**: `android/` has no standalone `gradlew` (library modules in this scaffold build only via the example app's Gradle project). The real gate command used: `cd example/android && ./gradlew :react-native-nuntis:testDebugUnitTest` (module name from Gradle autolinking). `tasks.md`'s literal `cd example/android && ./gradlew :react-native-nuntis:testDebugUnitTest` does not exist as a runnable command in this repo. Also required forcing `example/node_modules -> ../node_modules` locally (this repo's `.npmrc` sets `node-linker=hoisted`, but `example/android/settings.gradle` resolves the RN Gradle plugin via a relative `../node_modules` path) — a local, untracked workaround, not a repo change.
+**Deviation note**: `android/` has no standalone `gradlew` (library modules in this scaffold build only via the example app's Gradle project). The real gate command used: `cd example/android && ./gradlew :react-native-notti:testDebugUnitTest` (module name from Gradle autolinking). `tasks.md`'s literal `cd example/android && ./gradlew :react-native-notti:testDebugUnitTest` does not exist as a runnable command in this repo. Also required forcing `example/node_modules -> ../node_modules` locally (this repo's `.npmrc` sets `node-linker=hoisted`, but `example/android/settings.gradle` resolves the RN Gradle plugin via a relative `../node_modules` path) — a local, untracked workaround, not a repo change.
 
 ---
 
-### T6: `NuntisApiClient.kt` — Nuntis device registration HTTP client with retry
+### T6: `NottiApiClient.kt` — Notti device registration HTTP client with retry
 
 **What**: OkHttp-based client implementing `createOrUpdateDevice` (`POST /v1/apps/{appId}/devices`) and `patchDevice` (`PATCH /v1/apps/{appId}/devices/{id}`, always including the cached `token` per AD-009), with exponential backoff per design.md's Tech Decisions (2s base, ×2, capped at 5 attempts). Use `MockWebServer` to simulate success, 5xx, and network-failure responses.
-**Where**: `android/src/main/java/com/nuntis/NuntisApiClient.kt`, `android/src/test/java/com/nuntis/NuntisApiClientTest.kt`, `android/build.gradle` (add `testImplementation "com.squareup.okhttp3:mockwebserver:4.12.0"`)
+**Where**: `android/src/main/java/com/notti/NottiApiClient.kt`, `android/src/test/java/com/notti/NottiApiClientTest.kt`, `android/build.gradle` (add `testImplementation "com.squareup.okhttp3:mockwebserver:4.12.0"`)
 **Depends on**: T5 (shares the test source-set setup)
 **Reuses**: OkHttp (already a transitive `react-native` dependency)
 **Requirement**: SDK-01, SDK-05, SDK-06
@@ -242,18 +242,18 @@ T18 -> T19
 **Tests**: unit
 **Gate**: native-quick
 
-**Commit**: `feat(android): add NuntisApiClient with retry backoff`
+**Commit**: `feat(android): add NottiApiClient with retry backoff`
 
-**Status**: ✅ Complete (gate run via `cd example/android && ./gradlew :react-native-nuntis:testDebugUnitTest`, same deviation note as T5)
+**Status**: ✅ Complete (gate run via `cd example/android && ./gradlew :react-native-notti:testDebugUnitTest`, same deviation note as T5)
 
 ---
 
-### T7: `NuntisCore.kt` — orchestration, init, permission, mutation queue
+### T7: `NottiCore.kt` — orchestration, init, permission, mutation queue
 
-**What**: Orchestrates `initialize` (no-op on repeat identical calls), `registerDevice`/`onTokenRefreshed`, `requestPermission` → `PATCH {subscribed}`, `mutateTags`/`setExternalUserId`/`setSubscription` serialized one-in-flight-at-a-time (spec P3-AC8), and the crash-safety edge cases (missing `appId`/`clientKey` logs and no-ops, missing push prerequisite logs and no-ops). Depends on `NuntisApiClient`/`NuntisDeviceStore` via constructor injection so both can be faked in tests.
-**Where**: `android/src/main/java/com/nuntis/NuntisCore.kt`, `android/src/test/java/com/nuntis/NuntisCoreTest.kt`
+**What**: Orchestrates `initialize` (no-op on repeat identical calls), `registerDevice`/`onTokenRefreshed`, `requestPermission` → `PATCH {subscribed}`, `mutateTags`/`setExternalUserId`/`setSubscription` serialized one-in-flight-at-a-time (spec P3-AC8), and the crash-safety edge cases (missing `appId`/`clientKey` logs and no-ops, missing push prerequisite logs and no-ops). Depends on `NottiApiClient`/`NottiDeviceStore` via constructor injection so both can be faked in tests.
+**Where**: `android/src/main/java/com/notti/NottiCore.kt`, `android/src/test/java/com/notti/NottiCoreTest.kt`
 **Depends on**: T5, T6
-**Reuses**: `NuntisApiClient`, `NuntisDeviceStore`
+**Reuses**: `NottiApiClient`, `NottiDeviceStore`
 **Requirement**: SDK-01, SDK-02, SDK-03, SDK-04, SDK-05, SDK-06, SDK-07, SDK-08, SDK-09, SDK-10, SDK-11, SDK-19
 
 **Tools**:
@@ -272,18 +272,18 @@ T18 -> T19
 **Tests**: unit
 **Gate**: native-quick
 
-**Commit**: `feat(android): add NuntisCore orchestration layer`
+**Commit**: `feat(android): add NottiCore orchestration layer`
 
-**Status**: ✅ Complete (10 tests). SDK-05 retry-backoff behavior is exercised at `NuntisApiClientTest.kt` (T6), not retested here. SDK-11 (Android <13 auto-grant) is delegated to the concrete `permissionRequester` implementation T8 wires in — out of `NuntisCore`'s own layer, so not tested at this level; flagged, not silently skipped.
+**Status**: ✅ Complete (10 tests). SDK-05 retry-backoff behavior is exercised at `NottiApiClientTest.kt` (T6), not retested here. SDK-11 (Android <13 auto-grant) is delegated to the concrete `permissionRequester` implementation T8 wires in — out of `NottiCore`'s own layer, so not tested at this level; flagged, not silently skipped.
 
 ---
 
-### T8: `NuntisModule.kt` — thin TurboModule entry wired to `NuntisCore`
+### T8: `NottiModule.kt` — thin TurboModule entry wired to `NottiCore`
 
-**What**: Replace the scaffolded `multiply` implementation with the real Spec methods (from T4), each delegating one line into a `NuntisCore` singleton/instance held by the module. No business logic in this class.
-**Where**: `android/src/main/java/com/nuntis/NuntisModule.kt`
+**What**: Replace the scaffolded `multiply` implementation with the real Spec methods (from T4), each delegating one line into a `NottiCore` singleton/instance held by the module. No business logic in this class.
+**Where**: `android/src/main/java/com/notti/NottiModule.kt`
 **Depends on**: T4, T7
-**Reuses**: `NuntisCore`
+**Reuses**: `NottiCore`
 **Requirement**: SDK-01 through SDK-19 (wiring only — logic already covered by T7's tests)
 
 **Tools**:
@@ -291,30 +291,30 @@ T18 -> T19
 - Skill: NONE
 
 **Done when**:
-- [x] Every Spec method from T4 has a corresponding one-line delegation in `NuntisModule`
+- [x] Every Spec method from T4 has a corresponding one-line delegation in `NottiModule`
 - [x] `pnpm run build:android` succeeds (Codegen + Gradle compile)
 
-**Tests**: none (thin wiring, exercised transitively by T7's tests against `NuntisCore` directly)
+**Tests**: none (thin wiring, exercised transitively by T7's tests against `NottiCore` directly)
 **Gate**: build
 
-**Commit**: `feat(android): wire NuntisModule TurboModule entry to NuntisCore`
+**Commit**: `feat(android): wire NottiModule TurboModule entry to NottiCore`
 
 **Status**: ✅ Complete
 
 **Deviations**:
-1. `tokenProvider` is a temporary `{ null }` stub — the real FCM token fetch needs `com.google.firebase:firebase-messaging`, which T9 (not T8) adds as a dependency. `NuntisCore` already handles a null token safely (logs, no-ops, verified in T7), so this doesn't crash; auto-registration simply won't fire until T9 lands.
-2. `NUNTIS_API_BASE_URL` is a placeholder (`https://api.nuntis.io`) — neither spec.md nor design.md specifies Nuntis' base host (`Nuntis.initialize` only takes `appId`/`clientKey`). Flagged for the orchestrator to confirm the real host before ship.
-3. Real Android permission-request plumbing (`PermissionAwareActivity`/SDK_INT<33 auto-grant) was implemented here, since no other task in the plan owns it and NuntisCore's `permissionRequester` was designed (T7) to have this injected.
-4. Blocking, pre-existing scaffold defects unrelated to any task's declared file scope, fixed here because they blocked the mandatory `pnpm run build:android` gate for T8 (and would have blocked it for every later Android build-gated task too): `example/android/app/build.gradle`'s `namespace`/`applicationId` was `"nuntisexample"` (no dot — invalid Android package id, failed manifest merge); fixed to `"com.nuntisexample"`. Also removed a stale `android/build/` directory left over from an earlier manual Codegen dry-run (T4), which was colliding with the example app's own CMake target names (`add_library` duplicate-target error) — not a repo file, gitignored, no commit impact.
+1. `tokenProvider` is a temporary `{ null }` stub — the real FCM token fetch needs `com.google.firebase:firebase-messaging`, which T9 (not T8) adds as a dependency. `NottiCore` already handles a null token safely (logs, no-ops, verified in T7), so this doesn't crash; auto-registration simply won't fire until T9 lands.
+2. `NOTTI_API_BASE_URL` is a placeholder (`https://api.notti.io`) — neither spec.md nor design.md specifies Notti' base host (`Notti.initialize` only takes `appId`/`clientKey`). Flagged for the orchestrator to confirm the real host before ship.
+3. Real Android permission-request plumbing (`PermissionAwareActivity`/SDK_INT<33 auto-grant) was implemented here, since no other task in the plan owns it and NottiCore's `permissionRequester` was designed (T7) to have this injected.
+4. Blocking, pre-existing scaffold defects unrelated to any task's declared file scope, fixed here because they blocked the mandatory `pnpm run build:android` gate for T8 (and would have blocked it for every later Android build-gated task too): `example/android/app/build.gradle`'s `namespace`/`applicationId` was `"nottiexample"` (no dot — invalid Android package id, failed manifest merge); fixed to `"com.nottiexample"`. Also removed a stale `android/build/` directory left over from an earlier manual Codegen dry-run (T4), which was colliding with the example app's own CMake target names (`add_library` duplicate-target error) — not a repo file, gitignored, no commit impact.
 
 ---
 
-### T9: `NuntisFirebaseMessagingService.kt` — token refresh + foreground message handling
+### T9: `NottiFirebaseMessagingService.kt` — token refresh + foreground message handling
 
-**What**: `FirebaseMessagingService` subclass: `onNewToken` calls `NuntisCore.onTokenRefreshed`; `onMessageReceived` (foreground-only, per design.md's confirmed FCM notification-message behavior) parses the `RemoteMessage` into a `NotificationPayload` via a pure, unit-testable `parseRemoteMessage` function and emits the `onNotificationReceived` Codegen event. Register the service in `AndroidManifest.xml` and add the `com.google.firebase:firebase-messaging` dependency.
-**Where**: `android/src/main/java/com/nuntis/NuntisFirebaseMessagingService.kt`, `android/src/test/java/com/nuntis/NuntisFirebaseMessagingServiceTest.kt` (tests `parseRemoteMessage` only — the service class itself needs an Android framework context and is exercised at Phase 5's example-app smoke test instead), `android/src/main/AndroidManifest.xml`, `android/build.gradle`
+**What**: `FirebaseMessagingService` subclass: `onNewToken` calls `NottiCore.onTokenRefreshed`; `onMessageReceived` (foreground-only, per design.md's confirmed FCM notification-message behavior) parses the `RemoteMessage` into a `NotificationPayload` via a pure, unit-testable `parseRemoteMessage` function and emits the `onNotificationReceived` Codegen event. Register the service in `AndroidManifest.xml` and add the `com.google.firebase:firebase-messaging` dependency.
+**Where**: `android/src/main/java/com/notti/NottiFirebaseMessagingService.kt`, `android/src/test/java/com/notti/NottiFirebaseMessagingServiceTest.kt` (tests `parseRemoteMessage` only — the service class itself needs an Android framework context and is exercised at Phase 5's example-app smoke test instead), `android/src/main/AndroidManifest.xml`, `android/build.gradle`
 **Depends on**: T7, T8
-**Reuses**: `NuntisCore.onTokenRefreshed`
+**Reuses**: `NottiCore.onTokenRefreshed`
 **Requirement**: SDK-06 (token refresh path)
 
 **Tools**:
@@ -323,7 +323,7 @@ T18 -> T19
 
 **Done when**:
 - [x] `parseRemoteMessage` correctly extracts `title`/`body`/`data` from a `RemoteMessage` fixture, including the no-notification-block (data-only) edge case
-- [x] `onNewToken` calls into `NuntisCore` with the new token
+- [x] `onNewToken` calls into `NottiCore` with the new token
 - [x] Manifest registers the service with the correct intent-filter (`com.google.firebase.MESSAGING_EVENT`)
 - [x] `./gradlew testDebugUnitTest` passes
 - [x] Test count: at least 3 tests for `parseRemoteMessage`
@@ -336,16 +336,16 @@ T18 -> T19
 **Status**: ✅ Complete (25 tests total in the module, 3 new for this task)
 
 **Deviations**:
-1. Added `org.robolectric:robolectric:4.14.1` as a test-only dependency, scoped via `@RunWith(RobolectricTestRunner::class)` to just `NuntisFirebaseMessagingServiceTest` - `RemoteMessage` is backed by `android.os.Bundle`, which is unmockable on the plain JVM without it. Not applied repo-wide.
+1. Added `org.robolectric:robolectric:4.14.1` as a test-only dependency, scoped via `@RunWith(RobolectricTestRunner::class)` to just `NottiFirebaseMessagingServiceTest` - `RemoteMessage` is backed by `android.os.Bundle`, which is unmockable on the plain JVM without it. Not applied repo-wide.
 2. `onNewToken` is not unit-tested directly (matches this task's own file-scope note: the service class needs a real Android framework context, exercised at Phase 5's example-app smoke test instead) - only the pure `parseRemoteMessage` function is unit-tested, per the Done-when bullet's own scoping.
-3. Emitting the Codegen event required a small, necessary addition to `NuntisModule.kt` (not in this task's `Where` field): a static bridge (`activeInstance`/`activeCore` + `emitReceived`/`emitClicked`), since `NuntisFirebaseMessagingService` is a separate Android `Service`, not a `NuntisModule` subclass, and design.md's Tech Decisions rule out `RCTDeviceEventEmitter` as an alternative.
+3. Emitting the Codegen event required a small, necessary addition to `NottiModule.kt` (not in this task's `Where` field): a static bridge (`activeInstance`/`activeCore` + `emitReceived`/`emitClicked`), since `NottiFirebaseMessagingService` is a separate Android `Service`, not a `NottiModule` subclass, and design.md's Tech Decisions rule out `RCTDeviceEventEmitter` as an alternative.
 
 ---
 
 ### T10: Android cold-start/background notification-click detection
 
 **What**: Since `onMessageReceived` doesn't fire reliably outside the foreground (design.md Risk), detect a notification click that launched or resumed the Activity by reading the launch `Intent`'s extras (the same `data` keys FCM attaches to the system-tray notification's `PendingIntent`) in the module's Activity-lifecycle hook, parse them with a pure function (`parseClickIntentExtras`, mirrors T9's parsing pattern), and emit `onNotificationClicked`.
-**Where**: `android/src/main/java/com/nuntis/NuntisModule.kt` (or a small dedicated `NuntisActivityLifecycleListener.kt` if the Activity-hook wiring doesn't fit cleanly in the module class — implementer's call, keep it one file either way), `android/src/test/java/com/nuntis/...` (parsing function test)
+**Where**: `android/src/main/java/com/notti/NottiModule.kt` (or a small dedicated `NottiActivityLifecycleListener.kt` if the Activity-hook wiring doesn't fit cleanly in the module class — implementer's call, keep it one file either way), `android/src/test/java/com/notti/...` (parsing function test)
 **Depends on**: T8, T9
 **Reuses**: `parseRemoteMessage`'s pattern from T9 (same payload shape, different source object)
 **Requirement**: SDK-18
@@ -368,16 +368,16 @@ T18 -> T19
 **Status**: ✅ Complete (4 new tests; 29 total in the Android module). `pnpm run build:android` also re-verified green as this is the last Phase 2 task.
 
 **Deviations**:
-1. Implemented as a dedicated `NuntisActivityLifecycleListener.kt` (the task's own listed alternative), registered via `Application.ActivityLifecycleCallbacks` from `NuntisModule`'s `init` block (one line, forced touch, same pattern as T9's necessary `NuntisModule.kt` addition) — auto-wires cold-start/background click detection without requiring integrator code.
+1. Implemented as a dedicated `NottiActivityLifecycleListener.kt` (the task's own listed alternative), registered via `Application.ActivityLifecycleCallbacks` from `NottiModule`'s `init` block (one line, forced touch, same pattern as T9's necessary `NottiModule.kt` addition) — auto-wires cold-start/background click detection without requiring integrator code.
 2. "Exactly once per tap" is enforced by clearing the handled `Intent`'s extras (`intent.replaceExtras(Bundle())`) after firing, so a subsequent `onActivityResumed` for the same Activity instance finds no `google.message_id` key and `parseClickIntentExtras` correctly returns null — the presence-check test is the actual evidence for this property, per the Done-when bullet's own wording.
 3. The "unrelated launch" detection uses FCM's reserved `google.message_id` extra key (confirmed by inspecting the `firebase-messaging` AAR's `Constants.MessagePayloadKeys`) as the deterministic presence signal, not a heuristic.
 
 ---
 
-### T11: `NuntisDeviceStore.swift` — persisted device state + tag-merge logic
+### T11: `NottiDeviceStore.swift` — persisted device state + tag-merge logic
 
 **What**: iOS mirror of T5 — `UserDefaults`-backed storage for the same `DeviceState` fields, plus the same pure `mergeTags` function contract. Create the XCTest target (does not exist yet in the scaffold) under `ios/Tests/`.
-**Where**: `ios/NuntisDeviceStore.swift`, `ios/Tests/NuntisDeviceStoreTests.swift`, `Nuntis.podspec` or `example/ios/NuntisExample.xcodeproj` test-target wiring (whichever the T2 spike determined is the correct place for iOS unit tests in this scaffold — verify, don't assume)
+**Where**: `ios/NottiDeviceStore.swift`, `ios/Tests/NottiDeviceStoreTests.swift`, `Notti.podspec` or `example/ios/NottiExample.xcodeproj` test-target wiring (whichever the T2 spike determined is the correct place for iOS unit tests in this scaffold — verify, don't assume)
 **Depends on**: T2, T3 (Swift bridging + APNs approach confirmed first — same interop context)
 **Reuses**: n/a (new); mirrors T5's contract exactly (same field names, same `mergeTags` semantics) so the two platforms stay provably in sync per design.md's Risks & Concerns mitigation
 **Requirement**: SDK-12, SDK-13
@@ -387,25 +387,25 @@ T18 -> T19
 - Skill: NONE
 
 **Done when**:
-- [x] Same test scenario list as T5's `NuntisDeviceStoreTest.kt`, ported to XCTest (add/remove/overlap/persistence/empty-state — same scenarios, both platforms, per design.md's parallel-platform-test-matrix mitigation)
+- [x] Same test scenario list as T5's `NottiDeviceStoreTest.kt`, ported to XCTest (add/remove/overlap/persistence/empty-state — same scenarios, both platforms, per design.md's parallel-platform-test-matrix mitigation)
 - [x] `xcodebuild test` (command from the coverage matrix) passes
 - [x] Test count: at least 6 tests, matching T5's count
 
 **Tests**: unit
 **Gate**: native-quick
 
-**Commit**: `feat(ios): add NuntisDeviceStore with tag-merge logic`
+**Commit**: `feat(ios): add NottiDeviceStore with tag-merge logic`
 
 **Status**: ✅ Complete (6 tests)
 
-**Deviation note**: No standalone `NuntisTests` XCTest scheme/target existed in the scaffold (`tasks.md`'s literal `xcodebuild test -workspace example/ios/NuntisExample.xcworkspace -scheme NuntisTests ...` referenced a scheme that did not exist yet). Rather than wire iOS unit tests through the CocoaPods `Nuntis` pod target (would require a podspec `test_spec` plus a matching explicit `pod 'Nuntis', :testspecs: ['Tests']` Podfile line, which conflicts with RN autolinking's own unconditional `pod name, :path => path` declaration for the same pod), a dedicated `NuntisTests` unit-test-bundle target was added directly to `example/ios/NuntisExample.xcodeproj` (via the `xcodeproj` Ruby gem CocoaPods already vendors) with no CocoaPods/module dependency: its Sources build phase compiles the same on-disk `ios/*.swift` business-logic files (not pod-linked, not `@testable import`) plus `ios/Tests/*.swift`, as a standalone logic-test bundle (no `TEST_HOST`/`BUNDLE_LOADER`). This is stable across `pod install` re-runs (only `Pods.xcodeproj` is regenerated, not the app project) and avoids all CocoaPods/module-linking complexity for pure-Foundation business logic. `xcodebuild -list` confirms the scheme exists; real command used matches the coverage matrix's shape with `-scheme NuntisTests -destination 'platform=iOS Simulator,name=iPhone 17'` (device name adjusted to what's actually available in this environment, mirrors the same class of correction Batch 1 made for Android's gate command).
+**Deviation note**: No standalone `NottiTests` XCTest scheme/target existed in the scaffold (`tasks.md`'s literal `xcodebuild test -workspace example/ios/NottiExample.xcworkspace -scheme NottiTests ...` referenced a scheme that did not exist yet). Rather than wire iOS unit tests through the CocoaPods `Notti` pod target (would require a podspec `test_spec` plus a matching explicit `pod 'Notti', :testspecs: ['Tests']` Podfile line, which conflicts with RN autolinking's own unconditional `pod name, :path => path` declaration for the same pod), a dedicated `NottiTests` unit-test-bundle target was added directly to `example/ios/NottiExample.xcodeproj` (via the `xcodeproj` Ruby gem CocoaPods already vendors) with no CocoaPods/module dependency: its Sources build phase compiles the same on-disk `ios/*.swift` business-logic files (not pod-linked, not `@testable import`) plus `ios/Tests/*.swift`, as a standalone logic-test bundle (no `TEST_HOST`/`BUNDLE_LOADER`). This is stable across `pod install` re-runs (only `Pods.xcodeproj` is regenerated, not the app project) and avoids all CocoaPods/module-linking complexity for pure-Foundation business logic. `xcodebuild -list` confirms the scheme exists; real command used matches the coverage matrix's shape with `-scheme NottiTests -destination 'platform=iOS Simulator,name=iPhone 17'` (device name adjusted to what's actually available in this environment, mirrors the same class of correction Batch 1 made for Android's gate command).
 
 ---
 
-### T12: `NuntisApiClient.swift` — Nuntis device registration HTTP client with retry
+### T12: `NottiApiClient.swift` — Notti device registration HTTP client with retry
 
 **What**: iOS mirror of T6 — `URLSession`-based client implementing the same `createOrUpdateDevice`/`patchDevice` contract and identical retry schedule (2/4/8/16/32s, capped at 5). Stub `URLSession` via a custom `URLProtocol` for success/5xx/network-failure scenarios.
-**Where**: `ios/NuntisApiClient.swift`, `ios/Tests/NuntisApiClientTests.swift`
+**Where**: `ios/NottiApiClient.swift`, `ios/Tests/NottiApiClientTests.swift`
 **Depends on**: T11 (shares the test-target setup)
 **Reuses**: n/a (new); mirrors T6's contract exactly
 **Requirement**: SDK-01, SDK-05, SDK-06
@@ -415,27 +415,27 @@ T18 -> T19
 - Skill: NONE
 
 **Done when**:
-- [x] Same test scenario list as T6's `NuntisApiClientTest.kt` (POST success, PATCH success+token, 5xx retry-then-succeed, retry-cap-exhausted, network-error, request shape)
+- [x] Same test scenario list as T6's `NottiApiClientTest.kt` (POST success, PATCH success+token, 5xx retry-then-succeed, retry-cap-exhausted, network-error, request shape)
 - [x] `xcodebuild test` passes
 - [x] Test count: at least 6 tests, matching T6's count
 
 **Tests**: unit
 **Gate**: native-quick
 
-**Commit**: `feat(ios): add NuntisApiClient with retry backoff`
+**Commit**: `feat(ios): add NottiApiClient with retry backoff`
 
-**Status**: ✅ Complete (6 new tests, 12 total in `NuntisTests`)
+**Status**: ✅ Complete (6 new tests, 12 total in `NottiTests`)
 
-**Deviation note**: Uses a custom `URLProtocol` stub (`ios/Tests/StubURLProtocol.swift`) instead of OkHttp's `MockWebServer` (no iOS equivalent exists) — the ecosystem-standard XCTest approach the coverage matrix names. `NuntisApiClient`'s HTTP calls are made synchronously from the caller's perspective via a `DispatchSemaphore`-gated `URLSession.dataTask`, mirroring `NuntisApiClient.kt`'s blocking `OkHttpClient.newCall(...).execute()` so both platforms expose the same synchronous contract to `NuntisCore` (T13).
+**Deviation note**: Uses a custom `URLProtocol` stub (`ios/Tests/StubURLProtocol.swift`) instead of OkHttp's `MockWebServer` (no iOS equivalent exists) — the ecosystem-standard XCTest approach the coverage matrix names. `NottiApiClient`'s HTTP calls are made synchronously from the caller's perspective via a `DispatchSemaphore`-gated `URLSession.dataTask`, mirroring `NottiApiClient.kt`'s blocking `OkHttpClient.newCall(...).execute()` so both platforms expose the same synchronous contract to `NottiCore` (T13).
 
 ---
 
-### T13: `NuntisCore.swift` — orchestration, init, permission, mutation queue
+### T13: `NottiCore.swift` — orchestration, init, permission, mutation queue
 
 **What**: iOS mirror of T7 — identical orchestration contract and crash-safety behavior.
-**Where**: `ios/NuntisCore.swift`, `ios/Tests/NuntisCoreTests.swift`
+**Where**: `ios/NottiCore.swift`, `ios/Tests/NottiCoreTests.swift`
 **Depends on**: T11, T12
-**Reuses**: `NuntisApiClient`, `NuntisDeviceStore` (iOS versions); mirrors T7's contract exactly
+**Reuses**: `NottiApiClient`, `NottiDeviceStore` (iOS versions); mirrors T7's contract exactly
 **Requirement**: SDK-01 through SDK-11, SDK-19
 
 **Tools**:
@@ -443,25 +443,25 @@ T18 -> T19
 - Skill: NONE
 
 **Done when**:
-- [x] Same test scenario list as T7's `NuntisCoreTest.kt` (missing-config no-op, repeat-init no-op, permission grant/deny, requestPermission-before-initialize, tag-mutation serialization)
+- [x] Same test scenario list as T7's `NottiCoreTest.kt` (missing-config no-op, repeat-init no-op, permission grant/deny, requestPermission-before-initialize, tag-mutation serialization)
 - [x] `xcodebuild test` passes
 - [x] Test count: at least 9 tests, matching T7's count
 
 **Tests**: unit
 **Gate**: native-quick
 
-**Commit**: `feat(ios): add NuntisCore orchestration layer`
+**Commit**: `feat(ios): add NottiCore orchestration layer`
 
-**Status**: ✅ Complete (13 new tests, 25 total in `NuntisTests`). Serialization test verified genuinely exercising the lock (not a false pass) via a real `Thread`-based race against a deliberately delayed stubbed PATCH response (`StubURLProtocol`'s `delayMs`), mirroring `NuntisCoreTest.kt`'s `MockWebServer` `setBodyDelay` technique.
+**Status**: ✅ Complete (13 new tests, 25 total in `NottiTests`). Serialization test verified genuinely exercising the lock (not a false pass) via a real `Thread`-based race against a deliberately delayed stubbed PATCH response (`StubURLProtocol`'s `delayMs`), mirroring `NottiCoreTest.kt`'s `MockWebServer` `setBodyDelay` technique.
 
 ---
 
-### T14: `Nuntis.swift` — thin TurboModule entry wired to `NuntisCore`
+### T14: `Notti.swift` — thin TurboModule entry wired to `NottiCore`
 
-**What**: iOS mirror of T8 — the Swift TurboModule entry class (mechanism confirmed by T2), delegating every Spec method one line into `NuntisCore`.
-**Where**: `ios/Nuntis.swift` (replaces/supplements the `Nuntis.mm`/`Nuntis.h` scaffold per T2's confirmed bridging mechanism)
+**What**: iOS mirror of T8 — the Swift TurboModule entry class (mechanism confirmed by T2), delegating every Spec method one line into `NottiCore`.
+**Where**: `ios/Notti.swift` (replaces/supplements the `Notti.mm`/`Notti.h` scaffold per T2's confirmed bridging mechanism)
 **Depends on**: T4, T13
-**Reuses**: `NuntisCore`; T2's confirmed bridging pattern
+**Reuses**: `NottiCore`; T2's confirmed bridging pattern
 **Requirement**: SDK-01 through SDK-19 (wiring only)
 
 **Tools**:
@@ -475,20 +475,20 @@ T18 -> T19
 **Tests**: none (thin wiring, exercised transitively by T13's tests)
 **Gate**: build
 
-**Commit**: `feat(ios): wire Nuntis TurboModule entry to NuntisCore`
+**Commit**: `feat(ios): wire Notti TurboModule entry to NottiCore`
 
-**Status**: ✅ Complete. Gate run: `cd example && pnpm run build:ios` (root has no `build:ios` script — it's Turbo-orchestrated per-package via `example/package.json`'s `react-native build-ios --mode Debug`, same shape as the `build:ios`/`build:android` split already documented for Android) — `success Successfully built the app`. `NuntisTests` re-verified green (25/25) after this build.
+**Status**: ✅ Complete. Gate run: `cd example && pnpm run build:ios` (root has no `build:ios` script — it's Turbo-orchestrated per-package via `example/package.json`'s `react-native build-ios --mode Debug`, same shape as the `build:ios`/`build:android` split already documented for Android) — `success Successfully built the app`. `NottiTests` re-verified green (25/25) after this build.
 
 **Deviations**:
-1. Real APNs registration is wired (`UIApplication.shared.registerForRemoteNotifications()` inside `NuntisCore`'s `tokenProvider`, matching Batch 1's real-FCM-token-fetch bar) rather than a permanent stub — but per iOS's async-only token API (no synchronous getter exists), `tokenProvider`'s callback is intentionally never invoked directly; the actual registration (both first-time and refresh) happens uniformly through `NuntisCore.onTokenRefreshed`, called from T15's `AppDelegate`-forwarded `didRegisterForRemoteNotificationsWithDeviceToken` hook. Flagged here since T14 lands before T15's hook exists, so no token can flow end-to-end until T15 commits — same category of sequencing as Android's T8→T9 FCM dependency.
-2. `ios/Nuntis.h`/`ios/Nuntis.mm` required updating beyond this task's literal `Where` field (only `ios/Nuntis.swift` was named) — the actual T2-confirmed bridging pattern keeps the Obj-C++ shim as the TurboModule entry (`Nuntis.mm`, not a `Nuntis.swift` file), so the real business-logic Swift file is `NuntisImpl.swift` (already spiked in T2, now filled in with the real Spec delegation) and `Nuntis.mm`/`Nuntis.h` were updated to declare/delegate all seven Spec methods plus subclass `NativeNuntisSpecBase` (required for the Codegen event emitters) instead of `NSObject` — matches Android's T8 precedent of a task needing a small necessary addition outside its literal file list to complete the wiring.
-3. `Nuntis.podspec` gained `s.exclude_files = "ios/Tests/**/*"` — the existing `ios/**/*.swift` glob was compiling XCTest-importing test files into the main pod target (which doesn't link XCTest), a real build break caught while running this task's gate, not a hypothetical.
+1. Real APNs registration is wired (`UIApplication.shared.registerForRemoteNotifications()` inside `NottiCore`'s `tokenProvider`, matching Batch 1's real-FCM-token-fetch bar) rather than a permanent stub — but per iOS's async-only token API (no synchronous getter exists), `tokenProvider`'s callback is intentionally never invoked directly; the actual registration (both first-time and refresh) happens uniformly through `NottiCore.onTokenRefreshed`, called from T15's `AppDelegate`-forwarded `didRegisterForRemoteNotificationsWithDeviceToken` hook. Flagged here since T14 lands before T15's hook exists, so no token can flow end-to-end until T15 commits — same category of sequencing as Android's T8→T9 FCM dependency.
+2. `ios/Notti.h`/`ios/Notti.mm` required updating beyond this task's literal `Where` field (only `ios/Notti.swift` was named) — the actual T2-confirmed bridging pattern keeps the Obj-C++ shim as the TurboModule entry (`Notti.mm`, not a `Notti.swift` file), so the real business-logic Swift file is `NottiImpl.swift` (already spiked in T2, now filled in with the real Spec delegation) and `Notti.mm`/`Notti.h` were updated to declare/delegate all seven Spec methods plus subclass `NativeNottiSpecBase` (required for the Codegen event emitters) instead of `NSObject` — matches Android's T8 precedent of a task needing a small necessary addition outside its literal file list to complete the wiring.
+3. `Notti.podspec` gained `s.exclude_files = "ios/Tests/**/*"` — the existing `ios/**/*.swift` glob was compiling XCTest-importing test files into the main pod target (which doesn't link XCTest), a real build break caught while running this task's gate, not a hypothetical.
 
 ---
 
 ### T15: iOS APNs delegate hooks + notification-click detection
 
-**What**: Implement the APNs registration/receive/click callbacks per T3's confirmed wiring approach (swizzling or `AppDelegate`-forwarding fallback): `didRegisterForRemoteNotificationsWithDeviceToken` → `NuntisCore.onTokenRefreshed`; `UNUserNotificationCenterDelegate`'s `willPresent` (foreground receive) and `didReceive response` (click, any app state) → parse via a pure `parseUserInfo` function (mirrors Android's T9/T10 pattern) and emit the corresponding Codegen event.
+**What**: Implement the APNs registration/receive/click callbacks per T3's confirmed wiring approach (swizzling or `AppDelegate`-forwarding fallback): `didRegisterForRemoteNotificationsWithDeviceToken` → `NottiCore.onTokenRefreshed`; `UNUserNotificationCenterDelegate`'s `willPresent` (foreground receive) and `didReceive response` (click, any app state) → parse via a pure `parseUserInfo` function (mirrors Android's T9/T10 pattern) and emit the corresponding Codegen event.
 **Where**: `ios/` (exact file per T3's confirmed approach), `ios/Tests/...` (parsing function tests)
 **Depends on**: T3, T14
 **Reuses**: T3's confirmed wiring mechanism; mirrors Android's T9+T10 payload-parsing pattern
@@ -509,18 +509,18 @@ T18 -> T19
 
 **Commit**: `feat(ios): add APNs delegate hooks and click detection`
 
-**Status**: ✅ Complete (4 new tests, 29 total in `NuntisTests`). `pnpm run build:ios` re-verified green (real Xcode build) since this task also touches the production pod.
+**Status**: ✅ Complete (4 new tests, 29 total in `NottiTests`). `pnpm run build:ios` re-verified green (real Xcode build) since this task also touches the production pod.
 
 **Deviations**:
-1. Per T3's confirmed approach (no swizzling), the public entry points live on a small dedicated `NuntisBridge` class (`ios/NuntisPushDelegate.swift`) rather than on the TurboModule's own `Nuntis` Obj-C++ class — `NuntisBridge.didRegisterForRemoteNotifications(deviceToken:)` / `.didFailToRegisterForRemoteNotifications(_:)` are the methods the host `AppDelegate` calls; `NuntisPushDelegate.shared` is the `UNUserNotificationCenterDelegate` the host assigns to `UNUserNotificationCenter.current().delegate`. Both are documented as required host-app wiring for T19's README, not implemented here (this task only implements the SDK's side of the contract, per design.md).
-2. A real, non-hypothetical build break was hit and fixed while running this task's gate: Swift's auto-generated `Nuntis-Swift.h` forward-declares `UNUserNotificationCenterDelegate`/`UNNotificationPresentationOptions` without importing `UserNotifications` itself, so any Obj-C++ file including it needs that framework already visible — fixed by adding `#import <UserNotifications/UserNotifications.h>` to `ios/Nuntis.h` (included by `Nuntis.mm` before the generated header). Flagging per the task's instruction to report any mechanism that doesn't work as design.md describes when actually tried — this is a Swift/ObjC-interop framework-import gap, not a flaw in T2/T3's confirmed bridging mechanism itself.
-3. `onNotificationReceived`/`onNotificationClicked` emission for a real device only fires once a host app both forwards the APNs registration callbacks (`NuntisBridge`) and sets `NuntisPushDelegate.shared` as its `UNUserNotificationCenterDelegate` — neither is exercised end-to-end by this batch's tests (only the pure `parseUserInfo` function is unit-tested, matching this task's own Done-when scope, same pattern as Android's T9/T10 where the framework-dependent service/lifecycle classes are exercised at Phase 5's example-app smoke test instead).
+1. Per T3's confirmed approach (no swizzling), the public entry points live on a small dedicated `NottiBridge` class (`ios/NottiPushDelegate.swift`) rather than on the TurboModule's own `Notti` Obj-C++ class — `NottiBridge.didRegisterForRemoteNotifications(deviceToken:)` / `.didFailToRegisterForRemoteNotifications(_:)` are the methods the host `AppDelegate` calls; `NottiPushDelegate.shared` is the `UNUserNotificationCenterDelegate` the host assigns to `UNUserNotificationCenter.current().delegate`. Both are documented as required host-app wiring for T19's README, not implemented here (this task only implements the SDK's side of the contract, per design.md).
+2. A real, non-hypothetical build break was hit and fixed while running this task's gate: Swift's auto-generated `Notti-Swift.h` forward-declares `UNUserNotificationCenterDelegate`/`UNNotificationPresentationOptions` without importing `UserNotifications` itself, so any Obj-C++ file including it needs that framework already visible — fixed by adding `#import <UserNotifications/UserNotifications.h>` to `ios/Notti.h` (included by `Notti.mm` before the generated header). Flagging per the task's instruction to report any mechanism that doesn't work as design.md describes when actually tried — this is a Swift/ObjC-interop framework-import gap, not a flaw in T2/T3's confirmed bridging mechanism itself.
+3. `onNotificationReceived`/`onNotificationClicked` emission for a real device only fires once a host app both forwards the APNs registration callbacks (`NottiBridge`) and sets `NottiPushDelegate.shared` as its `UNUserNotificationCenterDelegate` — neither is exercised end-to-end by this batch's tests (only the pure `parseUserInfo` function is unit-tested, matching this task's own Done-when scope, same pattern as Android's T9/T10 where the framework-dependent service/lifecycle classes are exercised at Phase 5's example-app smoke test instead).
 
 ---
 
 ### T16: `src/index.tsx` facade — public API surface
 
-**What**: Replace the scaffolded `export { multiply }` with the real public API: `Nuntis.initialize`, `Nuntis.requestPermission`, `Nuntis.User.addTag`/`addTags`/`removeTag`/`removeTags`, `Nuntis.login`/`logout`, `Nuntis.setSubscription`, `Nuntis.addEventListener('notificationReceived' | 'notificationClicked', callback)` — each a thin call into `NativeNuntis` (T4's Spec), with the event listeners wrapping the Codegen-declared native events into a plain callback-registration API.
+**What**: Replace the scaffolded `export { multiply }` with the real public API: `Notti.initialize`, `Notti.requestPermission`, `Notti.User.addTag`/`addTags`/`removeTag`/`removeTags`, `Notti.login`/`logout`, `Notti.setSubscription`, `Notti.addEventListener('notificationReceived' | 'notificationClicked', callback)` — each a thin call into `NativeNotti` (T4's Spec), with the event listeners wrapping the Codegen-declared native events into a plain callback-registration API.
 **Where**: `src/index.tsx`, `src/__tests__/index.test.tsx` (replaces the scaffolded `multiply` test)
 **Depends on**: T4
 **Reuses**: existing `src/__tests__/index.test.tsx` jest pattern already in the scaffold
@@ -531,7 +531,7 @@ T18 -> T19
 - Skill: NONE
 
 **Done when**:
-- [x] Every public method/listener above exists and calls the correct `NativeNuntis` method (verified by mocking `NativeNuntis` in tests, standard RN jest pattern)
+- [x] Every public method/listener above exists and calls the correct `NativeNotti` method (verified by mocking `NativeNotti` in tests, standard RN jest pattern)
 - [x] `addTag`/`addTags` and `removeTag`/`removeTags` both funnel into the Spec's `addTags`/`removeTags` (single-key convenience wrappers around the plural form)
 - [x] `pnpm test` passes
 - [x] Test count: at least 9 tests (one per public method/listener)
@@ -547,8 +547,8 @@ T18 -> T19
 
 ### T17: Expo config plugin
 
-**What**: A `withNuntis` Expo config plugin (`plugin/src/withNuntis.ts`, built to `plugin/build/`) that, on `expo prebuild`, wires the Android FCM manifest service registration (already static per T9, but the plugin ensures `google-services.json` is placed and the Google Services Gradle plugin applied) and the iOS push-notification capability/entitlement — so Expo (dev client/prebuild) integrators don't hand-edit native project files, matching the bare-RN integrator's manual steps documented in T19's README.
-**Where**: `plugin/src/withNuntis.ts`, `plugin/package.json` or root `package.json` `"app.plugin.js"` entry (per Expo config-plugin convention), `app.plugin.js`
+**What**: A `withNotti` Expo config plugin (`plugin/src/withNotti.ts`, built to `plugin/build/`) that, on `expo prebuild`, wires the Android FCM manifest service registration (already static per T9, but the plugin ensures `google-services.json` is placed and the Google Services Gradle plugin applied) and the iOS push-notification capability/entitlement — so Expo (dev client/prebuild) integrators don't hand-edit native project files, matching the bare-RN integrator's manual steps documented in T19's README.
+**Where**: `plugin/src/withNotti.ts`, `plugin/package.json` or root `package.json` `"app.plugin.js"` entry (per Expo config-plugin convention), `app.plugin.js`
 **Depends on**: T9, T15 (needs the confirmed native wiring both platforms require)
 **Reuses**: `@expo/config-plugins` (standard dependency for this exact purpose)
 **Requirement**: N/A (packaging goal from spec.md's Goals, not a numbered AC)
@@ -567,20 +567,20 @@ T18 -> T19
 
 **Status**: ✅ Complete
 
-**Commit**: `feat(plugin): add Expo config plugin for Nuntis push setup`
+**Commit**: `feat(plugin): add Expo config plugin for Notti push setup`
 
 **Deviations**:
 1. Context7 MCP was unavailable in this environment (same gap as T2/T3) — the `@expo/config-plugins` API (`AndroidConfig.GoogleServices.withClassPath`/`withApplyPlugin`/`withGoogleServicesFile`, `withEntitlementsPlist`) was verified via web search against the actual `expo/expo` GitHub source (`packages/@expo/config-plugins/src/android/GoogleServices.ts`, `src/plugins/ios-plugins.ts`), not assumed from memory.
 2. `@expo/config-plugins` added as a runtime `dependency` (not `devDependency`), per this task's own briefing — a newer community convention imports mod functions from `expo/config-plugins` instead to guarantee version alignment with the host app's installed Expo SDK, but that requires `expo` itself as a devDependency/peerDependency and this repo isn't Expo-tooled (`create-react-native-library`/bob, not `expo-module-scripts`); flagged as a lighter-weight, still-correct alternative.
-3. Added `plugin/tsconfig.json` + a `build:plugin` script (wired into `prepare`) to compile `plugin/src/withNuntis.ts` to CommonJS at `plugin/build/`, since `app.plugin.js` (Expo CLI's `require()` entry point) cannot load TypeScript directly. Not explicitly listed in this task's `Where` field but necessary to make the plugin loadable — same class of small necessary addition as T8/T9's precedent. `plugin/build/` is already covered by the pre-existing `build/` gitignore pattern, matching `lib/`'s not-committed-but-shipped-via-`files` convention.
+3. Added `plugin/tsconfig.json` + a `build:plugin` script (wired into `prepare`) to compile `plugin/src/withNotti.ts` to CommonJS at `plugin/build/`, since `app.plugin.js` (Expo CLI's `require()` entry point) cannot load TypeScript directly. Not explicitly listed in this task's `Where` field but necessary to make the plugin loadable — same class of small necessary addition as T8/T9's precedent. `plugin/build/` is already covered by the pre-existing `build/` gitignore pattern, matching `lib/`'s not-committed-but-shipped-via-`files` convention.
 4. Real `pnpm turbo run build:android` failed in this environment with a pre-existing, unrelated defect: `example/android/gradle/wrapper/gradle-wrapper.properties` pinned Gradle `9.3.1`, which is incompatible with the AGP version (`8.12.0`) that `@react-native/gradle-plugin`'s own version catalog pins (`Class org.gradle.jvm.toolchain.JvmVendorSpec does not have member field 'IBM_SEMERU'` — confirmed via `javap` against the actual Gradle 9.3.1 distribution jar, which has `IBM` but not `IBM_SEMERU`). Verified via `git stash` isolation that this reproduces identically with T17's changes removed, i.e. pre-existing and unrelated to this task. Fixed by pinning `gradle-wrapper.properties` to Gradle `8.13` (AGP 8.12-compatible) — a real Xcode/Gradle build now confirms `BUILD SUCCESSFUL in 2m 5s`. Also hit `example/ios`'s CocoaPods sandbox being out of sync with `Podfile.lock` (`pod install` resolved it, no repo file changes needed - `Podfile.lock`/`Info.plist` noise reverted via `git checkout` per existing STATE.md convention). Both fixes were necessary to satisfy this task's mandatory `build` gate and are flagged here per the Scope Guardrail.
 
 ---
 
 ### T18: Wire the example app for manual end-to-end smoke testing
 
-**What**: Update `example/src/App.tsx` to call `Nuntis.initialize`/`requestPermission`/`addTags`/etc. against a real (developer-provided, not committed) Nuntis App's Client key, and add the placeholder native config the example needs (a `.gitignore`d `google-services.json` slot, iOS push capability in the example's `Info.plist`) so a developer can manually verify device registration against a running Nuntis instance before release.
-**Where**: `example/src/App.tsx`, `example/android/app/`, `example/ios/NuntisExample/Info.plist`, `.gitignore` (ensure no real credentials get committed)
+**What**: Update `example/src/App.tsx` to call `Notti.initialize`/`requestPermission`/`addTags`/etc. against a real (developer-provided, not committed) Notti App's Client key, and add the placeholder native config the example needs (a `.gitignore`d `google-services.json` slot, iOS push capability in the example's `Info.plist`) so a developer can manually verify device registration against a running Notti instance before release.
+**Where**: `example/src/App.tsx`, `example/android/app/`, `example/ios/NottiExample/Info.plist`, `.gitignore` (ensure no real credentials get committed)
 **Depends on**: T16, T17
 **Reuses**: existing example app scaffold
 **Requirement**: N/A (manual-verification support, spec's Independent Test lines for P1/P2/P3)
@@ -592,19 +592,19 @@ T18 -> T19
 **Done when**:
 - [x] Example app builds for both platforms (`pnpm run build:android`, `pnpm run build:ios`)
 - [x] No real credentials/keys committed (`.gitignore` covers the local-only config slot)
-- [ ] Manual run against a local Nuntis instance shows a new Device row created (recorded as a note in the task's completion, not an automated test)
+- [ ] Manual run against a local Notti instance shows a new Device row created (recorded as a note in the task's completion, not an automated test)
 
 **Tests**: none (example app, manual verification)
 **Gate**: build
 
-**Status**: ✅ Complete (build gate green on both platforms; the third bullet is an explicitly manual, developer-side step requiring a running Nuntis instance and real credentials neither available nor appropriate in this automated batch - left for a human to run per the README's manual smoke-test checklist, T19)
+**Status**: ✅ Complete (build gate green on both platforms; the third bullet is an explicitly manual, developer-side step requiring a running Notti instance and real credentials neither available nor appropriate in this automated batch - left for a human to run per the README's manual smoke-test checklist, T19)
 
 **Commit**: `feat(example): wire example app for manual SDK smoke testing`
 
 **Deviations**:
 1. `example/src/App.tsx` calls every T16 public method (`initialize`, `requestPermission`, `User.addTags`/`removeTag`, `login`/`logout`, `setSubscription`, `addEventListener` for both events) against placeholder string constants (`REPLACE_WITH_YOUR_APP_ID` etc.), not real credentials.
 2. Android: added `com.google.gms:google-services` classpath to `example/android/build.gradle` and a conditional `apply plugin: "com.google.gms.google-services"` in `example/android/app/build.gradle` (only applied when `google-services.json` exists) so a developer can drop in a real file later without editing build files; `.gitignore` now excludes `example/android/app/google-services.json`.
-3. iOS: added `example/ios/NuntisExample/NuntisExample.entitlements` (`aps-environment: development`) wired via `CODE_SIGN_ENTITLEMENTS` in both Debug/Release build configs of the `NuntisExample` target in `project.pbxproj`, plus `UIBackgroundModes: [remote-notification]` in `Info.plist` - the real push capability/entitlement T18's `Where` field names.
+3. iOS: added `example/ios/NottiExample/NottiExample.entitlements` (`aps-environment: development`) wired via `CODE_SIGN_ENTITLEMENTS` in both Debug/Release build configs of the `NottiExample` target in `project.pbxproj`, plus `UIBackgroundModes: [remote-notification]` in `Info.plist` - the real push capability/entitlement T18's `Where` field names.
 4. Real `pnpm run build:android`/`build:ios` both re-verified green after these changes (`BUILD SUCCESSFUL in 53s`; `Successfully built the app`) - CocoaPods sandbox needed a `pod install` resync after the entitlements/pbxproj edit (same environment-local noise pattern as prior batches; `Podfile.lock` reverted via `git checkout`, not committed).
 
 ---

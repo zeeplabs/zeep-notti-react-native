@@ -1,12 +1,12 @@
 {
-  "name": "react-native-nuntis",
+  "name": "react-native-notti",
   "version": "0.1.0",
-  "description": "Official React Native SDK for Nuntis push notifications (FCM + APNS)",
+  "description": "Official React Native SDK for Notti push notifications (FCM + APNS)",
   "main": "./lib/module/index.js",
   "types": "./lib/typescript/src/index.d.ts",
   "exports": {
     ".": {
-      "react-native-nuntis-source": "./src/index.tsx",
+      "react-native-notti-source": "./src/index.tsx",
       "types": "./lib/typescript/src/index.d.ts",
       "default": "./lib/module/index.js"
     },
@@ -34,7 +34,7 @@
     "!**/.*"
   ],
   "scripts": {
-    "example": "pnpm --filter react-native-nuntis-example --",
+    "example": "pnpm --filter react-native-notti-example --",
     "clean": "del-cli android/build example/android/build example/android/app/build example/ios/build lib plugin/build",
     "build:plugin": "tsc --project plugin/tsconfig.json",
     "prepare": "node scripts/link-example-node-modules.js && bob build && pnpm build:plugin",
@@ -50,14 +50,14 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/zeeplabs/zeep-nuntis-react-native.git"
+    "url": "git+https://github.com/zeeplabs/zeep-notti-react-native.git"
   },
   "author": "Zeep Tecnologia <opensource@zeeplabs.com.br> (https://github.com/zeeplabs)",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/zeeplabs/zeep-nuntis-react-native/issues"
+    "url": "https://github.com/zeeplabs/zeep-notti-react-native/issues"
   },
-  "homepage": "https://github.com/zeeplabs/zeep-nuntis-react-native#readme",
+  "homepage": "https://github.com/zeeplabs/zeep-notti-react-native#readme",
   "publishConfig": {
     "registry": "https://registry.npmjs.org/"
   },
@@ -120,11 +120,11 @@
     ]
   },
   "codegenConfig": {
-    "name": "NuntisSpec",
+    "name": "NottiSpec",
     "type": "modules",
     "jsSrcsDir": "src",
     "android": {
-      "javaPackageName": "com.nuntis"
+      "javaPackageName": "com.notti"
     }
   },
   "prettier": {

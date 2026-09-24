@@ -1,41 +1,38 @@
 import { useEffect } from 'react';
 import { Button, StyleSheet, Text, View } from 'react-native';
-import { Nuntis } from 'react-native-nuntis';
+import { Notti } from 'react-native-notti';
 
 // Manual smoke-test wiring (T18) - placeholders only, never real
 // credentials. Replace with a real App's appId/clientKey/baseUrl from a
-// running Nuntis instance to exercise the SDK end-to-end; see README.md's
+// running Notti instance to exercise the SDK end-to-end; see README.md's
 // "Manual smoke testing" section for the full checklist (T19).
-const NUNTIS_APP_ID = 'REPLACE_WITH_YOUR_APP_ID';
-const NUNTIS_CLIENT_KEY = 'REPLACE_WITH_YOUR_CLIENT_KEY';
-const NUNTIS_BASE_URL = 'https://your-nuntis-instance.example.com';
+const NOTTI_APP_ID = 'REPLACE_WITH_YOUR_APP_ID';
+const NOTTI_CLIENT_KEY = 'REPLACE_WITH_YOUR_CLIENT_KEY';
+const NOTTI_BASE_URL = 'https://your-notti-instance.example.com';
 
 export default function App() {
   useEffect(() => {
-    Nuntis.initialize(NUNTIS_APP_ID, NUNTIS_CLIENT_KEY, NUNTIS_BASE_URL);
+    Notti.initialize(NOTTI_APP_ID, NOTTI_CLIENT_KEY, NOTTI_BASE_URL);
 
     // Cold start only: a tap that launched the process happens before this
     // effect runs, so `notificationClicked` below never fires for it. Pull it
     // once here instead - warm clicks (app already running) keep using the
     // event listener.
-    Nuntis.getInitialNotificationClick().then((payload) => {
+    Notti.getInitialNotificationClick().then((payload) => {
       if (payload) {
-        console.log('Nuntis getInitialNotificationClick', payload);
+        console.log('Notti getInitialNotificationClick', payload);
       }
     });
 
-    const received = Nuntis.addEventListener(
+    const received = Notti.addEventListener(
       'notificationReceived',
       (payload) => {
-        console.log('Nuntis notificationReceived', payload);
+        console.log('Notti notificationReceived', payload);
       }
     );
-    const clicked = Nuntis.addEventListener(
-      'notificationClicked',
-      (payload) => {
-        console.log('Nuntis notificationClicked', payload);
-      }
-    );
+    const clicked = Notti.addEventListener('notificationClicked', (payload) => {
+      console.log('Notti notificationClicked', payload);
+    });
 
     return () => {
       received.remove();
@@ -45,34 +42,31 @@ export default function App() {
 
   return (
     <View style={styles.container}>
-      <Text>react-native-nuntis example</Text>
+      <Text>react-native-notti example</Text>
       <Button
         title="Request permission"
         onPress={() => {
-          Nuntis.requestPermission().then((granted) =>
-            console.log('Nuntis requestPermission granted:', granted)
+          Notti.requestPermission().then((granted) =>
+            console.log('Notti requestPermission granted:', granted)
           );
         }}
       />
       <Button
         title="Add tags"
         onPress={() =>
-          Nuntis.User.addTags({ plan: 'vip', source: 'example-app' })
+          Notti.User.addTags({ plan: 'vip', source: 'example-app' })
         }
       />
-      <Button
-        title="Remove tag"
-        onPress={() => Nuntis.User.removeTag('plan')}
-      />
-      <Button title="Login" onPress={() => Nuntis.login('example-user-1')} />
-      <Button title="Logout" onPress={() => Nuntis.logout()} />
+      <Button title="Remove tag" onPress={() => Notti.User.removeTag('plan')} />
+      <Button title="Login" onPress={() => Notti.login('example-user-1')} />
+      <Button title="Logout" onPress={() => Notti.logout()} />
       <Button
         title="Enable subscription"
-        onPress={() => Nuntis.setSubscription(true)}
+        onPress={() => Notti.setSubscription(true)}
       />
       <Button
         title="Disable subscription"
-        onPress={() => Nuntis.setSubscription(false)}
+        onPress={() => Notti.setSubscription(false)}
       />
     </View>
   );

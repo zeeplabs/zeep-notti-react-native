@@ -1,14 +1,14 @@
-# react-native-nuntis
+# react-native-notti
 
-[![CI](https://github.com/zeeplabs/zeep-nuntis-react-native/actions/workflows/ci.yml/badge.svg)](https://github.com/zeeplabs/zeep-nuntis-react-native/actions/workflows/ci.yml)
-[![npm version](https://img.shields.io/npm/v/react-native-nuntis.svg)](https://www.npmjs.com/package/react-native-nuntis)
+[![CI](https://github.com/zeeplabs/zeep-notti-react-native/actions/workflows/ci.yml/badge.svg)](https://github.com/zeeplabs/zeep-notti-react-native/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/react-native-notti.svg)](https://www.npmjs.com/package/react-native-notti)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
 ![Platforms](https://img.shields.io/badge/platform-Android%20%7C%20iOS-lightgrey.svg)
 
-Official React Native SDK for [Nuntis](https://github.com/zeeplabs/zeep-nuntis) push notifications (FCM + APNs). Handles device registration, tags, external user id, subscription state, and notification-received/clicked events — no hand-rolled REST calls required.
+Official React Native SDK for [Notti](https://github.com/zeeplabs/zeep-notti) push notifications (FCM + APNs). Handles device registration, tags, external user id, subscription state, and notification-received/clicked events — no hand-rolled REST calls required.
 
-Nuntis is self-hosted or SaaS per deployment, so the SDK never hardcodes a host: you always pass your own instance's `baseUrl` to `initialize`.
+Notti is self-hosted or SaaS per deployment, so the SDK never hardcodes a host: you always pass your own instance's `baseUrl` to `initialize`.
 
 ## Table of contents
 
@@ -29,7 +29,7 @@ Nuntis is self-hosted or SaaS per deployment, so the SDK never hardcodes a host:
 ## Features
 
 - 📲 **Device registration** — FCM (Android) / APNs (iOS) token fetched and registered natively, no extra push library required in the host app.
-- 🏷️ **Tags & segmentation** — add/remove tags for Nuntis Segments, merged and persisted server-side.
+- 🏷️ **Tags & segmentation** — add/remove tags for Notti Segments, merged and persisted server-side.
 - 👤 **External user id** — associate/clear the device with your own user id (`login`/`logout`).
 - 🔕 **Subscription control** — enable/disable delivery without unregistering the device.
 - 🔔 **Notification events** — `notificationReceived` (foreground) and `notificationClicked` (warm), plus `getInitialNotificationClick()` for cold-start taps.
@@ -42,12 +42,12 @@ Nuntis is self-hosted or SaaS per deployment, so the SDK never hardcodes a host:
 - React Native with the [New Architecture](https://reactnative.dev/architecture/landing-page) enabled (Turbo Modules).
 - Android: `minSdkVersion` compatible with `com.google.firebase:firebase-messaging` (Firebase Cloud Messaging configured in your Firebase project).
 - iOS: Push Notifications capability enabled for your app target (APNs).
-- A running [Nuntis](https://github.com/zeeplabs/zeep-nuntis) instance (self-hosted or SaaS) and an App's `appId`/`clientKey`.
+- A running [Notti](https://github.com/zeeplabs/zeep-notti) instance (self-hosted or SaaS) and an App's `appId`/`clientKey`.
 
 ## Installation
 
 ```sh
-npm install react-native-nuntis
+npm install react-native-notti
 ```
 
 This installs the Turbo Module (New Architecture) for both bare React Native and Expo. Native setup differs by path — see [Bare React Native setup](#bare-react-native-setup) / [Expo setup](#expo-setup) below.
@@ -55,34 +55,34 @@ This installs the Turbo Module (New Architecture) for both bare React Native and
 ## Usage
 
 ```ts
-import { Nuntis } from 'react-native-nuntis';
+import { Notti } from 'react-native-notti';
 
-// Call once, e.g. at app startup. Registers the device with Nuntis using
+// Call once, e.g. at app startup. Registers the device with Notti using
 // the current FCM (Android) / APNs (iOS) token.
-Nuntis.initialize('<appId>', '<clientKey>', 'https://push.example.com');
+Notti.initialize('<appId>', '<clientKey>', 'https://push.example.com');
 
 // Ask for the OS push permission whenever your app is ready to show the
 // prompt (not tied to initialize - call it explicitly, when you want it).
-const granted = await Nuntis.requestPermission();
+const granted = await Notti.requestPermission();
 
-// Tag the device for Nuntis Segments.
-Nuntis.User.addTag('plan', 'vip');
-Nuntis.User.addTags({ plan: 'vip', region: 'br' });
-Nuntis.User.removeTag('plan');
-Nuntis.User.removeTags(['plan', 'region']);
+// Tag the device for Notti Segments.
+Notti.User.addTag('plan', 'vip');
+Notti.User.addTags({ plan: 'vip', region: 'br' });
+Notti.User.removeTag('plan');
+Notti.User.removeTags(['plan', 'region']);
 
 // Associate the device with your own user id.
-Nuntis.login('external-user-123');
-Nuntis.logout();
+Notti.login('external-user-123');
+Notti.logout();
 
 // Enable/disable delivery without unregistering the device.
-Nuntis.setSubscription(true);
+Notti.setSubscription(true);
 
 // React to incoming/clicked notifications in-app.
-const received = Nuntis.addEventListener('notificationReceived', (payload) => {
+const received = Notti.addEventListener('notificationReceived', (payload) => {
   console.log(payload.title, payload.body, payload.data);
 });
-const clicked = Nuntis.addEventListener('notificationClicked', (payload) => {
+const clicked = Notti.addEventListener('notificationClicked', (payload) => {
   console.log(payload.title, payload.body, payload.data);
 });
 
@@ -94,7 +94,7 @@ clicked.remove();
 // Cold start: the tap that launched the app happens before any listener
 // above can be registered, so 'notificationClicked' never fires for it.
 // Check once at startup instead.
-Nuntis.getInitialNotificationClick().then((payload) => {
+Notti.getInitialNotificationClick().then((payload) => {
   if (payload) {
     console.log('app was launched by a notification tap', payload);
   }
@@ -105,15 +105,15 @@ Nuntis.getInitialNotificationClick().then((payload) => {
 
 | Method | Description |
 | --- | --- |
-| `Nuntis.initialize(appId, clientKey, baseUrl)` | Registers the device with your Nuntis instance. Safe to call multiple times — a repeat call with the same `appId`/`clientKey` is a no-op. Never throws: missing/invalid arguments or a missing native push prerequisite (no `google-services.json`, no APNs capability) are logged, not thrown. |
-| `Nuntis.requestPermission(): Promise<boolean>` | Triggers the native OS push-permission prompt. Resolves `true` immediately on Android below API 33 (no runtime permission exists there). Must be called after `initialize()` has run at least once. |
-| `Nuntis.User.addTag(key, value)` / `Nuntis.User.addTags(tags)` | Merges tag(s) into the device's tag map and persists the full resulting map server-side. |
-| `Nuntis.User.removeTag(key)` / `Nuntis.User.removeTags(keys)` | Removes tag key(s) from the device's tag map. |
-| `Nuntis.login(externalUserId)` | Associates the device with your own user id. |
-| `Nuntis.logout()` | Clears the external user id locally. Note: Nuntis' backend doesn't support clearing `external_user_id` server-side, so the previously-set value remains on the Device row server-side — `logout()` only affects local SDK state. |
-| `Nuntis.setSubscription(enabled)` | Enables/disables push delivery for the device without unregistering it. |
-| `Nuntis.addEventListener(eventName, callback)` | Subscribes to `'notificationReceived'` (foreground) or `'notificationClicked'` (warm: app already running, backgrounded or foregrounded). Returns an `EventSubscription` — call `.remove()` to unsubscribe. Does **not** fire for a cold-start click — use `getInitialNotificationClick()` for that. |
-| `Nuntis.getInitialNotificationClick(): Promise<NotificationPayload \| null>` | Resolves the notification that cold-launched the app from a tap, or `null` if the app wasn't launched that way. Only resolves once per cold start — the native side clears it after this reads it. Call at startup, before/alongside `addEventListener`. |
+| `Notti.initialize(appId, clientKey, baseUrl)` | Registers the device with your Notti instance. Safe to call multiple times — a repeat call with the same `appId`/`clientKey` is a no-op. Never throws: missing/invalid arguments or a missing native push prerequisite (no `google-services.json`, no APNs capability) are logged, not thrown. |
+| `Notti.requestPermission(): Promise<boolean>` | Triggers the native OS push-permission prompt. Resolves `true` immediately on Android below API 33 (no runtime permission exists there). Must be called after `initialize()` has run at least once. |
+| `Notti.User.addTag(key, value)` / `Notti.User.addTags(tags)` | Merges tag(s) into the device's tag map and persists the full resulting map server-side. |
+| `Notti.User.removeTag(key)` / `Notti.User.removeTags(keys)` | Removes tag key(s) from the device's tag map. |
+| `Notti.login(externalUserId)` | Associates the device with your own user id. |
+| `Notti.logout()` | Clears the external user id locally. Note: Notti' backend doesn't support clearing `external_user_id` server-side, so the previously-set value remains on the Device row server-side — `logout()` only affects local SDK state. |
+| `Notti.setSubscription(enabled)` | Enables/disables push delivery for the device without unregistering it. |
+| `Notti.addEventListener(eventName, callback)` | Subscribes to `'notificationReceived'` (foreground) or `'notificationClicked'` (warm: app already running, backgrounded or foregrounded). Returns an `EventSubscription` — call `.remove()` to unsubscribe. Does **not** fire for a cold-start click — use `getInitialNotificationClick()` for that. |
+| `Notti.getInitialNotificationClick(): Promise<NotificationPayload \| null>` | Resolves the notification that cold-launched the app from a tap, or `null` if the app wasn't launched that way. Only resolves once per cold start — the native side clears it after this reads it. Call at startup, before/alongside `addEventListener`. |
 
 All tag/external-id/subscription mutations are serialized client-side (one in-flight network call at a time, last-write-wins on the merged local state) — calling them back-to-back is safe.
 
@@ -123,7 +123,7 @@ The Expo config plugin (below) automates all of this on `expo prebuild`. For a b
 
 ### Android
 
-1. Place your Nuntis App's `google-services.json` at `android/app/google-services.json` in your app (not this library).
+1. Place your Notti App's `google-services.json` at `android/app/google-services.json` in your app (not this library).
 2. Apply the Google Services Gradle plugin in your app's `android/build.gradle` (root) and `android/app/build.gradle`:
 
    ```gradle
@@ -171,21 +171,21 @@ The library's own manifest already registers its `FirebaseMessagingService` and 
      _ application: UIApplication,
      didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
    ) {
-     NuntisBridge.didRegisterForRemoteNotifications(deviceToken: deviceToken)
+     NottiBridge.didRegisterForRemoteNotifications(deviceToken: deviceToken)
    }
 
    func application(
      _ application: UIApplication,
      didFailToRegisterForRemoteNotificationsWithError error: Error
    ) {
-     NuntisBridge.didFailToRegisterForRemoteNotifications(error)
+     NottiBridge.didFailToRegisterForRemoteNotifications(error)
    }
 
    func application(
      _ application: UIApplication,
      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
    ) -> Bool {
-     UNUserNotificationCenter.current().delegate = NuntisPushDelegate.shared
+     UNUserNotificationCenter.current().delegate = NottiPushDelegate.shared
      // ... your existing launch code
      return true
    }
@@ -195,9 +195,9 @@ Without this forwarding, the device token never reaches the SDK and `notificatio
 
 ## Forwarding events manually
 
-Both native setup paths above assume Nuntis owns the platform's single push hook (iOS's `UNUserNotificationCenter` delegate, Android's manifest-declared `FirebaseMessagingService`). If your app already owns that hook for another reason and can't hand it to Nuntis, forward events into the SDK manually instead — no delegate/manifest ownership required on either platform:
+Both native setup paths above assume Notti owns the platform's single push hook (iOS's `UNUserNotificationCenter` delegate, Android's manifest-declared `FirebaseMessagingService`). If your app already owns that hook for another reason and can't hand it to Notti, forward events into the SDK manually instead — no delegate/manifest ownership required on either platform:
 
-**iOS** — `NuntisPushDelegate.shared`'s methods are plain `public func`s, callable from inside your own delegate:
+**iOS** — `NottiPushDelegate.shared`'s methods are plain `public func`s, callable from inside your own delegate:
 
 ```swift
 func userNotificationCenter(
@@ -205,25 +205,25 @@ func userNotificationCenter(
   willPresent notification: UNNotification,
   withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
 ) {
-  NuntisPushDelegate.shared.userNotificationCenter(center, willPresent: notification, withCompletionHandler: completionHandler)
+  NottiPushDelegate.shared.userNotificationCenter(center, willPresent: notification, withCompletionHandler: completionHandler)
 }
 ```
 
-**Android** — `NuntisBridge` exposes the same two callbacks your own `FirebaseMessagingService` would otherwise miss:
+**Android** — `NottiBridge` exposes the same two callbacks your own `FirebaseMessagingService` would otherwise miss:
 
 ```kotlin
 class YourFirebaseMessagingService : FirebaseMessagingService() {
   override fun onNewToken(token: String) {
-    NuntisBridge.onNewToken(token)
+    NottiBridge.onNewToken(token)
   }
 
   override fun onMessageReceived(remoteMessage: RemoteMessage) {
-    NuntisBridge.onMessageReceived(remoteMessage)
+    NottiBridge.onMessageReceived(remoteMessage)
   }
 }
 ```
 
-Note this only forwards the *events*; you're also responsible for removing this library's own manifest-declared `NuntisFirebaseMessagingService` in your merged manifest (`tools:node="remove"` on the `<service>` entry) so it doesn't race your own service for the same `com.google.firebase.MESSAGING_EVENT` intent-filter.
+Note this only forwards the *events*; you're also responsible for removing this library's own manifest-declared `NottiFirebaseMessagingService` in your merged manifest (`tools:node="remove"` on the `<service>` entry) so it doesn't race your own service for the same `com.google.firebase.MESSAGING_EVENT` intent-filter.
 
 ## Expo setup
 
@@ -232,7 +232,7 @@ Add the config plugin to your `app.json`/`app.config.js`:
 ```json
 {
   "expo": {
-    "plugins": ["react-native-nuntis"]
+    "plugins": ["react-native-notti"]
   }
 }
 ```
@@ -246,12 +246,12 @@ The Android runtime-permission declaration and the iOS `AppDelegate` forwarding 
 
 ## Manual smoke testing
 
-`example/` is a bare RN app wired against the real SDK (`example/src/App.tsx`) with placeholder credentials. To exercise it end-to-end against a running Nuntis instance:
+`example/` is a bare RN app wired against the real SDK (`example/src/App.tsx`) with placeholder credentials. To exercise it end-to-end against a running Notti instance:
 
-1. Replace the `NUNTIS_APP_ID`/`NUNTIS_CLIENT_KEY`/`NUNTIS_BASE_URL` placeholders in `example/src/App.tsx` with a real App's values (never commit real values).
+1. Replace the `NOTTI_APP_ID`/`NOTTI_CLIENT_KEY`/`NOTTI_BASE_URL` placeholders in `example/src/App.tsx` with a real App's values (never commit real values).
 2. Drop your own `google-services.json` at `example/android/app/google-services.json` (gitignored).
 3. Run `pnpm example android` / `pnpm example ios`, or `pnpm run build:android` / `pnpm run build:ios` for a release-shaped build.
-4. Tap the example screen's buttons and confirm a new Device row appears in Nuntis' admin screen, tags/subscription reflect your taps, and notifications sent from Nuntis trigger the `notificationReceived`/`notificationClicked` console logs.
+4. Tap the example screen's buttons and confirm a new Device row appears in Notti' admin screen, tags/subscription reflect your taps, and notifications sent from Notti trigger the `notificationReceived`/`notificationClicked` console logs.
 
 ## Contributing
 

@@ -16,7 +16,7 @@ latest published version receives security fixes.
 
 Report privately instead, using one of:
 
-- GitHub's [private vulnerability reporting](https://github.com/zeeplabs/zeep-nuntis-react-native/security/advisories/new) for this repository (preferred).
+- GitHub's [private vulnerability reporting](https://github.com/zeeplabs/zeep-notti-react-native/security/advisories/new) for this repository (preferred).
 - Email: **opensource@zeeptecnologia.com.br**
 
 Include, as applicable:
@@ -32,8 +32,8 @@ ask to stay anonymous.
 
 ## Scope
 
-This policy covers the `react-native-nuntis` package itself (JS facade, Kotlin
+This policy covers the `react-native-notti` package itself (JS facade, Kotlin
 module, Swift module, Expo config plugin) and its `example/` app's dependency
 tree only insofar as it affects the library's published output. Vulnerabilities
-in the Nuntis backend itself should be reported against the
-[zeep-nuntis](https://github.com/zeeplabs/zeep-nuntis) repository instead.
+in the Notti backend itself should be reported against the
+[zeep-notti](https://github.com/zeeplabs/zeep-notti) repository instead.

@@ -11,7 +11,7 @@ const mockGetInitialNotificationClick = jest.fn();
 const mockOnNotificationReceived = jest.fn();
 const mockOnNotificationClicked = jest.fn();
 
-jest.mock('../NativeNuntis', () => ({
+jest.mock('../NativeNotti', () => ({
   __esModule: true,
   default: {
     initialize: (...args: unknown[]) => mockInitialize(...args),
@@ -30,15 +30,15 @@ jest.mock('../NativeNuntis', () => ({
   },
 }));
 
-import { Nuntis } from '../index';
+import { Notti } from '../index';
 
-describe('Nuntis facade', () => {
+describe('Notti facade', () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });
 
-  it('initialize calls NativeNuntis.initialize with appId, clientKey, baseUrl', () => {
-    Nuntis.initialize('app-1', 'key-1', 'https://push.example.com');
+  it('initialize calls NativeNotti.initialize with appId, clientKey, baseUrl', () => {
+    Notti.initialize('app-1', 'key-1', 'https://push.example.com');
     expect(mockInitialize).toHaveBeenCalledWith(
       'app-1',
       'key-1',
@@ -46,81 +46,81 @@ describe('Nuntis facade', () => {
     );
   });
 
-  it('requestPermission calls NativeNuntis.requestPermission and returns its result', async () => {
+  it('requestPermission calls NativeNotti.requestPermission and returns its result', async () => {
     mockRequestPermission.mockReturnValueOnce(Promise.resolve(true));
-    const result = await Nuntis.requestPermission();
+    const result = await Notti.requestPermission();
     expect(mockRequestPermission).toHaveBeenCalledWith();
     expect(result).toBe(true);
   });
 
-  it('login calls NativeNuntis.login with the externalUserId', () => {
-    Nuntis.login('user-42');
+  it('login calls NativeNotti.login with the externalUserId', () => {
+    Notti.login('user-42');
     expect(mockLogin).toHaveBeenCalledWith('user-42');
   });
 
-  it('logout calls NativeNuntis.logout', () => {
-    Nuntis.logout();
+  it('logout calls NativeNotti.logout', () => {
+    Notti.logout();
     expect(mockLogout).toHaveBeenCalledWith();
   });
 
-  it('setSubscription calls NativeNuntis.setSubscription with the flag', () => {
-    Nuntis.setSubscription(true);
+  it('setSubscription calls NativeNotti.setSubscription with the flag', () => {
+    Notti.setSubscription(true);
     expect(mockSetSubscription).toHaveBeenCalledWith(true);
   });
 
-  it('User.addTag funnels into NativeNuntis.addTags as a single-key map', () => {
-    Nuntis.User.addTag('plan', 'vip');
+  it('User.addTag funnels into NativeNotti.addTags as a single-key map', () => {
+    Notti.User.addTag('plan', 'vip');
     expect(mockAddTags).toHaveBeenCalledWith({ plan: 'vip' });
   });
 
-  it('User.addTags calls NativeNuntis.addTags with the full map', () => {
-    Nuntis.User.addTags({ plan: 'vip', region: 'br' });
+  it('User.addTags calls NativeNotti.addTags with the full map', () => {
+    Notti.User.addTags({ plan: 'vip', region: 'br' });
     expect(mockAddTags).toHaveBeenCalledWith({ plan: 'vip', region: 'br' });
   });
 
-  it('User.removeTag funnels into NativeNuntis.removeTags as a single-key array', () => {
-    Nuntis.User.removeTag('plan');
+  it('User.removeTag funnels into NativeNotti.removeTags as a single-key array', () => {
+    Notti.User.removeTag('plan');
     expect(mockRemoveTags).toHaveBeenCalledWith(['plan']);
   });
 
-  it('User.removeTags calls NativeNuntis.removeTags with the full key list', () => {
-    Nuntis.User.removeTags(['plan', 'region']);
+  it('User.removeTags calls NativeNotti.removeTags with the full key list', () => {
+    Notti.User.removeTags(['plan', 'region']);
     expect(mockRemoveTags).toHaveBeenCalledWith(['plan', 'region']);
   });
 
-  it('getInitialNotificationClick calls NativeNuntis.getInitialNotificationClick and returns its result', async () => {
+  it('getInitialNotificationClick calls NativeNotti.getInitialNotificationClick and returns its result', async () => {
     const payload = { title: 'hi', body: 'there', data: {} };
     mockGetInitialNotificationClick.mockReturnValueOnce(
       Promise.resolve(payload)
     );
-    const result = await Nuntis.getInitialNotificationClick();
+    const result = await Notti.getInitialNotificationClick();
     expect(mockGetInitialNotificationClick).toHaveBeenCalledWith();
     expect(result).toBe(payload);
   });
 
   it('getInitialNotificationClick resolves null when the app was not cold-launched by a notification', async () => {
     mockGetInitialNotificationClick.mockReturnValueOnce(Promise.resolve(null));
-    const result = await Nuntis.getInitialNotificationClick();
+    const result = await Notti.getInitialNotificationClick();
     expect(result).toBeNull();
   });
 
-  it("addEventListener('notificationReceived', cb) subscribes via NativeNuntis.onNotificationReceived", () => {
+  it("addEventListener('notificationReceived', cb) subscribes via NativeNotti.onNotificationReceived", () => {
     const callback = jest.fn();
     const subscription = { remove: jest.fn() };
     mockOnNotificationReceived.mockReturnValueOnce(subscription);
 
-    const result = Nuntis.addEventListener('notificationReceived', callback);
+    const result = Notti.addEventListener('notificationReceived', callback);
 
     expect(mockOnNotificationReceived).toHaveBeenCalledWith(callback);
     expect(result).toBe(subscription);
   });
 
-  it("addEventListener('notificationClicked', cb) subscribes via NativeNuntis.onNotificationClicked", () => {
+  it("addEventListener('notificationClicked', cb) subscribes via NativeNotti.onNotificationClicked", () => {
     const callback = jest.fn();
     const subscription = { remove: jest.fn() };
     mockOnNotificationClicked.mockReturnValueOnce(subscription);
 
-    const result = Nuntis.addEventListener('notificationClicked', callback);
+    const result = Notti.addEventListener('notificationClicked', callback);
 
     expect(mockOnNotificationClicked).toHaveBeenCalledWith(callback);
     expect(result).toBe(subscription);

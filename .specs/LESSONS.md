@@ -23,13 +23,13 @@ Seen once or not yet corroborated. Tracked, not trusted.
 ### L-002 - A task's own completion note claiming a property is proven must be independently re-derived by the Verifier, not trusted - a presence-check test on a pure parsing function does not prove a stateful dedup/exactly-once property.
 - signal: `ac_gap` · recurrence: 1 feature(s) · scope: `verification` · harmful: 0
 - features: sdk-core-v1
-- evidence: android/src/test/java/com/nuntis/NuntisActivityLifecycleListenerTest.kt (SDK-18) (verification)
+- evidence: android/src/test/java/com/notti/NottiActivityLifecycleListenerTest.kt (SDK-18) (verification)
 - last seen: 2026-09-06T00:25:37Z
 
 ### L-003 - Every MockWebServer.takeRequest() call must pass an explicit (timeout, TimeUnit) argument - an unbounded call is a live test-hang risk even while currently passing.
 - signal: `gate_fail` · recurrence: 1 feature(s) · scope: `android-tests` · harmful: 0
 - features: sdk-core-v1
-- evidence: android/src/test/java/com/nuntis/NuntisApiClientTest.kt:46,71 (android-tests)
+- evidence: android/src/test/java/com/notti/NottiApiClientTest.kt:46,71 (android-tests)
 - last seen: 2026-09-06T00:25:37Z
 
 ## Quarantined (failed when applied - ignore)
