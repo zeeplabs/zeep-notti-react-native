@@ -1,6 +1,6 @@
 {
   "name": "react-native-notti",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Official React Native SDK for Notti push notifications (FCM + APNS)",
   "main": "./lib/module/index.js",
   "types": "./lib/typescript/src/index.d.ts",
