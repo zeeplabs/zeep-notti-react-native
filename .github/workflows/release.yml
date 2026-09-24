@@ -1,15 +1,65 @@
 name: Release
 
 on:
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version to bump to. Can be a specific version, or "major", "minor", "patch", "premajor", "preminor", "prepatch", or "prerelease".'
-        required: true
-        default: 'patch'
+  push:
+    tags:
+      - 'v*'
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
 
 jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      - name: Setup npm registry
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+          registry-url: 'https://registry.npmjs.org'
+
+      # Trusted publishing (OIDC) needs npm CLI >= 11.5.1 to mint the
+      # short-lived token; the version bundled with the pinned Node release
+      # may be older.
+      - name: Upgrade npm for trusted publishing support
+        run: npm install -g npm@latest
+
+      - name: Build package
+        run: pnpm prepare
+
+      - name: Verify tag matches package.json version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json version $PKG_VERSION"
+            exit 1
+          fi
+
+      # No NPM_TOKEN: react-native-notti must have a Trusted Publisher
+      # configured on npmjs.com (Package settings -> Trusted Publisher)
+      # pointing at this repo + this workflow file. Trusted publishing can
+      # only be attached to a package that already exists on the registry -
+      # the very first publish is done manually from a maintainer's
+      # terminal (`npm publish --access public`), after which this job
+      # handles every release.
+      - name: Publish to npm
+        run: npm publish --access public
+
   release:
+    name: Create GitHub Release
+    needs: publish
     runs-on: ubuntu-latest
 
     permissions:
@@ -18,27 +68,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
 
-      - name: Setup
-        uses: ./.github/actions/setup
-
-      - name: Build package
-        run: pnpm prepare
-
-      - name: Configure npm registry auth
-        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Configure git identity
+      - name: Extract release notes from CHANGELOG.md
+        id: changelog
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          VERSION="${GITHUB_REF_NAME#v}"
+          {
+            echo 'body<<CHANGELOG_EOF'
+            node scripts/extract-changelog-section.js "$VERSION"
+            echo 'CHANGELOG_EOF'
+          } >> "$GITHUB_OUTPUT"
 
-      - name: Release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: pnpm release ${{ github.event.inputs.version }} --ci
+      - name: Create Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          name: ${{ github.ref_name }}
+          body: ${{ steps.changelog.outputs.body }}
