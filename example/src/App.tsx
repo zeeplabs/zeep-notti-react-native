@@ -12,7 +12,9 @@ const NOTTI_BASE_URL = 'https://your-notti-instance.example.com';
 
 export default function App() {
   useEffect(() => {
-    Notti.initialize(NOTTI_APP_ID, NOTTI_CLIENT_KEY, NOTTI_BASE_URL);
+    Notti.initialize(NOTTI_APP_ID, NOTTI_CLIENT_KEY, {
+      baseUrl: NOTTI_BASE_URL,
+    });
 
     // Cold start only: a tap that launched the process happens before this
     // effect runs, so `notificationClicked` below never fires for it. Pull it

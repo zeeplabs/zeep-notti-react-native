@@ -33,8 +33,23 @@ const User = {
   },
 };
 
-function initialize(appId: string, clientKey: string, baseUrl: string): void {
-  NativeNotti.initialize(appId, clientKey, baseUrl);
+/** Default `baseUrl` for Notti's SaaS mode. Self-hosted deployments must pass their own. */
+const SAAS_BASE_URL = 'https://app.zeepnotti.app';
+
+export interface InitializeOptions {
+  /**
+   * Overrides the default SaaS `baseUrl` - required for self-hosted Notti
+   * instances and for testing against a sandbox instance.
+   */
+  baseUrl?: string;
+}
+
+function initialize(
+  appId: string,
+  clientKey: string,
+  options: InitializeOptions = {}
+): void {
+  NativeNotti.initialize(appId, clientKey, options.baseUrl ?? SAAS_BASE_URL);
 }
 
 function requestPermission(): Promise<boolean> {

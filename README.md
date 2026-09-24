@@ -8,7 +8,7 @@
 
 Official React Native SDK for [Notti](https://github.com/zeeplabs/zeep-notti) push notifications (FCM + APNs). Handles device registration, tags, external user id, subscription state, and notification-received/clicked events — no hand-rolled REST calls required.
 
-Notti is self-hosted or SaaS per deployment, so the SDK never hardcodes a host: you always pass your own instance's `baseUrl` to `initialize`.
+Notti is self-hosted or SaaS per deployment. By default `initialize` targets Notti's SaaS instance (`https://app.zeepnotti.app`); pass your own instance's `baseUrl` for self-hosted deployments or to target a sandbox instance.
 
 ## Table of contents
 
@@ -58,8 +58,10 @@ This installs the Turbo Module (New Architecture) for both bare React Native and
 import { Notti } from 'react-native-notti';
 
 // Call once, e.g. at app startup. Registers the device with Notti using
-// the current FCM (Android) / APNs (iOS) token.
-Notti.initialize('<appId>', '<clientKey>', 'https://push.example.com');
+// the current FCM (Android) / APNs (iOS) token. Defaults to Notti's SaaS
+// instance - pass `baseUrl` for self-hosted or sandbox instances.
+Notti.initialize('<appId>', '<clientKey>');
+// Notti.initialize('<appId>', '<clientKey>', { baseUrl: 'https://push.example.com' });
 
 // Ask for the OS push permission whenever your app is ready to show the
 // prompt (not tied to initialize - call it explicitly, when you want it).
@@ -105,7 +107,7 @@ Notti.getInitialNotificationClick().then((payload) => {
 
 | Method | Description |
 | --- | --- |
-| `Notti.initialize(appId, clientKey, baseUrl)` | Registers the device with your Notti instance. Safe to call multiple times — a repeat call with the same `appId`/`clientKey` is a no-op. Never throws: missing/invalid arguments or a missing native push prerequisite (no `google-services.json`, no APNs capability) are logged, not thrown. |
+| `Notti.initialize(appId, clientKey, options?)` | Registers the device with your Notti instance. `options.baseUrl` defaults to Notti's SaaS instance (`https://app.zeepnotti.app`) — pass it for self-hosted or sandbox instances. Safe to call multiple times — a repeat call with the same `appId`/`clientKey` is a no-op. Never throws: missing/invalid arguments or a missing native push prerequisite (no `google-services.json`, no APNs capability) are logged, not thrown. |
 | `Notti.requestPermission(): Promise<boolean>` | Triggers the native OS push-permission prompt. Resolves `true` immediately on Android below API 33 (no runtime permission exists there). Must be called after `initialize()` has run at least once. |
 | `Notti.User.addTag(key, value)` / `Notti.User.addTags(tags)` | Merges tag(s) into the device's tag map and persists the full resulting map server-side. |
 | `Notti.User.removeTag(key)` / `Notti.User.removeTags(keys)` | Removes tag key(s) from the device's tag map. |

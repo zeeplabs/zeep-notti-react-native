@@ -38,11 +38,31 @@ describe('Notti facade', () => {
   });
 
   it('initialize calls NativeNotti.initialize with appId, clientKey, baseUrl', () => {
-    Notti.initialize('app-1', 'key-1', 'https://push.example.com');
+    Notti.initialize('app-1', 'key-1', {
+      baseUrl: 'https://push.example.com',
+    });
     expect(mockInitialize).toHaveBeenCalledWith(
       'app-1',
       'key-1',
       'https://push.example.com'
+    );
+  });
+
+  it('initialize defaults baseUrl to the SaaS instance when not passed', () => {
+    Notti.initialize('app-1', 'key-1');
+    expect(mockInitialize).toHaveBeenCalledWith(
+      'app-1',
+      'key-1',
+      'https://app.zeepnotti.app'
+    );
+  });
+
+  it('initialize defaults baseUrl to the SaaS instance when options omit it', () => {
+    Notti.initialize('app-1', 'key-1', {});
+    expect(mockInitialize).toHaveBeenCalledWith(
+      'app-1',
+      'key-1',
+      'https://app.zeepnotti.app'
     );
   });
 
