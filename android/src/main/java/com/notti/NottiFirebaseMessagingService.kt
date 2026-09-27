@@ -39,6 +39,6 @@ class NottiFirebaseMessagingService : FirebaseMessagingService() {
   }
 
   override fun onMessageReceived(remoteMessage: RemoteMessage) {
-    NottiModule.emitNotificationReceived(parseRemoteMessage(remoteMessage).toWritableMap())
+    NottiModule.emitNotificationReceived(remoteMessage)
   }
 }

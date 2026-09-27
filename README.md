@@ -269,7 +269,7 @@ Known constraints (Apple platform limits, not Notti-specific): APNs payloads are
 
 Both native setup paths above assume Notti owns the platform's single push hook (iOS's `UNUserNotificationCenter` delegate, Android's manifest-declared `FirebaseMessagingService`). If your app already owns that hook for another reason and can't hand it to Notti, forward events into the SDK manually instead — no delegate/manifest ownership required on either platform:
 
-**iOS** — `NottiPushDelegate.shared`'s methods are plain `public func`s, callable from inside your own delegate:
+**iOS** — `NottiPushDelegate.shared`'s methods are plain `public func`s, callable from inside your own delegate. Forward **both** callbacks — omitting `didReceive` silently loses every `notificationClicked` event and cold-start tap (I5, found in pre-release review):
 
 ```swift
 func userNotificationCenter(
@@ -278,6 +278,14 @@ func userNotificationCenter(
   withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
 ) {
   NottiPushDelegate.shared.userNotificationCenter(center, willPresent: notification, withCompletionHandler: completionHandler)
+}
+
+func userNotificationCenter(
+  _ center: UNUserNotificationCenter,
+  didReceive response: UNNotificationResponse,
+  withCompletionHandler completionHandler: @escaping () -> Void
+) {
+  NottiPushDelegate.shared.userNotificationCenter(center, didReceive: response, withCompletionHandler: completionHandler)
 }
 ```
 

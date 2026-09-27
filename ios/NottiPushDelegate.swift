@@ -49,13 +49,25 @@ public class NottiPushDelegate: NSObject, UNUserNotificationCenterDelegate {
     willPresent notification: UNNotification,
     withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
   ) {
-    let parsed = parseUserInfo(notification.request.content.userInfo)
-    NottiEventBuffer.shared.emit(
-      .received,
-      identifier: notification.request.identifier,
-      payload: parsed.toEventPayload()
-    )
-    completionHandler([.banner, .sound, .badge])
+    let userInfo = notification.request.content.userInfo
+    // I4 (found in pre-release review): the README has the host app hand
+    // over its *single* `UNUserNotificationCenter` delegate, so this method
+    // also runs for local notifications and any other push SDK's remote
+    // notifications sharing the same app - neither should be parsed into
+    // `payload.data` or reported as this SDK's own event. `aps` is present
+    // only on a real APNs remote push; a local notification's `userInfo`
+    // never carries it.
+    if Self.isRemotePush(userInfo) {
+      let parsed = parseUserInfo(userInfo)
+      NottiEventBuffer.shared.emit(
+        .received,
+        identifier: notification.request.identifier,
+        payload: parsed.toEventPayload()
+      )
+    }
+    // `.list` was missing: without it, a notification presented in the
+    // foreground never lands in Notification Center afterwards.
+    completionHandler([.banner, .list, .sound, .badge])
   }
 
   public func userNotificationCenter(
@@ -63,7 +75,19 @@ public class NottiPushDelegate: NSObject, UNUserNotificationCenterDelegate {
     didReceive response: UNNotificationResponse,
     withCompletionHandler completionHandler: @escaping () -> Void
   ) {
-    let parsed = parseUserInfo(response.notification.request.content.userInfo)
+    let userInfo = response.notification.request.content.userInfo
+    // A8 (found in pre-release review): a custom action button or the
+    // dismiss action (`UNNotificationDismissActionIdentifier`, delivered
+    // when the category sets `customDismissAction`) both reached here
+    // indistinguishable from a real tap. Only the default tap-to-open action
+    // is reported as `notificationClicked`.
+    guard response.actionIdentifier == UNNotificationDefaultActionIdentifier,
+      Self.isRemotePush(userInfo)
+    else {
+      completionHandler()
+      return
+    }
+    let parsed = parseUserInfo(userInfo)
     // Cold launch from a tap fires this before the RN bridge (and therefore
     // the Codegen emitter) exists — `NottiEventBuffer` holds the payload
     // until the TurboModule attaches its emitter, then replays it once.
@@ -73,5 +97,9 @@ public class NottiPushDelegate: NSObject, UNUserNotificationCenterDelegate {
       payload: parsed.toEventPayload()
     )
     completionHandler()
+  }
+
+  private static func isRemotePush(_ userInfo: [AnyHashable: Any]) -> Bool {
+    userInfo["aps"] != nil
   }
 }

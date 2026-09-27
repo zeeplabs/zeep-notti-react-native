@@ -84,6 +84,16 @@
     resolve(payload ?: (id)[NSNull null]);
 }
 
+- (void)invalidate
+{
+    // I1/I2 (found in pre-release review): iOS had no teardown path at all -
+    // Android's NottiModule.invalidate() has no counterpart here, leaving a
+    // dead module's emit handlers and NottiCore reachable indefinitely
+    // through the static bridge (NottiImpl.activeInstance/activeCore). See
+    // NottiImpl.invalidate()'s doc-comment for the full failure mode.
+    [_impl invalidate];
+}
+
 - (std::shared_ptr<facebook::react::TurboModule>)getTurboModule:
     (const facebook::react::ObjCTurboModule::InitParams &)params
 {

@@ -13,6 +13,7 @@ import com.facebook.react.bridge.WritableMap
 import com.facebook.react.modules.core.PermissionAwareActivity
 import com.facebook.react.modules.core.PermissionListener
 import com.google.firebase.messaging.FirebaseMessaging
+import com.google.firebase.messaging.RemoteMessage
 import okhttp3.OkHttpClient
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -163,7 +164,16 @@ class NottiModule(reactContext: ReactApplicationContext) :
   }
 
   override fun addTags(tags: ReadableMap?) {
-    val add = tags?.toHashMap()?.mapValues { it.value.toString() } ?: emptyMap()
+    // I7 (found in pre-release review): `.mapValues { it.value.toString() }`
+    // stringified a JS number/boolean/null differently than iOS's `"\(value)"`
+    // interpolation (`1.0` vs `1`, `"null"` vs `"<null>"`) - the same call
+    // produced a different server-side tag value per platform. The public
+    // TS type (`Record<string, string>`) already promises string-only
+    // values; a non-string value is now dropped instead of coerced, matching
+    // iOS's identical filter in `NottiImpl.addTags`.
+    val add = tags?.toHashMap()
+      ?.mapNotNull { (key, value) -> (value as? String)?.let { key to it } }
+      ?.toMap() ?: emptyMap()
     core.mutateTags(add = add, remove = null)
   }
 
@@ -273,8 +283,15 @@ class NottiModule(reactContext: ReactApplicationContext) :
     internal var activeCore: NottiCore? = null
       private set
 
-    internal fun emitNotificationReceived(payload: WritableMap) {
-      activeInstance?.emitReceived(payload)
+    /**
+     * I3 (found in pre-release review): callers used to build the
+     * [WritableMap] (a JNI allocation) unconditionally, then discard it here
+     * when no module existed yet - now the null-check happens first, before
+     * any parsing/allocation is even attempted.
+     */
+    internal fun emitNotificationReceived(remoteMessage: RemoteMessage) {
+      val instance = activeInstance ?: return
+      instance.emitReceived(parseRemoteMessage(remoteMessage).toWritableMap())
     }
 
   }

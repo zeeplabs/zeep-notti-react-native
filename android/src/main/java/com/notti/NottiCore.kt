@@ -103,9 +103,15 @@ class NottiCore(
    */
   private val pendingMutations = ArrayDeque<PendingMutation>()
 
+  // A9 (found in pre-release review): this used to capture `apiClient` at
+  // enqueue time. A queued mutation flushed after a *second* `initialize()`
+  // with a different appId/baseUrl would then run against the stale client -
+  // the old backend/app - instead of the one the device is actually
+  // registered against now. iOS's equivalent (`NottiCore.swift`'s
+  // `PendingMutation`) never captured a client at all; this now reads
+  // `apiClient` at run/flush time instead, matching that.
   private class PendingMutation(
     val operation: String,
-    val client: NottiApiClient,
     val work: (client: NottiApiClient, deviceId: String, token: String) -> Unit
   )
 
@@ -336,12 +342,11 @@ class NottiCore(
     operation: String,
     work: (client: NottiApiClient, deviceId: String, token: String) -> Unit
   ) {
-    val client = apiClient
-    if (client == null) {
+    if (apiClient == null) {
       logger("Notti.$operation: called before initialize - ignored")
       return
     }
-    dispatch(operation) { runOrQueue(PendingMutation(operation, client, work)) }
+    dispatch(operation) { runOrQueue(PendingMutation(operation, work)) }
   }
 
   private fun runOrQueue(mutation: PendingMutation) {
@@ -357,20 +362,22 @@ class NottiCore(
         logger("Notti.${mutation.operation}: device not registered yet - queued until registration completes")
         return
       }
-      mutation.work(mutation.client, deviceId, token)
+      val client = apiClient ?: return
+      mutation.work(client, deviceId, token)
     }
   }
 
   /** Called from [registerDevice] while [mutationLock] is held. */
   private fun flushPendingMutations() {
     if (pendingMutations.isEmpty()) return
+    val client = apiClient ?: return
     val deviceId = deviceStore.getDeviceId() ?: return
     val token = deviceStore.getLastToken() ?: return
     val queued = pendingMutations.toList()
     pendingMutations.clear()
     queued.forEach { mutation ->
       try {
-        mutation.work(mutation.client, deviceId, token)
+        mutation.work(client, deviceId, token)
       } catch (t: Throwable) {
         logger("Notti.${mutation.operation}: queued call failed - ${t.message}")
       }

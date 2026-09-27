@@ -23,7 +23,7 @@ object NottiBridge {
   /** Call from your own `FirebaseMessagingService.onMessageReceived`. */
   @JvmStatic
   fun onMessageReceived(remoteMessage: RemoteMessage) {
-    NottiModule.emitNotificationReceived(parseRemoteMessage(remoteMessage).toWritableMap())
+    NottiModule.emitNotificationReceived(remoteMessage)
   }
 
   /** Call from your own `FirebaseMessagingService.onNewToken`. */

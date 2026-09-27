@@ -5,8 +5,12 @@ import {
 } from 'react-native';
 
 export interface NotificationPayload {
-  title?: string;
-  body?: string;
+  // A1 (found in pre-release review): both platforms deliver a JS `null` for
+  // a missing title/body (iOS boxes an absent value as NSNull, Android
+  // `putString(key, null)`), never `undefined` - a consumer checking
+  // `=== undefined` got the wrong answer.
+  title?: string | null;
+  body?: string | null;
   data?: { [key: string]: string };
 }
 

@@ -92,6 +92,12 @@ public class NottiImpl: NSObject {
           callback(granted)
         }
       },
+      // B1 (found in pre-release review): `NottiCore`'s `logger` parameter
+      // defaults to a no-op, so every diagnostic it logs - including the A4
+      // fix (mutation-failure logging) - was silently discarded in production
+      // on iOS, exercised only by tests that inject their own logger. `NSLog`
+      // mirrors Android's `Log.w("Notti", ...)` production wiring.
+      logger: { message in NSLog("Notti: %@", message) },
       onDeviceIdChanged: { deviceId in box.value?(deviceId) }
     )
     // The closure passed to `NottiCore` above cannot capture `self` (or any
@@ -118,6 +124,29 @@ public class NottiImpl: NSObject {
     NottiImpl.activeCore = core
   }
 
+  /// Called by `Notti.mm`'s `-invalidate` (RCTInvalidating) when the RN
+  /// bridge tears this module down (dev reload, host dropping the bridge).
+  /// I1/I2 (found in pre-release review): without this, `activeCore` - a
+  /// strong static, unlike the `weak activeInstance` - kept a dead module's
+  /// `NottiCore` alive indefinitely (its foreground observer and work queue
+  /// still registered), and `emitReceivedHandler`/`emitClickedHandler` stayed
+  /// non-nil (pointing at a captured `weakSelf` that had already gone nil),
+  /// so `NottiEventBuffer.emit` treated the event as "delivered" - calling a
+  /// no-op handler and burning the dedupe key - instead of buffering it for
+  /// the next module. Guarded by identity: a second `NottiImpl` activating
+  /// before this one tears down must not have its live `core` clobbered.
+  @objc public func invalidate() {
+    if NottiImpl.activeInstance === self {
+      NottiImpl.activeInstance = nil
+    }
+    if NottiImpl.activeCore === core {
+      NottiImpl.activeCore = nil
+    }
+    emitReceivedHandler = nil
+    emitClickedHandler = nil
+    emitDeviceIdChangedHandler = nil
+  }
+
   @objc(initialize:clientKey:baseUrl:)
   public func initialize(_ appId: String, clientKey: String, baseUrl: String) {
     core.initialize(appId: appId, clientKey: clientKey, baseUrl: baseUrl)
@@ -141,10 +170,17 @@ public class NottiImpl: NSObject {
 
   @objc(addTags:)
   public func addTags(_ tags: NSDictionary) {
+    // I7 (found in pre-release review): `"\(value)"` string interpolation
+    // stringified a JS number/boolean/null differently than Android's
+    // `.toString()` (`"1"` vs `"1.0"`, `"<null>"` vs `"null"`) - the same
+    // call produced a different server-side tag value per platform. The
+    // public TS type (`Record<string, string>`) already promises
+    // string-only values; a non-string value is now dropped instead of
+    // coerced, matching Android's identical filter in `NottiModule.addTags`.
     var add: [String: String] = [:]
     for (key, value) in tags {
-      if let key = key as? String {
-        add[key] = "\(value)"
+      if let key = key as? String, let stringValue = value as? String {
+        add[key] = stringValue
       }
     }
     core.mutateTags(add: add, remove: nil)

@@ -84,7 +84,14 @@ public class NottiDeviceStore {
   }
 
   public func getTags() -> [String: String] {
-    (defaults.dictionary(forKey: Self.keyTags) as? [String: String]) ?? [:]
+    // A7 (found in pre-release review): `as? [String: String]` is an
+    // all-or-nothing cast on the whole dictionary - one non-string value
+    // (which should never happen given `setTags`' own input type, but this
+    // reads persisted `UserDefaults` state that could in principle have been
+    // written by a future/older SDK version) silently wiped the entire local
+    // tag cache. Per-key tolerance instead, matching every other tag-parsing
+    // path in the SDK (`NottiApiClient.swift`'s `parseDeviceResponse`).
+    (defaults.dictionary(forKey: Self.keyTags) ?? [:]).compactMapValues { $0 as? String }
   }
 
   public func setTags(_ tags: [String: String]) {

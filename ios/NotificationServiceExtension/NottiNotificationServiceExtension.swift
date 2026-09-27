@@ -71,6 +71,13 @@ public final class NottiNotificationServiceExtension {
   /// reasoning as `NottiApiClient.swift`'s `requestTimeoutSeconds`.
   private static let downloadTimeoutSeconds: TimeInterval = 20
 
+  /// A2 (found in pre-release review): with no cap, a hostile or
+  /// misconfigured URL could burn the whole NSE download budget and the
+  /// extension's disk quota before `UNNotificationAttachment` ever gets a
+  /// chance to reject it. 10 MB comfortably covers a real push image while
+  /// bounding the worst case.
+  private static let maxAttachmentBytes: Int64 = 10 * 1024 * 1024
+
   private init() {}
 
   /// - Parameters:
@@ -166,6 +173,28 @@ public final class NottiNotificationServiceExtension {
         return
       }
 
+      // A2 (found in pre-release review): the scheme allowlist above only
+      // covered the *initial* URL - `URLSession` follows redirects
+      // transparently, and the redirect target was never re-checked, so an
+      // https URL could still 30x to a plain http:// destination. `http.url`
+      // is the final, post-redirect URL; re-apply the same allowlist to it.
+      if let finalScheme = http.url?.scheme?.lowercased(), !allowedSchemes.contains(finalScheme) {
+        logger("download failed: redirected to a non-https URL - refusing to attach")
+        try? FileManager.default.removeItem(at: location)
+        completion(nil)
+        return
+      }
+
+      if let attributes = try? FileManager.default.attributesOfItem(atPath: location.path),
+        let size = attributes[.size] as? Int64,
+        size > maxAttachmentBytes
+      {
+        logger("download failed: \(size) bytes exceeds the \(maxAttachmentBytes)-byte attachment cap")
+        try? FileManager.default.removeItem(at: location)
+        completion(nil)
+        return
+      }
+
       let destinationURL = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString)
         .appendingPathExtension(fileExtension(for: response, fallbackFrom: url))
@@ -206,9 +235,17 @@ public final class NottiNotificationServiceExtension {
     if let mimeType = response?.mimeType, let mapped = fileExtension(forMimeType: mimeType) {
       return mapped
     }
-    let pathExtension = url.pathExtension
-    return pathExtension.isEmpty ? "jpg" : pathExtension
+    // A3 (found in pre-release review): falling back to the raw, payload-
+    // controlled `url.pathExtension` with no allowlist appended an
+    // attacker-influenced string to a filesystem path for no real benefit.
+    // Restricted to the exact set `fileExtension(forMimeType:)` already
+    // recognizes; anything else defaults to `jpg`, same as an empty
+    // extension always did.
+    let candidate = url.pathExtension.lowercased()
+    return Self.knownExtensions.contains(candidate) ? candidate : "jpg"
   }
+
+  private static let knownExtensions: Set<String> = ["jpg", "png", "gif", "mp4", "mp3"]
 
   private static func fileExtension(forMimeType mimeType: String) -> String? {
     switch mimeType {

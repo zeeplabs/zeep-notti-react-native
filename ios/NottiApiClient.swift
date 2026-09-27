@@ -32,6 +32,17 @@ public class NottiApiClient {
   private static let maxAttempts = 5
   private static let baseDelayMs: UInt64 = 2000
 
+  /// See `validatedBaseUrl`'s A5 doc-comment. `true` only in debug builds,
+  /// so a plain-`http` `baseUrl` never silently works in a release build a
+  /// real user runs.
+  private static var allowsInsecureScheme: Bool {
+    #if DEBUG
+      return true
+    #else
+      return false
+    #endif
+  }
+
   /// Per-attempt request timeout. Same order of magnitude as Android's
   /// `OkHttpClient()` defaults (10s connect/read/write) so a black-holing
   /// network fails fast on both platforms. Set explicitly on every request
@@ -76,7 +87,12 @@ public class NottiApiClient {
       !trimmed.isEmpty,
       let url = URL(string: trimmed),
       let scheme = url.scheme?.lowercased(),
-      scheme == "http" || scheme == "https",
+      // A5 (found in pre-release review): plain `http://` was accepted with
+      // no opt-in, sending the client-key bearer token, the push token, and
+      // the external_user_id over cleartext for a healthtech SDK. `https`
+      // only in release builds; `http` stays available in debug builds only
+      // (local dev servers, emulator-only backends).
+      scheme == "https" || (scheme == "http" && Self.allowsInsecureScheme),
       let host = url.host,
       !host.isEmpty
     else {
@@ -88,9 +104,21 @@ public class NottiApiClient {
     return normalized.isEmpty ? nil : normalized
   }
 
+  /// A6 (found in pre-release review): `appId`/the server-returned `deviceId`
+  /// were interpolated into the request path with no percent-encoding. A
+  /// `deviceId` containing a space or `/` (a misbehaving/compromised
+  /// backend) made `URL(string:)` return nil forever after, permanently
+  /// bricking every later PATCH for that device with no recovery path.
+  private static func percentEncodedPathComponent(_ raw: String) -> String? {
+    raw.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/")))
+  }
+
   public func createOrUpdateDevice(token: String, platform: String) -> ApiResult {
     let body: [String: Any] = ["token": token, "platform": platform]
-    guard let url = URL(string: "\(baseUrl)/v1/apps/\(appId)/devices") else {
+    guard
+      let encodedAppId = Self.percentEncodedPathComponent(appId),
+      let url = URL(string: "\(baseUrl)/v1/apps/\(encodedAppId)/devices")
+    else {
       return .failure("invalid device-registration URL built from the configured baseUrl")
     }
     var request = URLRequest(url: url, timeoutInterval: Self.requestTimeoutSeconds)
@@ -111,7 +139,11 @@ public class NottiApiClient {
     json["token"] = token
     let fallbackTags = (fields["tags"] as? [String: String]) ?? [:]
 
-    guard let url = URL(string: "\(baseUrl)/v1/apps/\(appId)/devices/\(deviceId)") else {
+    guard
+      let encodedAppId = Self.percentEncodedPathComponent(appId),
+      let encodedDeviceId = Self.percentEncodedPathComponent(deviceId),
+      let url = URL(string: "\(baseUrl)/v1/apps/\(encodedAppId)/devices/\(encodedDeviceId)")
+    else {
       return .failure("invalid device-update URL built from the configured baseUrl")
     }
     var request = URLRequest(url: url, timeoutInterval: Self.requestTimeoutSeconds)
@@ -182,16 +214,29 @@ public class NottiApiClient {
 
   private func syncDataTask(_ request: URLRequest) -> (Data?, URLResponse?, Error?) {
     let semaphore = DispatchSemaphore(value: 0)
+    let lock = NSLock()
+    // A4 (found in pre-release review): the timeout branch below used to
+    // return while the in-flight task's completion handler could still fire
+    // later (on the session's delegate queue) and write into these captured
+    // boxes with no synchronization - a genuine data race. `completed`,
+    // guarded by `lock`, makes the two sides mutually exclusive: whichever
+    // reaches the lock first "wins" and the other's write/read is skipped.
+    var completed = false
     var resultData: Data?
     var resultResponse: URLResponse?
     var resultError: Error?
 
-    session.dataTask(with: request) { data, response, error in
+    let task = session.dataTask(with: request) { data, response, error in
+      lock.lock()
+      defer { lock.unlock() }
+      guard !completed else { return }
+      completed = true
       resultData = data
       resultResponse = response
       resultError = error
       semaphore.signal()
-    }.resume()
+    }
+    task.resume()
 
     // Independent bound on top of the request's own timeoutInterval - if a
     // session is ever passed in that never completes the task, this still
@@ -199,8 +244,18 @@ public class NottiApiClient {
     // indefinitely (SDK reliability fix - see
     // .specs/features/sdk-core-v1/validation.md Fix 4).
     if semaphore.wait(timeout: .now() + Self.semaphoreTimeoutSeconds) == .timedOut {
+      lock.lock()
+      let alreadyCompleted = completed
+      completed = true
+      lock.unlock()
+      if !alreadyCompleted {
+        task.cancel()
+      }
       return (nil, nil, NottiApiClientTimeoutError())
     }
+
+    lock.lock()
+    defer { lock.unlock() }
     return (resultData, resultResponse, resultError)
   }
 
