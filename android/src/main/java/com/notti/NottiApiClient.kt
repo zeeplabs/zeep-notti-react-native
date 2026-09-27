@@ -51,7 +51,10 @@ class NottiApiClient(
       .post(body)
       .build()
 
-    return executeWithRetry(request)
+    // Registration is the one call that *depends* on the response body: the
+    // `id` it returns is the resource every later PATCH is addressed to, so a
+    // 2xx without a device object is not a usable success.
+    return executeWithRetry(request) { bodyString -> parseDeviceResponse(bodyString) }
   }
 
   /** PATCH always includes the cached `token` field (AD-009 ownership proof). */
@@ -66,7 +69,20 @@ class NottiApiClient(
       .patch(body)
       .build()
 
-    return executeWithRetry(request)
+    // Unlike registration, PATCH creates nothing: the caller already knows
+    // the device id it addressed and the field values it just applied. A
+    // REST backend is free to acknowledge it with 204 No Content, an empty
+    // body, or a bare {"ok":true}, so requiring a full device object here
+    // turned a perfectly good update into five retries and dropped the
+    // local persistence of external_user_id/tags. Any 2xx is accepted; the
+    // body is used when it happens to carry a device object, and otherwise
+    // the request itself is the source of truth. Matches iOS'
+    // NottiApiClient.swift's patchDevice.
+    @Suppress("UNCHECKED_CAST")
+    val fallbackTags = fields["tags"] as? Map<String, String> ?: emptyMap()
+    return executeWithRetry(request) { bodyString ->
+      parseDeviceResponse(bodyString) ?: DeviceResponse(id = deviceId, tags = fallbackTags)
+    }
   }
 
   /**
@@ -105,7 +121,12 @@ class NottiApiClient(
     else -> value
   }
 
-  private fun executeWithRetry(request: Request): ApiResult {
+  /**
+   * `parseSuccess` turns a 2xx body into the [DeviceResponse] to report, or
+   * `null` to treat that 2xx as a retriable failure - mirrors iOS'
+   * `NottiApiClient.executeWithRetry(_:parseSuccess:)`.
+   */
+  private fun executeWithRetry(request: Request, parseSuccess: (String) -> DeviceResponse?): ApiResult {
     var attempt = 0
     var delayMs = BASE_DELAY_MS
     var lastError = "unknown error"
@@ -116,19 +137,19 @@ class NottiApiClient(
         httpClient.newCall(request).execute().use { response ->
           if (response.isSuccessful) {
             val bodyString = response.body?.string().orEmpty()
-            try {
-              return ApiResult.Success(parseDeviceResponse(bodyString))
-            } catch (e: JSONException) {
-              // A 2xx that is not the documented device JSON: a captive
-              // portal/proxy answering with HTML, a renamed field, or a
-              // transient proxy glitch. Treated as retriable - same as a 5xx
-              // and matching iOS' NottiApiClient.executeWithRetry - instead
-              // of a terminal failure, since retrying is safe (registration
-              // is idempotent) and gives a genuine transient hiccup a chance
-              // to resolve instead of parking registration on the first bad
-              // response.
-              lastError = "malformed response body: ${e.message}"
+            val device = parseSuccess(bodyString)
+            if (device != null) {
+              return ApiResult.Success(device)
             }
+            // A 2xx that is not the documented device JSON: a captive
+            // portal/proxy answering with HTML, a renamed field, or a
+            // transient proxy glitch. Treated as retriable - same as a 5xx
+            // and matching iOS' NottiApiClient.executeWithRetry - instead
+            // of a terminal failure, since retrying is safe (registration
+            // is idempotent) and gives a genuine transient hiccup a chance
+            // to resolve instead of parking registration on the first bad
+            // response.
+            lastError = "HTTP ${response.code} with an unparseable device response body"
           } else if (response.code < 500) {
             // 4xx: not retried, terminal failure.
             return ApiResult.Failure("HTTP ${response.code}")
@@ -150,9 +171,9 @@ class NottiApiClient(
   }
 
   /**
-   * Throws [JSONException] - reported by the caller as a terminal failure -
-   * for a body that is not a device object. `id` must be present, a real
-   * JSON string and non-blank: Android's `org.json` (AOSP) `getString` coerces
+   * Returns `null` - reported by the caller as a retriable failure - for a
+   * body that is not a device object. `id` must be present, a real JSON
+   * string and non-blank: Android's `org.json` (AOSP) `getString` coerces
    * instead of validating, so `{"id":""}` yielded `""` and `{"id":123}`
    * yielded `"123"`, both reported as a successful registration. The caller
    * then persisted that id, wiped its local tags, and aimed every later PATCH
@@ -160,11 +181,15 @@ class NottiApiClient(
    * foreground retry only re-arms on a FAILED registration. Same rule as iOS'
    * `parseDeviceResponse` (`ios/NottiApiClient.swift`).
    */
-  private fun parseDeviceResponse(bodyString: String): DeviceResponse {
-    val json = JSONObject(bodyString)
+  private fun parseDeviceResponse(bodyString: String): DeviceResponse? {
+    val json = try {
+      JSONObject(bodyString)
+    } catch (e: JSONException) {
+      return null
+    }
     val id = json.opt("id") as? String
     if (id.isNullOrBlank()) {
-      throw JSONException("response has no usable \"id\" field")
+      return null
     }
     // `optJSONObject` rather than `has` + `getJSONObject`: `has("tags")` is
     // true for `"tags": null` (AOSP stores JSONObject.NULL there) and

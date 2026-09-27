@@ -83,6 +83,51 @@ class NottiApiClientTest {
   }
 
   @Test
+  fun `patchDevice succeeds on a 204 No Content response with no retry`() {
+    server.enqueue(MockResponse().setResponseCode(204))
+
+    val result = client.patchDevice(
+      deviceId = "device-1",
+      token = "fcm-token",
+      fields = mapOf("subscribed" to true)
+    )
+
+    assertEquals(1, server.requestCount)
+    assertTrue("expected a Success, got $result", result is ApiResult.Success)
+    assertEquals("device-1", (result as ApiResult.Success).response.id)
+  }
+
+  @Test
+  fun `patchDevice succeeds on a 200 with an empty body, falling back to the caller's own tags`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody(""))
+
+    val result = client.patchDevice(
+      deviceId = "device-1",
+      token = "fcm-token",
+      fields = mapOf("tags" to mapOf("plan" to "vip"))
+    )
+
+    assertTrue("expected a Success, got $result", result is ApiResult.Success)
+    val response = (result as ApiResult.Success).response
+    assertEquals("device-1", response.id)
+    assertEquals(mapOf("plan" to "vip"), response.tags)
+  }
+
+  @Test
+  fun `patchDevice succeeds on a bare ok-true body`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"ok":true}"""))
+
+    val result = client.patchDevice(
+      deviceId = "device-1",
+      token = "fcm-token",
+      fields = mapOf("subscribed" to true)
+    )
+
+    assertTrue("expected a Success, got $result", result is ApiResult.Success)
+    assertEquals("device-1", (result as ApiResult.Success).response.id)
+  }
+
+  @Test
   fun `5xx response retries then succeeds without exhausting the cap`() {
     server.enqueue(MockResponse().setResponseCode(500))
     server.enqueue(MockResponse().setResponseCode(503))

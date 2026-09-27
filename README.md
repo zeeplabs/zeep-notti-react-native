@@ -79,16 +79,18 @@ Notti.login('external-user-123');
 Notti.logout();
 
 // The Notti-internal device id your own backend needs to route
-// notifications to this device. `null` until registration assigns one -
-// cached locally, no network round-trip.
-const deviceId = Notti.getDeviceId();
-
-// Notified when the id is first assigned or later changes (reinstall,
-// device change, revocation/renewal). Persist it alongside your user record
-// whenever it fires.
+// notifications to this device. Subscribe *before* reading the current
+// value: registration can complete between the two calls, and the event
+// does not replay a change it already fired before you started listening.
 const deviceIdChanged = Notti.addEventListener('deviceIdChanged', (id) => {
   console.log('Notti device id', id);
 });
+
+// `null` until registration assigns one - cached locally, no network
+// round-trip. Persist whichever of the two you get first (this call, or the
+// listener above) alongside your user record.
+const deviceId = Notti.getDeviceId();
+
 deviceIdChanged.remove();
 
 // Enable/disable delivery without unregistering the device.
@@ -128,7 +130,7 @@ Notti.getInitialNotificationClick().then((payload) => {
 | `Notti.login(externalUserId)` | Associates the device with your own user id. |
 | `Notti.logout()` | Clears the external user id locally. Note: Notti' backend doesn't support clearing `external_user_id` server-side, so the previously-set value remains on the Device row server-side — `logout()` only affects local SDK state. |
 | `Notti.setSubscription(enabled)` | Enables/disables push delivery for the device without unregistering it. |
-| `Notti.getDeviceId(): string \| null` | Cached, synchronous read of the Notti-internal device id — the id your own backend needs to route notifications to this device. Returns `null` until registration assigns one (no network round-trip; never blocks). |
+| `Notti.getDeviceId(): string \| null` | Cached, synchronous read of the Notti-internal device id — the id your own backend needs to route notifications to this device. Returns `null` until registration assigns one; no network round-trip. Subscribe to `'deviceIdChanged'` (below) *before* calling this — registration can complete between the two calls, and there is no replay of a value already assigned. |
 | `Notti.addEventListener(eventName, callback)` | Subscribes to `'notificationReceived'` (foreground), `'notificationClicked'` (warm: app already running, backgrounded or foregrounded), or `'deviceIdChanged'` (fired when the device id is first assigned or later changes — reinstall, device change, revocation/renewal). Returns an `EventSubscription` — call `.remove()` to unsubscribe. Does **not** fire for a cold-start click — use `getInitialNotificationClick()` for that. |
 | `Notti.getInitialNotificationClick(): Promise<NotificationPayload \| null>` | Resolves the notification that cold-launched the app from a tap, or `null` if the app wasn't launched that way. Only resolves once per cold start — the native side clears it after this reads it. Call at startup, before/alongside `addEventListener`. |
 

@@ -61,7 +61,8 @@ final class NottiCoreTests: XCTestCase {
     tokenProvider: @escaping (@escaping (String?) -> Void) -> Void = { cb in cb("apns-token") },
     permissionRequester: @escaping (@escaping (Bool) -> Void) -> Void = { cb in cb(true) },
     apiClient: NottiApiClient? = nil,
-    logs: LogSink? = nil
+    logs: LogSink? = nil,
+    onDeviceIdChanged: @escaping (String) -> Void = { _ in }
   ) -> NottiCore {
     let session = stubSession()
     let core = NottiCore(
@@ -72,7 +73,8 @@ final class NottiCoreTests: XCTestCase {
       },
       tokenProvider: tokenProvider,
       permissionRequester: permissionRequester,
-      logger: { message in logs?.append(message) }
+      logger: { message in logs?.append(message) },
+      onDeviceIdChanged: onDeviceIdChanged
     )
     cores.append(core)
     return core
@@ -178,9 +180,8 @@ final class NottiCoreTests: XCTestCase {
 
   func test_firstRegistrationNotifiesOnDeviceIdChangedWithTheNewlyAssignedId() {
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
-    let core = newCore()
     var changes: [String] = []
-    core.onDeviceIdChanged = { changes.append($0) }
+    let core = newCore(onDeviceIdChanged: { changes.append($0) })
 
     core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
     drain(core)
@@ -191,9 +192,8 @@ final class NottiCoreTests: XCTestCase {
   func test_reRegistrationThatReturnsTheSameIdDoesNotNotifyOnDeviceIdChangedAgain() {
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
-    let core = newCore()
     var changes: [String] = []
-    core.onDeviceIdChanged = { changes.append($0) }
+    let core = newCore(onDeviceIdChanged: { changes.append($0) })
     core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
     drain(core)
 
@@ -206,9 +206,8 @@ final class NottiCoreTests: XCTestCase {
   func test_reRegistrationThatReturnsADifferentIdNotifiesOnDeviceIdChangedWithTheNewValue() {
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-2","tags":{}}"#))
-    let core = newCore()
     var changes: [String] = []
-    core.onDeviceIdChanged = { changes.append($0) }
+    let core = newCore(onDeviceIdChanged: { changes.append($0) })
     core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
     drain(core)
 
@@ -217,6 +216,33 @@ final class NottiCoreTests: XCTestCase {
 
     XCTAssertEqual(changes, ["device-1", "device-2"])
     XCTAssertEqual(core.getDeviceId(), "device-2")
+  }
+
+  func test_aFirstRegistrationThatFailsDoesNotNotifyOnDeviceIdChangedAndLeavesGetDeviceIdNil() {
+    for _ in 0..<5 { StubURLProtocol.enqueue(.status(500)) }
+    var changes: [String] = []
+    let core = newCore(onDeviceIdChanged: { changes.append($0) })
+
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    XCTAssertEqual(changes, [])
+    XCTAssertNil(core.getDeviceId())
+  }
+
+  func test_aReRegistrationThatFailsDoesNotNotifyOnDeviceIdChangedAndLeavesGetDeviceIdAtItsLastKnownValue() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
+    for _ in 0..<5 { StubURLProtocol.enqueue(.status(500)) }
+    var changes: [String] = []
+    let core = newCore(onDeviceIdChanged: { changes.append($0) })
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    core.onTokenRefreshed("new-apns-token")
+    drain(core)
+
+    XCTAssertEqual(changes, ["device-1"])
+    XCTAssertEqual(core.getDeviceId(), "device-1")
   }
 
   func test_repeatInitializeWithIdenticalArgsIsANoOp() {

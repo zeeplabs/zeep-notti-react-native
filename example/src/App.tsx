@@ -36,16 +36,20 @@ export default function App() {
       console.log('Notti notificationClicked', payload);
     });
 
-    // `null` until registration assigns one - cached locally, no network
-    // round-trip. Persist this alongside your user record once it's set.
-    console.log('Notti getDeviceId', Notti.getDeviceId());
-
+    // Subscribe before reading the current value: registration can complete
+    // between the two calls, and the event does not replay a change it
+    // already fired before this listener existed.
     const deviceIdChanged = Notti.addEventListener(
       'deviceIdChanged',
       (deviceId) => {
         console.log('Notti deviceIdChanged', deviceId);
       }
     );
+
+    // `null` until registration assigns one - cached locally, no network
+    // round-trip. Persist whichever of the two you get first alongside your
+    // user record.
+    console.log('Notti getDeviceId', Notti.getDeviceId());
 
     return () => {
       received.remove();

@@ -19,6 +19,12 @@
         _impl.emitDeviceIdChangedHandler = ^(NSString *deviceId) {
             [weakSelf emitOnDeviceIdChanged:deviceId];
         };
+        // Published only now, with every emit handler already wired: an
+        // external caller (NottiBridge/NottiPushDelegate, from an arbitrary
+        // thread) reaching NottiImpl.activeCore any earlier could have
+        // triggered a device-id change through a still-nil handler, silently
+        // dropping the event.
+        [_impl activate];
     }
     return self;
 }

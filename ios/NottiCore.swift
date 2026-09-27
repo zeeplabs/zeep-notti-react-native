@@ -69,11 +69,16 @@ public class NottiCore {
   /// Notified whenever the persisted device id actually changes (first
   /// assignment, reinstall, or a re-registration that lands a different id) -
   /// never on an idempotent re-register that returns the same id already
-  /// cached. Settable rather than constructor-injected because `NottiImpl`
-  /// constructs `NottiCore` before it can wire the Obj-C++ emit handler (see
+  /// cached. Constructor-injected (not a settable var): a settable property
+  /// set post-construction from Obj-C++ left a real window where
+  /// `NottiPushDelegate`/`NottiBridge` could reach a published `NottiCore`
+  /// through `NottiImpl.activeCore` before the handler was wired, silently
+  /// dropping the first-assignment event and racing the property's own
+  /// unsynchronized read/write across threads. `NottiImpl` now defers
+  /// publishing itself (`activate()`) until after the handler exists (see
   /// ADR-001, docs/adr/001-expose-device-id-getter-and-change-event.md).
   /// Always invoked on `workQueue`.
-  public var onDeviceIdChanged: ((String) -> Void)?
+  private let onDeviceIdChanged: (String) -> Void
 
   /// Guards against a foreground-retry storm: `didBecomeActive` can fire
   /// repeatedly (app switcher, control centre, alerts), and only one retry may
@@ -89,7 +94,8 @@ public class NottiCore {
     tokenProvider: @escaping (_ callback: @escaping (String?) -> Void) -> Void,
     permissionRequester: @escaping (_ callback: @escaping (Bool) -> Void) -> Void,
     platform: String = "ios",
-    logger: @escaping (String) -> Void = { _ in }
+    logger: @escaping (String) -> Void = { _ in },
+    onDeviceIdChanged: @escaping (String) -> Void = { _ in }
   ) {
     self.deviceStore = deviceStore
     self.apiClientFactory = apiClientFactory
@@ -97,6 +103,7 @@ public class NottiCore {
     self.permissionRequester = permissionRequester
     self.platform = platform
     self.logger = logger
+    self.onDeviceIdChanged = onDeviceIdChanged
     workQueue.setSpecific(key: Self.workQueueKey, value: 1)
     observeAppForeground()
   }
@@ -275,7 +282,7 @@ public class NottiCore {
       let previousDeviceId = deviceStore.getDeviceId()
       deviceStore.setDeviceId(response.id)
       if response.id != previousDeviceId {
-        onDeviceIdChanged?(response.id)
+        onDeviceIdChanged(response.id)
       }
       deviceStore.setLastToken(token)
       deviceStore.setTags(response.tags)

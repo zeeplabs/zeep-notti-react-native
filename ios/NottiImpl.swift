@@ -37,19 +37,33 @@ public class NottiImpl: NSObject {
     didSet { NottiEventBuffer.shared.setHandler(.clicked, emitClickedHandler) }
   }
 
-  /// Set by `Notti.mm`'s `-init` to forward `NottiCore.onDeviceIdChanged` into
-  /// the Codegen event emitter it alone has access to. Not routed through
-  /// `NottiEventBuffer` - unlike a notification tap, there is no cold-start
-  /// replay concern (`getDeviceId()` covers the synchronous case; this only
-  /// fires for a value already assigned or updated while JS is alive).
-  @objc public var emitDeviceIdChangedHandler: ((String) -> Void)? {
-    didSet { core.onDeviceIdChanged = emitDeviceIdChangedHandler }
+  /// Plain reference-type cell so `init` (below) can hand `NottiCore` a
+  /// closure that reads this box's `value` at call time, while
+  /// `emitDeviceIdChangedHandler`'s `didSet` (running later, once `self` is
+  /// fully initialized) writes into that same box. A closure created before
+  /// `super.init()` runs cannot capture `self` at all - not even weakly - so
+  /// the box, not `self`, is what both sides actually share.
+  private final class HandlerBox {
+    var value: ((String) -> Void)?
   }
+
+  /// Set by `Notti.mm`'s `-init`, before calling [activate], to forward a
+  /// device-id change into the Codegen event emitter it alone has access to.
+  /// Not routed through `NottiEventBuffer` - unlike a notification tap, there
+  /// is no cold-start replay concern (`getDeviceId()` covers the synchronous
+  /// case; this only fires for a value already assigned or updated while JS
+  /// is alive).
+  @objc public var emitDeviceIdChangedHandler: ((String) -> Void)? {
+    didSet { deviceIdChangedBox.value = emitDeviceIdChangedHandler }
+  }
+
+  private let deviceIdChangedBox: HandlerBox
 
   let core: NottiCore
 
   @objc public override init() {
     let defaults = UserDefaults(suiteName: "notti_prefs") ?? .standard
+    let box = HandlerBox()
     core = NottiCore(
       deviceStore: NottiDeviceStore(defaults: defaults),
       apiClientFactory: { appId, clientKey, baseUrl in
@@ -77,9 +91,29 @@ public class NottiImpl: NSObject {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { granted, _ in
           callback(granted)
         }
-      }
+      },
+      onDeviceIdChanged: { deviceId in box.value?(deviceId) }
     )
+    // The closure passed to `NottiCore` above cannot capture `self` (or any
+    // of its properties) this early - a class's stored properties, and
+    // therefore `self` itself, are not valid to reference until after
+    // `super.init()` runs. `box` is a plain local instead, captured directly
+    // into that closure; this line publishes the very same box as
+    // `self.deviceIdChangedBox`, the only thing `emitDeviceIdChangedHandler`'s
+    // `didSet` (below) needs to write into later.
+    self.deviceIdChangedBox = box
     super.init()
+  }
+
+  /// Publishes this instance as `activeInstance`/`activeCore` so
+  /// `NottiBridge`/`NottiPushDelegate` (and any other external caller
+  /// reaching them from an arbitrary thread) can find it. Called by
+  /// `Notti.mm`'s `-init` only after every emit handler - including
+  /// `emitDeviceIdChangedHandler` - is wired: publishing first left a window
+  /// where a device-id change landing on another thread invoked a `nil`
+  /// handler, dropping the event for the case that matters most (first
+  /// assignment on a fresh install).
+  @objc public func activate() {
     NottiImpl.activeInstance = self
     NottiImpl.activeCore = core
   }

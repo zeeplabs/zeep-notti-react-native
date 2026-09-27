@@ -46,6 +46,22 @@ class NottiModule(reactContext: ReactApplicationContext) :
   }
 
   /**
+   * Fetched eagerly here rather than inside [core]'s lazy initializer:
+   * `SharedPreferences`' first access on a given file loads and parses its
+   * backing XML on a background thread, and any call that lands before that
+   * finishes blocks waiting for it - `getDeviceId()` is a synchronous
+   * TurboModule method invoked from the JS thread, so a caller reading it
+   * right after startup (the documented pattern) would otherwise jank on
+   * that load. Fetching it here, at module construction, starts that load as
+   * early as the module exists instead of only once JS first calls
+   * `initialize()`/`getDeviceId()`, giving it a head start to finish during
+   * the rest of app/bundle startup. Does not eliminate the block outright -
+   * only a real async read (a breaking API change: `getDeviceId(): Promise`)
+   * would - but meaningfully narrows the window in practice.
+   */
+  private val prefs = reactApplicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+  /**
    * Shared by [NottiCore] (blocking HTTP + retry backoff) and the FCM-token
    * `Task` listener below, so neither ever runs on the main looper.
    */
@@ -55,9 +71,7 @@ class NottiModule(reactContext: ReactApplicationContext) :
 
   private val core: NottiCore by lazy {
     NottiCore(
-      deviceStore = NottiDeviceStore(
-        reactApplicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-      ),
+      deviceStore = NottiDeviceStore(prefs),
       apiClientFactory = { appId, clientKey, baseUrl ->
         NottiApiClient(OkHttpClient(), baseUrl, appId, clientKey)
       },
@@ -65,7 +79,14 @@ class NottiModule(reactContext: ReactApplicationContext) :
       permissionRequester = { callback -> requestNativePermission(callback) },
       logger = { message -> Log.e(NAME, message) },
       executor = ioExecutor,
-      onDeviceIdChanged = { deviceId -> emitDeviceIdChanged(deviceId) }
+      // Routed through `activeInstance` (companion object, nulled out by
+      // `invalidate()`) rather than capturing `this` directly: `registerDevice`
+      // runs on `ioExecutor`, whose `shutdown()` in `invalidate()` only stops
+      // *new* work from being accepted - a call already in flight at that
+      // moment still completes and would otherwise emit through a module RN
+      // has already torn down. Mirrors `emitNotificationReceived`'s companion
+      // object bridge below.
+      onDeviceIdChanged = { deviceId -> activeInstance?.emitDeviceIdChanged(deviceId) }
     ).also {
       ownCore = it
       activeCore = it

@@ -280,6 +280,35 @@ class NottiCoreTest {
   }
 
   @Test
+  fun `a first registration that fails does not notify onDeviceIdChanged and leaves getDeviceId null`() {
+    repeat(5) { server.enqueue(MockResponse().setResponseCode(500)) }
+    val changes = mutableListOf<String>()
+    val core = newCore(onDeviceIdChanged = { changes.add(it) })
+
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    assertEquals(emptyList<String>(), changes)
+    assertEquals(null, core.getDeviceId())
+  }
+
+  @Test
+  fun `a re-registration that fails does not notify onDeviceIdChanged and leaves getDeviceId at its last known value`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    repeat(5) { server.enqueue(MockResponse().setResponseCode(500)) }
+    val changes = mutableListOf<String>()
+    val core = newCore(onDeviceIdChanged = { changes.add(it) })
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    core.onTokenRefreshed("new-fcm-token")
+    awaitIdle()
+
+    assertEquals(listOf("device-1"), changes)
+    assertEquals("device-1", core.getDeviceId())
+  }
+
+  @Test
   fun `repeat initialize with identical args is a no-op`() {
     server.enqueue(
       MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}""")
