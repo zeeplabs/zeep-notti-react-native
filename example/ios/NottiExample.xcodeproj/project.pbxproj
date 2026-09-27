@@ -12,19 +12,47 @@
 		20010A737E96A9EDF397382E /* NottiEventBufferTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D773528AA0DC9AF4437AA31 /* NottiEventBufferTests.swift */; };
 		20F21722749D363B750A38F9 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */; };
 		227ED15BDA75DECF463FC812 /* NottiNotificationParsing.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD432AFD45EE2CB59BB9A11C /* NottiNotificationParsing.swift */; };
+		357194195CF7D1DED1627862 /* NottiExampleNotificationService.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 84D01DBBF8D63FBAE59B465A /* NottiExampleNotificationService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		573284BB805932288A5C5007 /* libPods-NottiExampleNotificationService.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A2E32411B2EE282B0551F2D5 /* libPods-NottiExampleNotificationService.a */; };
 		6B58EE0B7DF4BE0449113A52 /* NottiApiClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3F52CBFE06F315AB26D629E /* NottiApiClient.swift */; };
 		761780ED2CA45674006654EE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761780EC2CA45674006654EE /* AppDelegate.swift */; };
 		8004A6506E30F4A727E98466 /* StubURLProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06056BFA6D5837995568BBE9 /* StubURLProtocol.swift */; };
 		81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */; };
+		84C444AA5EE3BAB765CF74DE /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DB1E07D38B042BD584F25C1 /* NotificationService.swift */; };
 		8D322FCF630D19C71C2DABFC /* NottiNotificationParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7815D06C60911EB6700CF44D /* NottiNotificationParsingTests.swift */; };
 		ADDDDAD11B3275F030FDE5DA /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21CFCCD5C376ED5BDA3F591C /* Foundation.framework */; };
 		C3B35F1FF90D796D94E4CFD0 /* NottiEventBuffer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40D3C4FFC4B44CDF88EB5472 /* NottiEventBuffer.swift */; };
 		D0FCD1D1E721EBA17221E9FE /* NottiCoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46D6073908A65F6250CB30D9 /* NottiCoreTests.swift */; };
+		D96B74E00C4288D3CB75E386 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 9A21C704380E495E9684E854 /* Foundation.framework */; };
 		EC4A7D89F80C44E9E2AC39C3 /* NottiApiClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5112E264FB65968CEA8B9A1B /* NottiApiClientTests.swift */; };
 		F84378136AEBA4711642174A /* NottiDeviceStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 426B42B3BA73ABC080A1B717 /* NottiDeviceStoreTests.swift */; };
 		F844827EE098CCD3D726811E /* NottiDeviceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33216B0956254CF362007CD7 /* NottiDeviceStore.swift */; };
 		FC9FAC31E2199BC44DDB0B17 /* NottiCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D977C699E4908D806CEA914 /* NottiCore.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		E75AE613590B04C3EE0ABC75 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 83CBB9F71A601CBA00E9B192 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 001D937A4F733C1022EA065F;
+			remoteInfo = NottiExampleNotificationService;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		2113213BC51E16DE2109E95F /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				357194195CF7D1DED1627862 /* NottiExampleNotificationService.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		06056BFA6D5837995568BBE9 /* StubURLProtocol.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = StubURLProtocol.swift; sourceTree = "<group>"; };
@@ -39,6 +67,7 @@
 		40D3C4FFC4B44CDF88EB5472 /* NottiEventBuffer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiEventBuffer.swift; sourceTree = "<group>"; };
 		426B42B3BA73ABC080A1B717 /* NottiDeviceStoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiDeviceStoreTests.swift; sourceTree = "<group>"; };
 		46D6073908A65F6250CB30D9 /* NottiCoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiCoreTests.swift; sourceTree = "<group>"; };
+		4DB1E07D38B042BD584F25C1 /* NotificationService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
 		5112E264FB65968CEA8B9A1B /* NottiApiClientTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiApiClientTests.swift; sourceTree = "<group>"; };
 		5709B34CF0A7D63546082F79 /* Pods-NottiExample.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-NottiExample.release.xcconfig"; path = "Target Support Files/Pods-NottiExample/Pods-NottiExample.release.xcconfig"; sourceTree = "<group>"; };
 		5DCACB8F33CDC322A6C60F78 /* libPods-NottiExample.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-NottiExample.a"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -47,8 +76,14 @@
 		7815D06C60911EB6700CF44D /* NottiNotificationParsingTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiNotificationParsingTests.swift; sourceTree = "<group>"; };
 		7DB377A3B0D5458D4B4A0B7C /* NottiTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NottiTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = LaunchScreen.storyboard; path = NottiExample/LaunchScreen.storyboard; sourceTree = "<group>"; };
+		84D01DBBF8D63FBAE59B465A /* NottiExampleNotificationService.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NottiExampleNotificationService.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		9A21C704380E495E9684E854 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS14.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
+		A2E32411B2EE282B0551F2D5 /* libPods-NottiExampleNotificationService.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-NottiExampleNotificationService.a"; sourceTree = BUILT_PRODUCTS_DIR; };
 		B3F52CBFE06F315AB26D629E /* NottiApiClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiApiClient.swift; sourceTree = "<group>"; };
+		B689BCF641ACCAC13F04C7E0 /* Pods-NottiExampleNotificationService.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-NottiExampleNotificationService.debug.xcconfig"; path = "Target Support Files/Pods-NottiExampleNotificationService/Pods-NottiExampleNotificationService.debug.xcconfig"; sourceTree = "<group>"; };
+		C58A3A3D9EBEB1343113FEAF /* Pods-NottiExampleNotificationService.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-NottiExampleNotificationService.release.xcconfig"; path = "Target Support Files/Pods-NottiExampleNotificationService/Pods-NottiExampleNotificationService.release.xcconfig"; sourceTree = "<group>"; };
 		CD432AFD45EE2CB59BB9A11C /* NottiNotificationParsing.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiNotificationParsing.swift; sourceTree = "<group>"; };
+		DA4ACA366E1F5E06B947B616 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
@@ -58,6 +93,15 @@
 			buildActionMask = 2147483647;
 			files = (
 				0C80B921A6F3F58F76C31292 /* libPods-NottiExample.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		16F9072A2BCC999AC6251CCE /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D96B74E00C4288D3CB75E386 /* Foundation.framework in Frameworks */,
+				573284BB805932288A5C5007 /* libPods-NottiExampleNotificationService.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -90,8 +134,19 @@
 				ED297162215061F000B7C4FE /* JavaScriptCore.framework */,
 				5DCACB8F33CDC322A6C60F78 /* libPods-NottiExample.a */,
 				E7137AA4B417C34C55CCB7DB /* iOS */,
+				A2E32411B2EE282B0551F2D5 /* libPods-NottiExampleNotificationService.a */,
 			);
 			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		42EB0EAD1A87560930E74A1F /* NottiExampleNotificationService */ = {
+			isa = PBXGroup;
+			children = (
+				4DB1E07D38B042BD584F25C1 /* NotificationService.swift */,
+				DA4ACA366E1F5E06B947B616 /* Info.plist */,
+			);
+			name = NottiExampleNotificationService;
+			path = NottiExampleNotificationService;
 			sourceTree = "<group>";
 		};
 		832341AE1AAA6A7D00B99B32 /* Libraries */ = {
@@ -111,6 +166,7 @@
 				BBD78D7AC51CEA395F1C20DB /* Pods */,
 				B437CD11D1D50B7EE2D3065B /* NottiSources */,
 				FFEE6AB757546E519D1F0C28 /* NottiTestsSources */,
+				42EB0EAD1A87560930E74A1F /* NottiExampleNotificationService */,
 			);
 			indentWidth = 2;
 			sourceTree = "<group>";
@@ -122,6 +178,7 @@
 			children = (
 				13B07F961A680F5B00A75B9A /* NottiExample.app */,
 				7DB377A3B0D5458D4B4A0B7C /* NottiTests.xctest */,
+				84D01DBBF8D63FBAE59B465A /* NottiExampleNotificationService.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -145,6 +202,8 @@
 			children = (
 				3B4392A12AC88292D35C810B /* Pods-NottiExample.debug.xcconfig */,
 				5709B34CF0A7D63546082F79 /* Pods-NottiExample.release.xcconfig */,
+				C58A3A3D9EBEB1343113FEAF /* Pods-NottiExampleNotificationService.release.xcconfig */,
+				B689BCF641ACCAC13F04C7E0 /* Pods-NottiExampleNotificationService.debug.xcconfig */,
 			);
 			path = Pods;
 			sourceTree = "<group>";
@@ -153,6 +212,7 @@
 			isa = PBXGroup;
 			children = (
 				21CFCCD5C376ED5BDA3F591C /* Foundation.framework */,
+				9A21C704380E495E9684E854 /* Foundation.framework */,
 			);
 			name = iOS;
 			sourceTree = "<group>";
@@ -173,6 +233,24 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		001D937A4F733C1022EA065F /* NottiExampleNotificationService */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B67E1C80CCA5C30F69DE7AB1 /* Build configuration list for PBXNativeTarget "NottiExampleNotificationService" */;
+			buildPhases = (
+				784FBD1DF3B080368090EAF3 /* [CP] Check Pods Manifest.lock */,
+				63BBA1E8910D591CDFB2D191 /* Sources */,
+				16F9072A2BCC999AC6251CCE /* Frameworks */,
+				5AB2577B7AA09A2A37FD590E /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = NottiExampleNotificationService;
+			productName = NottiExampleNotificationService;
+			productReference = 84D01DBBF8D63FBAE59B465A /* NottiExampleNotificationService.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		13B07F861A680F5B00A75B9A /* NottiExample */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 13B07F931A680F5B00A75B9A /* Build configuration list for PBXNativeTarget "NottiExample" */;
@@ -184,10 +262,12 @@
 				00DD1BFF1BD5951E006B06BC /* Bundle React Native code and images */,
 				00EEFC60759A1932668264C0 /* [CP] Embed Pods Frameworks */,
 				E235C05ADACE081382539298 /* [CP] Copy Pods Resources */,
+				2113213BC51E16DE2109E95F /* Embed App Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				D02BD81036B39770ED755758 /* PBXTargetDependency */,
 			);
 			name = NottiExample;
 			productName = NottiExample;
@@ -239,6 +319,7 @@
 			targets = (
 				13B07F861A680F5B00A75B9A /* NottiExample */,
 				F91DB71CC1A745CDC30D9E99 /* NottiTests */,
+				001D937A4F733C1022EA065F /* NottiExampleNotificationService */,
 			);
 		};
 /* End PBXProject section */
@@ -255,6 +336,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		2F2CAD00798B3404FBF82324 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5AB2577B7AA09A2A37FD590E /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -295,6 +383,28 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-NottiExample/Pods-NottiExample-frameworks.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+		784FBD1DF3B080368090EAF3 /* [CP] Check Pods Manifest.lock */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
+				"${PODS_ROOT}/Manifest.lock",
+			);
+			name = "[CP] Check Pods Manifest.lock";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/Pods-NottiExampleNotificationService-checkManifestLockResult.txt",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
 			showEnvVarsInLog = 0;
 		};
 		C38B50BA6285516D6DCD4F65 /* [CP] Check Pods Manifest.lock */ = {
@@ -347,6 +457,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		63BBA1E8910D591CDFB2D191 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				84C444AA5EE3BAB765CF74DE /* NotificationService.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		96282DF0BEE17285BD2E6FF8 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -366,6 +484,15 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		D02BD81036B39770ED755758 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = NottiExampleNotificationService;
+			target = 001D937A4F733C1022EA065F /* NottiExampleNotificationService */;
+			targetProxy = E75AE613590B04C3EE0ABC75 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		13B07F941A680F5B00A75B9A /* Debug */ = {
@@ -427,6 +554,23 @@
 				VERSIONING_SYSTEM = "apple-generic";
 			};
 			name = Release;
+		};
+		180EBE732086F9F28F6770A4 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = B689BCF641ACCAC13F04C7E0 /* Pods-NottiExampleNotificationService.debug.xcconfig */;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_FILE = NottiExampleNotificationService/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
+				PRODUCT_BUNDLE_IDENTIFIER = notti.example.NotificationService;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
 		};
 		83CBBA201A601CBA00E9B192 /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -586,6 +730,24 @@
 			};
 			name = Release;
 		};
+		84D3CE624D87413CBDCCD4AE /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = C58A3A3D9EBEB1343113FEAF /* Pods-NottiExampleNotificationService.release.xcconfig */;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_FILE = NottiExampleNotificationService/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
+				PRODUCT_BUNDLE_IDENTIFIER = notti.example.NotificationService;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
 		A259EC61D4B65DDAB14D0A84 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -646,6 +808,15 @@
 			buildConfigurations = (
 				83CBBA201A601CBA00E9B192 /* Debug */,
 				83CBBA211A601CBA00E9B192 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B67E1C80CCA5C30F69DE7AB1 /* Build configuration list for PBXNativeTarget "NottiExampleNotificationService" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				84D3CE624D87413CBDCCD4AE /* Release */,
+				180EBE732086F9F28F6770A4 /* Debug */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

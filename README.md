@@ -18,6 +18,7 @@ Notti is self-hosted or SaaS per deployment. By default `initialize` targets Not
 - [Usage](#usage)
 - [API reference](#api-reference)
 - [Bare React Native setup](#bare-react-native-setup)
+- [Rich push notifications (iOS)](#rich-push-notifications-ios)
 - [Forwarding events manually](#forwarding-events-manually)
 - [Expo setup](#expo-setup)
 - [Manual smoke testing](#manual-smoke-testing)
@@ -37,6 +38,7 @@ Notti is self-hosted or SaaS per deployment. By default `initialize` targets Not
 - 🧩 **Turbo Module (New Architecture)** — thin TypeScript facade over native Kotlin/Swift; works even if the JS thread isn't running yet.
 - ⚙️ **Expo config plugin included** — works in bare React Native and Expo (dev client/prebuild) with no extra native-config package.
 - 🔁 **Safe by default** — mutations (tags, subscription, login) are serialized client-side; retried with exponential backoff on transient failure.
+- 🖼️ **Rich push (iOS)** — image/video/audio attachments via a Notification Service Extension helper, same setup model as OneSignal's.
 
 ## Requirements
 
@@ -211,6 +213,50 @@ The library's own manifest already registers its `FirebaseMessagingService` and 
    ```
 
 Without this forwarding, the device token never reaches the SDK and `notificationReceived`/`notificationClicked` never fire — `initialize()` still registers the device (with a `subscribed: false` state) but push delivery won't complete until the callbacks are wired.
+
+## Rich push notifications (iOS)
+
+Attaching an image/video/audio to a push on iOS requires a [`Notification Service Extension`](https://developer.apple.com/documentation/usernotifications/unnotificationserviceextension) (NSE) — a separate, sandboxed app-extension target Apple requires for downloading and attaching media before the notification is shown. This is not something a Turbo Module can inject into your Xcode project automatically; like OneSignal, Notti ships the attachment logic as a small helper you wire into a target you create yourself (see `docs/adr/002-ios-rich-push-via-notification-service-extension-subspec.md` for the full rationale).
+
+1. In Xcode: **File > New > Target… > Notification Service Extension**. Name it (e.g. `NotificationService`), same deployment target as your app, "Don't Activate" when prompted.
+2. Add it to your **Podfile** in its own target — never alongside your app's main target, since the extension never runs the RN runtime:
+
+   ```ruby
+   target 'NotificationService' do
+     pod 'Notti/NotificationServiceExtension', :path => '../node_modules/react-native-notti'
+   end
+   ```
+
+   Run `pod install` after adding it.
+3. Replace the generated `NotificationService.swift` body with a one-line forwarding call into the helper:
+
+   ```swift
+   import UserNotifications
+   import Notti
+
+   class NotificationService: UNNotificationServiceExtension {
+     var contentHandler: ((UNNotificationContent) -> Void)?
+     var bestAttemptContent: UNMutableNotificationContent?
+
+     override func didReceive(
+       _ request: UNNotificationRequest,
+       withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void
+     ) {
+       self.contentHandler = contentHandler
+       bestAttemptContent = request.content.mutableCopy() as? UNMutableNotificationContent
+       NottiNotificationServiceExtension.didReceive(request, withContentHandler: contentHandler)
+     }
+
+     override func serviceExtensionTimeWillExpire() {
+       guard let contentHandler, let bestAttemptContent else { return }
+       contentHandler(bestAttemptContent)
+     }
+   }
+   ```
+
+Payload contract: the Notti backend sets `"image"` (a URL string, sibling of `aps`) together with `aps.mutable-content: 1` whenever a push carries an attachment. If either is missing, the helper calls `contentHandler` with the original (attachment-less) content — same fallback OneSignal itself documents.
+
+Known constraints (Apple platform limits, not Notti-specific): APNs payloads are capped at 4KB; the extension has roughly 30s to finish before the OS falls back to the plain notification; a Notification Service Extension **does not run in the iOS Simulator** since Xcode 11.4 — test rich push on a physical device.
 
 ## Forwarding events manually
 
