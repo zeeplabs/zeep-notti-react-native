@@ -14,31 +14,79 @@ import UserNotifications
 /// forwarding call, mirroring `OneSignalExtension.didReceiveNotificationExtensionRequest`:
 ///
 /// ```swift
-/// override func didReceive(
-///   _ request: UNNotificationRequest,
-///   withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void
-/// ) {
-///   NottiNotificationServiceExtension.didReceive(request, withContentHandler: contentHandler)
-/// }
+/// @objc(NotificationService)
+/// class NotificationService: UNNotificationServiceExtension {
+///   var contentHandler: ((UNNotificationContent) -> Void)?
+///   var bestAttemptContent: UNMutableNotificationContent?
 ///
-/// override func serviceExtensionTimeWillExpire() {
-///   NottiNotificationServiceExtension.serviceExtensionTimeWillExpire(
-///     for: bestAttemptContent, withContentHandler: contentHandler
-///   )
+///   override func didReceive(
+///     _ request: UNNotificationRequest,
+///     withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void
+///   ) {
+///     self.contentHandler = contentHandler
+///     bestAttemptContent = (request.content.mutableCopy() as? UNMutableNotificationContent)
+///     NottiNotificationServiceExtension.didReceive(request, withContentHandler: contentHandler)
+///   }
+///
+///   override func serviceExtensionTimeWillExpire() {
+///     guard let contentHandler else { return }
+///     NottiNotificationServiceExtension.serviceExtensionTimeWillExpire(
+///       for: bestAttemptContent, contentHandler: contentHandler
+///     )
+///   }
 /// }
 /// ```
+///
+/// The `@objc(NotificationService)` on the class is required, not decorative:
+/// `Info.plist`'s `NSExtensionPrincipalClass` addresses the class by string
+/// name (`NSClassFromString`), and without an explicit Objective-C name a
+/// pure-Swift class is name-mangled — the OS silently fails to instantiate
+/// the extension at notification-delivery time. The build still succeeds and
+/// the Simulator can't catch this at all (NSE never runs there); this exact
+/// bug shipped once already and was only caught by manual runtime inspection,
+/// not by `xcodebuild build` (see docs/adr/002-...md).
 public final class NottiNotificationServiceExtension {
 
   /// Payload key the Notti backend sets alongside `mutable-content: 1` when a
-  /// push carries a rich attachment. Sibling of `aps`, same convention as the
-  /// integrator's own custom `data` fields (see ADR-002).
-  private static let attachmentURLKey = "image"
+  /// push carries a rich attachment. Namespaced (not a bare `image`) so it
+  /// can never collide with an integrator's own custom `data` field of the
+  /// same name, and is filtered out of `payload.data` on the JS side exactly
+  /// like `mutable-content` already is (see `NottiNotificationParsing.swift`'s
+  /// `internalKeys`) — see ADR-002.
+  private static let attachmentURLKey = "notti_image_url"
+
+  /// Only `https` is accepted. Without this, a malicious or malformed push
+  /// payload could point the extension at a `file://` URL already resident
+  /// in the extension's sandbox, or plain `http://`, exfiltrating it as a
+  /// notification attachment or serving unencrypted content — found in
+  /// pre-release review by pointing this at `file:///etc/hosts` and
+  /// observing it succeed.
+  private static let allowedSchemes: Set<String> = ["https"]
+
+  /// Per-request timeout, comfortably under the NSE's real OS-enforced
+  /// budget (~30s) so a slow/stalled download still leaves time for the
+  /// content handler to be called with *something* before the extension is
+  /// killed. `URLSession.shared`'s default (60s) does not: the NSE is killed
+  /// mid-request with no attachment and no fallback ever invoked. Same
+  /// reasoning as `NottiApiClient.swift`'s `requestTimeoutSeconds`.
+  private static let downloadTimeoutSeconds: TimeInterval = 20
 
   private init() {}
 
+  /// - Parameters:
+  ///   - session: injectable so tests can swap in a `StubURLProtocol`-backed
+  ///     session instead of hitting the network (`URLSession.shared` is not
+  ///     mockable in-process). Defaults to `.shared` for production callers.
+  ///   - logger: every failure path below used to fail completely silently
+  ///     (found in pre-release review) — a downed CDN or a bad payload gave
+  ///     no signal at all, on a process nobody attaches a debugger to in
+  ///     production. Defaults to `NSLog` (the only sink guaranteed to reach
+  ///     the system log from an app-extension process without extra setup).
   public static func didReceive(
     _ request: UNNotificationRequest,
-    withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void
+    withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void,
+    session: URLSession = .shared,
+    logger: @escaping (String) -> Void = { message in NSLog("Notti NSE: %@", message) }
   ) {
     guard let content = request.content.mutableCopy() as? UNMutableNotificationContent else {
       contentHandler(request.content)
@@ -47,13 +95,18 @@ public final class NottiNotificationServiceExtension {
 
     guard
       let urlString = request.content.userInfo[attachmentURLKey] as? String,
-      let url = URL(string: urlString)
+      let url = URL(string: urlString),
+      let scheme = url.scheme?.lowercased(),
+      allowedSchemes.contains(scheme)
     else {
+      if request.content.userInfo[attachmentURLKey] != nil {
+        logger("ignoring \(attachmentURLKey): missing, malformed, or non-https URL")
+      }
       contentHandler(content)
       return
     }
 
-    downloadAttachment(from: url) { attachment in
+    downloadAttachment(from: url, session: session, logger: logger) { attachment in
       if let attachment {
         content.attachments = [attachment]
       }
@@ -65,19 +118,50 @@ public final class NottiNotificationServiceExtension {
   /// handler before the ~30s NSE budget runs out. Must present *something* —
   /// falling back to the original (attachment-less) content is the documented
   /// pattern, same as OneSignal's `bestAttemptContent` fallback.
+  ///
+  /// Takes `UNNotificationContent` (not `UNNotificationRequest`, as an
+  /// earlier revision of this method incorrectly did — B2, found in
+  /// pre-release review): Apple's own `UNNotificationServiceExtension`
+  /// template stores `bestAttemptContent: UNMutableNotificationContent?`,
+  /// never the original request, so a `request`-typed parameter here could
+  /// never actually be called from real integrator code — the previous
+  /// signature was undiscovered dead API, and the SDK's own doc-comment
+  /// example calling it didn't compile.
   public static func serviceExtensionTimeWillExpire(
-    for request: UNNotificationRequest,
+    for content: UNNotificationContent?,
     contentHandler: @escaping (UNNotificationContent) -> Void
   ) {
-    contentHandler(request.content)
+    guard let content else { return }
+    contentHandler(content)
   }
 
   private static func downloadAttachment(
     from url: URL,
+    session: URLSession,
+    logger: @escaping (String) -> Void,
     completion: @escaping (UNNotificationAttachment?) -> Void
   ) {
-    let task = URLSession.shared.downloadTask(with: url) { location, response, error in
-      guard let location, error == nil else {
+    var request = URLRequest(url: url, timeoutInterval: downloadTimeoutSeconds)
+    request.httpMethod = "GET"
+
+    let task = session.downloadTask(with: request) { location, response, error in
+      if let error {
+        logger("download failed: \(error.localizedDescription)")
+        completion(nil)
+        return
+      }
+      guard let location else {
+        logger("download failed: no local file produced")
+        completion(nil)
+        return
+      }
+      guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+        let status = (response as? HTTPURLResponse)?.statusCode
+        logger("download failed: HTTP \(status.map(String.init) ?? "unknown") - not treating error body as an attachment")
+        // The OS-managed temp file at `location` is normally cleaned up once
+        // this completion handler returns, but doing it explicitly avoids
+        // depending on that undocumented behavior.
+        try? FileManager.default.removeItem(at: location)
         completion(nil)
         return
       }
@@ -88,11 +172,25 @@ public final class NottiNotificationServiceExtension {
 
       do {
         try FileManager.default.moveItem(at: location, to: destinationURL)
+      } catch {
+        logger("could not move downloaded file into place: \(error.localizedDescription)")
+        try? FileManager.default.removeItem(at: location)
+        completion(nil)
+        return
+      }
+
+      do {
         let attachment = try UNNotificationAttachment(
           identifier: UUID().uuidString, url: destinationURL, options: nil
         )
         completion(attachment)
       } catch {
+        // `UNNotificationAttachment`'s init failing (unsupported UTType,
+        // file too large) used to leave `destinationURL` orphaned in the
+        // extension's temp directory on every such failure (found in
+        // pre-release review, I4) - cleaned up here instead.
+        logger("UNNotificationAttachment init failed: \(error.localizedDescription)")
+        try? FileManager.default.removeItem(at: destinationURL)
         completion(nil)
       }
     }

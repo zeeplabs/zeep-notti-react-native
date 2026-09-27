@@ -156,10 +156,19 @@ public class NottiCore {
         // thread. The callback fires first so the JS Promise resolves as
         // soon as the user answered, instead of waiting out a possibly
         // minutes-long retry cycle on a dead network.
+        //
+        // A4 (found in pre-release review): that Promise reports the OS
+        // *dialog* result, not whether the backend actually persisted it - a
+        // failed PATCH here used to fail completely silently, with nothing
+        // logged and no reconciliation path (the foreground retry only
+        // covers registration, never mutations). Changing the Promise to
+        // depend on the PATCH outcome would be a breaking API change;
+        // logging the failure is the fix that fits this pass without that
+        // risk.
         self.onWorkQueue {
           callback(granted)
           self.performOrQueue(client, description: "permission-result subscription update") { [weak self] client, deviceId, token in
-            self?.patchSubscribed(client, deviceId: deviceId, token: token, granted)
+            self?.patchSubscribed(client, deviceId: deviceId, token: token, granted, logContext: "requestPermission")
           }
         }
       }
@@ -175,7 +184,12 @@ public class NottiCore {
           token: token,
           fields: ["external_user_id": externalUserId]
         )
-        if case .success = result { self?.deviceStore.setExternalUserId(externalUserId) }
+        switch result {
+        case .success:
+          self?.deviceStore.setExternalUserId(externalUserId)
+        case .failure(let message):
+          self?.logger("Notti.login: PATCH failed (\(message)) - not retried")
+        }
       }
     }
   }
@@ -192,7 +206,7 @@ public class NottiCore {
     workQueue.async { [weak self] in
       guard let self = self, let client = self.apiClient else { return }
       self.performOrQueue(client, description: "setSubscription") { [weak self] client, deviceId, token in
-        self?.patchSubscribed(client, deviceId: deviceId, token: token, enabled)
+        self?.patchSubscribed(client, deviceId: deviceId, token: token, enabled, logContext: "setSubscription")
       }
     }
   }
@@ -212,8 +226,11 @@ public class NottiCore {
         // whatever tags the registration response seeded.
         let merged = NottiDeviceStore.mergeTags(self.deviceStore.getTags(), add: add, remove: remove)
         let result = client.patchDevice(deviceId: deviceId, token: token, fields: ["tags": merged])
-        if case .success(let response) = result {
+        switch result {
+        case .success(let response):
           self.deviceStore.setTags(response.tags)
+        case .failure(let message):
+          self.logger("Notti.mutateTags: PATCH failed (\(message)) - not retried")
         }
       }
     }
@@ -403,9 +420,15 @@ public class NottiCore {
     _ client: NottiApiClient,
     deviceId: String,
     token: String,
-    _ subscribed: Bool
+    _ subscribed: Bool,
+    logContext: String
   ) {
     let result = client.patchDevice(deviceId: deviceId, token: token, fields: ["subscribed": subscribed])
-    if case .success = result { deviceStore.setSubscribed(subscribed) }
+    switch result {
+    case .success:
+      deviceStore.setSubscribed(subscribed)
+    case .failure(let message):
+      logger("Notti.\(logContext): PATCH failed (\(message)) - not retried")
+    }
   }
 }

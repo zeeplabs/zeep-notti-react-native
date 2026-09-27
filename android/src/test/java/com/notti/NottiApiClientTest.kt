@@ -114,6 +114,42 @@ class NottiApiClientTest {
   }
 
   @Test
+  fun `patchDevice ack with an id but no tags key preserves the caller's own tags (A3)`() {
+    // A real device object missing only "tags" - distinct from the
+    // ok-true/empty-body cases above, which have no "id" at all and hit the
+    // DeviceResponse(deviceId, fallbackTags) fallback below parseDeviceResponse
+    // entirely. This body parses successfully (valid "id"), so before the A3
+    // fix it reported tags = emptyMap() and the caller wiped its local cache
+    // on a PATCH that never touched tags.
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1"}"""))
+
+    val result = client.patchDevice(
+      deviceId = "device-1",
+      token = "fcm-token",
+      fields = mapOf("subscribed" to true, "tags" to mapOf("plan" to "vip"))
+    )
+
+    assertTrue("expected a Success, got $result", result is ApiResult.Success)
+    assertEquals(mapOf("plan" to "vip"), (result as ApiResult.Success).response.tags)
+  }
+
+  @Test
+  fun `patchDevice ack with an explicit empty tags object clears the cache`() {
+    // Unlike an absent "tags" key above, an explicit "{}" is the server's
+    // authoritative answer and must be honored, not treated as "no info".
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+
+    val result = client.patchDevice(
+      deviceId = "device-1",
+      token = "fcm-token",
+      fields = mapOf("tags" to mapOf("plan" to "vip"))
+    )
+
+    assertTrue("expected a Success, got $result", result is ApiResult.Success)
+    assertEquals(emptyMap<String, String>(), (result as ApiResult.Success).response.tags)
+  }
+
+  @Test
   fun `patchDevice succeeds on a bare ok-true body`() {
     server.enqueue(MockResponse().setResponseCode(200).setBody("""{"ok":true}"""))
 

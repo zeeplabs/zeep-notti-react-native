@@ -26,12 +26,17 @@ const withNottiAndroid: ConfigPlugin = (config) => {
 export type NottiPluginProps = {
   /**
    * `aps-environment` entitlement value. Defaults to inferring from
-   * `EAS_BUILD_PROFILE` (EAS Build sets this env var during `eas build`;
-   * any profile other than `development` is treated as `production`).
-   * Builds run outside EAS (a local/manual `expo prebuild` + Xcode archive)
-   * have no such signal, so pass this explicitly for those release builds -
-   * otherwise the entitlement silently defaults to the sandbox APNs
-   * environment and production push does not work.
+   * `EAS_BUILD_PROFILE` (EAS Build sets this env var during `eas build`):
+   * only the literal `production` profile gets the production entitlement,
+   * every other value (`preview`, `staging`, `simulator`, `development`, or
+   * unset) gets `development`. Deliberately default-safe (A7, found in
+   * pre-release review): the previous logic treated anything *other than*
+   * `development` as production, so common non-development EAS profiles
+   * (`preview`, `staging`) - usually built with a dev client and a sandbox
+   * APNs token - silently received the production entitlement, and push
+   * stopped working with no build error at all. Builds run outside EAS (a
+   * local/manual `expo prebuild` + Xcode archive) have no such signal, so
+   * pass this explicitly for those release builds.
    */
   apsEnvironment?: 'development' | 'production';
 };
@@ -48,8 +53,7 @@ const withNottiIOS: ConfigPlugin<NottiPluginProps | undefined> = (
 ) => {
   const apsEnvironment =
     props?.apsEnvironment ??
-    (process.env.EAS_BUILD_PROFILE &&
-    process.env.EAS_BUILD_PROFILE !== 'development'
+    (process.env.EAS_BUILD_PROFILE === 'production'
       ? 'production'
       : 'development');
 

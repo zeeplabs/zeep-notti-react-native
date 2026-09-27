@@ -54,7 +54,7 @@ class NottiApiClient(
     // Registration is the one call that *depends* on the response body: the
     // `id` it returns is the resource every later PATCH is addressed to, so a
     // 2xx without a device object is not a usable success.
-    return executeWithRetry(request) { bodyString -> parseDeviceResponse(bodyString) }
+    return executeWithRetry(request) { bodyString -> parseDeviceResponse(bodyString, fallbackTags = null) }
   }
 
   /** PATCH always includes the cached `token` field (AD-009 ownership proof). */
@@ -81,7 +81,7 @@ class NottiApiClient(
     @Suppress("UNCHECKED_CAST")
     val fallbackTags = fields["tags"] as? Map<String, String> ?: emptyMap()
     return executeWithRetry(request) { bodyString ->
-      parseDeviceResponse(bodyString) ?: DeviceResponse(id = deviceId, tags = fallbackTags)
+      parseDeviceResponse(bodyString, fallbackTags = fallbackTags) ?: DeviceResponse(id = deviceId, tags = fallbackTags)
     }
   }
 
@@ -180,8 +180,19 @@ class NottiApiClient(
    * at `.../devices/` (or a fabricated id) with no way to recover - the
    * foreground retry only re-arms on a FAILED registration. Same rule as iOS'
    * `parseDeviceResponse` (`ios/NottiApiClient.swift`).
+   *
+   * `fallbackTags`, when non-null, is what the caller optimistically applied
+   * to the PATCH about to be acknowledged. A PATCH ack is allowed to omit
+   * `tags` entirely (a REST backend answering `204 No Content` or a bare
+   * `{"id":"dev_1"}` per the comment above `patchDevice`) - treating that
+   * absence the same as an explicit `"tags":{}` silently wiped the local tag
+   * cache on every such ack, on a call that never touched tags at all (found
+   * by pre-release review, A3). Only a `tags` key that is actually present
+   * *and* a JSON object is treated as the server's authoritative answer,
+   * including an explicit `{}` clearing everything; absent, `null`, or a
+   * malformed value all fall back to what was just applied.
    */
-  private fun parseDeviceResponse(bodyString: String): DeviceResponse? {
+  private fun parseDeviceResponse(bodyString: String, fallbackTags: Map<String, String>?): DeviceResponse? {
     val json = try {
       JSONObject(bodyString)
     } catch (e: JSONException) {
@@ -191,24 +202,21 @@ class NottiApiClient(
     if (id.isNullOrBlank()) {
       return null
     }
-    // `optJSONObject` rather than `has` + `getJSONObject`: `has("tags")` is
-    // true for `"tags": null` (AOSP stores JSONObject.NULL there) and
-    // `getJSONObject` then throws, which since 9c685e9 fails the whole
-    // registration terminally. A nil `map[string]string` in Go serializes to
-    // exactly that, so a legitimate "device has no tags" response could park
-    // registration - and every queued mutation - forever. Absent, null and
-    // non-object all mean "no tags", matching iOS' `as? [String: String] ?? [:]`.
     // `opt(key) as? String` rather than `getString(key)`: a non-string tag
     // value (a stray number/bool/object from a misbehaving backend) used to
     // throw JSONException, which the caller above catches and turns into a
     // whole-registration failure over one bad tag. Skipping just that key
     // matches iOS' per-value tolerance (see NottiApiClient.swift's
     // parseDeviceResponse) instead of discarding the entire response.
-    val tags = mutableMapOf<String, String>()
-    json.optJSONObject("tags")?.let { tagsJson ->
-      tagsJson.keys().forEach { key ->
-        (tagsJson.opt(key) as? String)?.let { value -> tags[key] = value }
+    val rawTags = json.optJSONObject("tags")
+    val tags = if (rawTags != null) {
+      mutableMapOf<String, String>().also { tags ->
+        rawTags.keys().forEach { key ->
+          (rawTags.opt(key) as? String)?.let { value -> tags[key] = value }
+        }
       }
+    } else {
+      fallbackTags ?: emptyMap()
     }
     return DeviceResponse(id = id, tags = tags)
   }

@@ -270,6 +270,31 @@ final class NottiApiClientTests: XCTestCase {
     XCTAssertEqual(response.tags, ["plan": "gold"], "the server's view of the tags wins over the sent one")
   }
 
+  /// A3 (found in pre-release review): a real device object (valid "id")
+  /// that simply omits "tags" entirely used to be parsed as tags = [:],
+  /// wiping the local cache on a PATCH that never touched tags at all -
+  /// distinct from `test_patchAcknowledgedWithNoBodyReportsBackTheTagsItJustSent`
+  /// above, which has no "id" and never reaches this parse path at all.
+  func test_patchAckWithIdButNoTagsKeyPreservesTheCallersOwnTags() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1"}"#))
+
+    let result = client.patchDevice(deviceId: "device-1", token: "t", fields: ["tags": ["plan": "vip"]])
+
+    guard case .success(let response) = result else { return XCTFail("expected success") }
+    XCTAssertEqual(response.tags, ["plan": "vip"])
+  }
+
+  /// Unlike an absent "tags" key above, an explicit "{}" is the server's
+  /// authoritative answer and must be honored, not treated as "no info".
+  func test_patchAckWithExplicitEmptyTagsClearsTheCache() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
+
+    let result = client.patchDevice(deviceId: "device-1", token: "t", fields: ["tags": ["plan": "vip"]])
+
+    guard case .success(let response) = result else { return XCTFail("expected success") }
+    XCTAssertEqual(response.tags, [:])
+  }
+
   func test_patchStillTreatsA4xxAsTerminalAndA5xxAsRetriable() {
     StubURLProtocol.enqueue(.status(403))
     guard case .failure = client.patchDevice(deviceId: "device-1", token: "t", fields: [:]) else {

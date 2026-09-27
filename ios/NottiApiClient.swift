@@ -102,13 +102,14 @@ public class NottiApiClient {
     // Registration is the one call that *depends* on the response body: the
     // `id` it returns is the resource every later PATCH is addressed to, so a
     // 2xx without a device object is not a usable success.
-    return executeWithRetry(request, parseSuccess: parseDeviceResponse)
+    return executeWithRetry(request) { data in self.parseDeviceResponse(data, fallbackTags: nil) }
   }
 
   /// PATCH always includes the cached `token` field (AD-009 ownership proof).
   public func patchDevice(deviceId: String, token: String, fields: [String: Any]) -> ApiResult {
     var json = fields
     json["token"] = token
+    let fallbackTags = (fields["tags"] as? [String: String]) ?? [:]
 
     guard let url = URL(string: "\(baseUrl)/v1/apps/\(appId)/devices/\(deviceId)") else {
       return .failure("invalid device-update URL built from the configured baseUrl")
@@ -128,8 +129,8 @@ public class NottiApiClient {
     // used when it happens to carry a device object, and otherwise the request
     // itself is the source of truth.
     return executeWithRetry(request) { [weak self] data in
-      if let device = self?.parseDeviceResponse(data) { return device }
-      return DeviceResponse(id: deviceId, tags: (fields["tags"] as? [String: String]) ?? [:])
+      if let device = self?.parseDeviceResponse(data, fallbackTags: fallbackTags) { return device }
+      return DeviceResponse(id: deviceId, tags: fallbackTags)
     }
   }
 
@@ -206,7 +207,19 @@ public class NottiApiClient {
   /// Returns nil when the body is not a device object — no JSON, no `id`, or
   /// an empty `id`. Callers must treat nil as a failed request rather than
   /// substituting an empty `DeviceResponse`.
-  private func parseDeviceResponse(_ data: Data) -> DeviceResponse? {
+  ///
+  /// `fallbackTags`, when non-nil, is what the caller optimistically applied
+  /// to the PATCH about to be acknowledged. A PATCH ack is allowed to omit
+  /// `tags` entirely (a REST backend answering `204 No Content` or a bare
+  /// `{"id":"dev_1"}` per the comment above `patchDevice`) - treating that
+  /// absence the same as an explicit `"tags":{}` silently wiped the local tag
+  /// cache on every such ack, on a call that never touched tags at all (found
+  /// by pre-release review, A3). Only a `tags` key that is actually present
+  /// *and* a JSON object is treated as the server's authoritative answer,
+  /// including an explicit `{}` clearing everything; absent, null, or a
+  /// malformed value all fall back to what was just applied. Matches
+  /// Android's `NottiApiClient.kt`'s `parseDeviceResponse`.
+  private func parseDeviceResponse(_ data: Data, fallbackTags: [String: String]?) -> DeviceResponse? {
     guard
       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
       let id = json["id"] as? String,
@@ -218,7 +231,12 @@ public class NottiApiClient {
     // cast fails the ENTIRE dictionary if even one value isn't a string,
     // silently dropping every valid tag over one bad value. Matches Android's
     // per-key tolerance (see NottiApiClient.kt's parseDeviceResponse).
-    let tags = (json["tags"] as? [String: Any])?.compactMapValues { $0 as? String } ?? [:]
+    let tags: [String: String]
+    if let rawTags = json["tags"] as? [String: Any] {
+      tags = rawTags.compactMapValues { $0 as? String }
+    } else {
+      tags = fallbackTags ?? [:]
+    }
     return DeviceResponse(id: id, tags: tags)
   }
 }

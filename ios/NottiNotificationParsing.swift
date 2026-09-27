@@ -51,6 +51,10 @@ private let internalKeyPrefixes = ["gcm.", "google.", "aps."]
 private let internalKeys: Set<String> = [
   "aps", "from", "collapse_key", "fcm_options", "content-available",
   "mutable-content", "content_available", "mutable_content",
+  // Rich-push attachment URL (ADR-002): sibling of `aps`, consumed by the
+  // NotificationServiceExtension subspec before JS ever sees the payload -
+  // never a real piece of the integrator's own custom data.
+  "notti_image_url",
 ]
 
 private func isInternalTransportKey(_ key: String) -> Bool {

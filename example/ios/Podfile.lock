@@ -39,6 +39,7 @@ PODS:
     - ReactNativeDependencies
     - Yoga
   - Notti/NotificationServiceExtension (0.3.0)
+  - Notti/NotificationServiceExtension/Tests (0.3.0)
   - RCT-Folly (2024.11.18.00):
     - RCT-Folly/Default (= 2024.11.18.00)
     - ReactNativeDependencies
@@ -1644,6 +1645,7 @@ DEPENDENCIES:
   - hermes-engine (from `../node_modules/react-native/sdks/hermes-engine/hermes-engine.podspec`)
   - Notti (from `../..`)
   - Notti/NotificationServiceExtension (from `../..`)
+  - Notti/NotificationServiceExtension/Tests (from `../..`)
   - RCT-Folly (from `build/rndeps-facades/RCT-Folly`)
   - RCTDeprecation (from `build/rncore-facades/RCTDeprecation`)
   - RCTRequired (from `build/rncore-facades/RCTRequired`)
@@ -1907,7 +1909,7 @@ SPEC CHECKSUMS:
   fmt: ba0886e864ebb21d14c98b2e12e164b8002f5b93
   glog: 3cf7cb46f743c4bc758ae3e6d9c15bd1b4cfd6d4
   hermes-engine: 35975068890c71d4609534b47111140882468c3a
-  Notti: 91b491ac0f6d1aa8123c94bbc8e0ddc9c5248afd
+  Notti: 8c3e43c312ad4df4e7527c74959b8692c224cce9
   RCT-Folly: 82921e585c0400eda46fac1068297aa9dfb035e4
   RCTDeprecation: 5cc865306ce4974b7a57ddbc575fd1f3fef41957
   RCTRequired: ea6f2c41f2670961ce9a48a4bf17a190dd53e493

@@ -35,6 +35,21 @@ Pod::Spec.new do |s|
   # main target. See docs/adr/002-....md.
   s.subspec "NotificationServiceExtension" do |nse|
     nse.source_files = "ios/NotificationServiceExtension/**/*.swift"
+    nse.exclude_files = ["ios/NotificationServiceExtension/Tests/**/*"]
     nse.frameworks = "UserNotifications"
+
+    # Real, injectable-`URLSession` coverage for the helper (B3, found
+    # missing in pre-release review). `StubURLProtocol` is compiled directly
+    # into this test target from `ios/Tests/` rather than imported: it lives
+    # in the Core subspec's separate module, which this subspec must never
+    # depend on (see the module-note above `Core`). No app host needed - the
+    # helper is a plain Swift/Foundation/UserNotifications logic unit.
+    nse.test_spec "Tests" do |test|
+      test.source_files = [
+        "ios/NotificationServiceExtension/Tests/**/*.swift",
+        "ios/Tests/StubURLProtocol.swift",
+      ]
+      test.requires_app_host = false
+    end
   end
 end

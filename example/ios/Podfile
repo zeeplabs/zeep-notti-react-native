@@ -36,5 +36,5 @@ end
 # Real integration target for docs/adr/002-...md — never add React/RN pods
 # here, the extension process doesn't run the RN runtime.
 target 'NottiExampleNotificationService' do
-  pod 'Notti/NotificationServiceExtension', :path => '../..'
+  pod 'Notti/NotificationServiceExtension', :path => '../..', :testspecs => ['Tests']
 end

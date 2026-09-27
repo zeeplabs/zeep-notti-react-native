@@ -218,6 +218,10 @@ Without this forwarding, the device token never reaches the SDK and `notificatio
 
 Attaching an image/video/audio to a push on iOS requires a [`Notification Service Extension`](https://developer.apple.com/documentation/usernotifications/unnotificationserviceextension) (NSE) — a separate, sandboxed app-extension target Apple requires for downloading and attaching media before the notification is shown. This is not something a Turbo Module can inject into your Xcode project automatically; like OneSignal, Notti ships the attachment logic as a small helper you wire into a target you create yourself (see `docs/adr/002-ios-rich-push-via-notification-service-extension-subspec.md` for the full rationale).
 
+> **Not supported in an Expo managed workflow.** This setup requires manually creating and configuring a native Xcode target (steps 1–3 below); there is no Expo config plugin for it, and running `expo prebuild` regenerates `ios/` from scratch, destroying a manually-added target. Bare React Native (or an Expo app that has already ejected) only.
+
+> **Requires `@objc(NotificationService)` on your extension's class.** `Info.plist`'s `NSExtensionPrincipalClass` addresses your class by string name at runtime (`NSClassFromString`); without an explicit Objective-C name, a plain Swift class name is mangled and the OS silently fails to instantiate the extension — it never runs, with no error anywhere, and the Simulator can't catch this either (NSE doesn't run there at all). The snippet below includes it — don't drop it.
+
 1. In Xcode: **File > New > Target… > Notification Service Extension**. Name it (e.g. `NotificationService`), same deployment target as your app, "Don't Activate" when prompted.
 2. Add it to your **Podfile** in its own target — never alongside your app's main target, since the extension never runs the RN runtime:
 
@@ -234,6 +238,7 @@ Attaching an image/video/audio to a push on iOS requires a [`Notification Servic
    import UserNotifications
    import Notti
 
+   @objc(NotificationService)
    class NotificationService: UNNotificationServiceExtension {
      var contentHandler: ((UNNotificationContent) -> Void)?
      var bestAttemptContent: UNMutableNotificationContent?
@@ -248,13 +253,15 @@ Attaching an image/video/audio to a push on iOS requires a [`Notification Servic
      }
 
      override func serviceExtensionTimeWillExpire() {
-       guard let contentHandler, let bestAttemptContent else { return }
-       contentHandler(bestAttemptContent)
+       guard let contentHandler else { return }
+       NottiNotificationServiceExtension.serviceExtensionTimeWillExpire(
+         for: bestAttemptContent, contentHandler: contentHandler
+       )
      }
    }
    ```
 
-Payload contract: the Notti backend sets `"image"` (a URL string, sibling of `aps`) together with `aps.mutable-content: 1` whenever a push carries an attachment. If either is missing, the helper calls `contentHandler` with the original (attachment-less) content — same fallback OneSignal itself documents.
+Payload contract: the Notti backend sets `"notti_image_url"` (a URL string, sibling of `aps`) together with `aps.mutable-content: 1` whenever a push carries an attachment — namespaced so it can never collide with your own custom data field of the same name. Only `https://` URLs are honored; anything else (including `file://`/`http://`) is ignored. If the key is missing, malformed, or times out (~20s, under the extension's own ~30s OS budget), the helper calls `contentHandler` with the original (attachment-less) content — same fallback OneSignal itself documents.
 
 Known constraints (Apple platform limits, not Notti-specific): APNs payloads are capped at 4KB; the extension has roughly 30s to finish before the OS falls back to the plain notification; a Notification Service Extension **does not run in the iOS Simulator** since Xcode 11.4 — test rich push on a physical device.
 
@@ -336,6 +343,10 @@ pnpm typecheck && pnpm lint && pnpm test && pnpm run build:android && pnpm run b
 ## Security
 
 Found a vulnerability? Please **don't** open a public issue — see [SECURITY.md](SECURITY.md) for how to report it privately.
+
+**Device/OS backups may carry Notti's local device identity across devices.** Notti persists `device_id`, `last_token`, `external_user_id` and tags in `SharedPreferences` (Android, file `notti_prefs`) / `UserDefaults` (iOS) — both are included in a full device backup/restore by default (Android Auto Backup, iOS device backups via Finder/iCloud). Restoring that backup onto a different physical device could carry this install's identifiers onto it before Notti has re-registered in that new process, briefly aiming mutations (`login`, `addTags`, `setSubscription`) at the *donor* device's row on your backend. If your app's identifiers here are LGPD/PII-relevant, exclude them from backup:
+- **Android**: point `android:fullBackupContent`/`android:dataExtractionRules` at rules that exclude the `notti_prefs` shared-preferences file (see [Auto Backup for Apps](https://developer.android.com/guide/topics/data/autobackup)), or set `android:allowBackup="false"` app-wide if you don't otherwise rely on backup.
+- **iOS**: no code change needed if you already avoid syncing sensitive `UserDefaults` keys, but validate Notti's keys (`notti_device_id`, `notti_last_token`, `notti_external_user_id`, `notti_tags`) against your own backup/compliance review.
 
 ## Changelog
 

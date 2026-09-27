@@ -16,6 +16,7 @@ import com.google.firebase.messaging.FirebaseMessaging
 import okhttp3.OkHttpClient
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Thin TurboModule entry: every Spec method (T4) delegates one line into
@@ -38,11 +39,6 @@ class NottiModule(reactContext: ReactApplicationContext) :
    */
   private val clickEmitter: (ParsedNotification) -> Unit = { parsed ->
     emitClicked(parsed.toWritableMap())
-  }
-
-  init {
-    synchronized(NottiModule::class.java) { activeInstance = this }
-    NottiNotificationClickRelay.attach(clickEmitter)
   }
 
   /**
@@ -93,8 +89,32 @@ class NottiModule(reactContext: ReactApplicationContext) :
     }
   }
 
-  /** Non-null only once [core] has actually been constructed (it is lazy). */
+  /**
+   * Non-null only once [core] has actually been constructed (it is lazy).
+   * `@Volatile`: written on whatever thread first touches [core] (JS thread
+   * on a TurboModule call, or the FCM token-refresh thread), read from
+   * [invalidate] which can run on RN's own teardown thread - without it, the
+   * write in [core]'s lazy initializer is not guaranteed visible to
+   * [invalidate]'s read, and the `activeCore === ownCore` identity check
+   * could see a stale `null` and leave a live core wired into
+   * [activeCore] after this module is supposed to be torn down.
+   */
+  @Volatile
   private var ownCore: NottiCore? = null
+
+  // Published only once every field above is assigned (A1): this init block
+  // is deliberately the LAST thing that runs in the constructor. Publishing
+  // `activeInstance = this` any earlier - e.g. in a leading `init {}` block -
+  // would let another thread (NottiFirebaseMessagingService, or the
+  // notification-click relay, both of which can fire concurrently with
+  // construction) observe a partially-constructed instance whose `prefs`
+  // field is not yet assigned, an unsafe-publication race with no compiler
+  // guardrail (Kotlin's non-null `val` type does not insert a runtime check
+  // on field reads of a not-yet-initialized `this`).
+  init {
+    NottiNotificationClickRelay.attach(clickEmitter)
+    synchronized(NottiModule::class.java) { activeInstance = this }
+  }
 
   /**
    * RN tears a module down on context destruction and on every dev reload. The
@@ -197,6 +217,22 @@ class NottiModule(reactContext: ReactApplicationContext) :
     }
   }
 
+  /**
+   * A5 (found in pre-release review): a fixed request code let two
+   * concurrent `requestPermission()` calls collide - both `PermissionListener`s
+   * matched the same code, so whichever fired first consumed the result and
+   * silently orphaned the other's Promise forever. Each call now gets its
+   * own code so listeners can never match each other's result.
+   *
+   * Not fixed by this: if the hosting Activity is recreated while the OS
+   * permission dialog is showing (rotation, "don't keep activities"), RN's
+   * `PermissionAwareActivity` listener registry is lost with it regardless
+   * of request code, and the Promise still never resolves. Solving that
+   * requires persisting the pending callback outside the Activity's own
+   * lifecycle (e.g. a retained Fragment / `ActivityResultContracts`), which
+   * is a larger change than this pass covers - documented here rather than
+   * silently left unfixed.
+   */
   private fun requestNativePermission(callback: (Boolean) -> Unit) {
     // Below Android 13, no runtime permission exists to request (P2-AC4).
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
@@ -210,11 +246,12 @@ class NottiModule(reactContext: ReactApplicationContext) :
       return
     }
 
+    val requestCode = nextPermissionRequestCode.getAndIncrement()
     activity.requestPermissions(
       arrayOf(Manifest.permission.POST_NOTIFICATIONS),
-      PERMISSION_REQUEST_CODE,
-      PermissionListener { requestCode, _, grantResults ->
-        if (requestCode != PERMISSION_REQUEST_CODE) return@PermissionListener false
+      requestCode,
+      PermissionListener { code, _, grantResults ->
+        if (code != requestCode) return@PermissionListener false
         val granted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
         callback(granted)
         true
@@ -225,7 +262,9 @@ class NottiModule(reactContext: ReactApplicationContext) :
   companion object {
     const val NAME = NativeNottiSpec.NAME
     private const val PREFS_NAME = "notti_prefs"
-    private const val PERMISSION_REQUEST_CODE = 8420
+
+    /** See the doc-comment on [requestNativePermission] (A5). */
+    private val nextPermissionRequestCode = AtomicInteger(8420)
 
     @Volatile
     private var activeInstance: NottiModule? = null

@@ -5,6 +5,7 @@ import Notti
 /// consumer's own generated "Notification Service Extension" template
 /// becomes after wiring — a one-line forwarding call into the SDK's helper,
 /// same shape as OneSignal's `OneSignalExtension.didReceiveNotificationExtensionRequest`.
+@objc(NotificationService)
 class NotificationService: UNNotificationServiceExtension {
 
   var contentHandler: ((UNNotificationContent) -> Void)?
@@ -21,7 +22,9 @@ class NotificationService: UNNotificationServiceExtension {
   }
 
   override func serviceExtensionTimeWillExpire() {
-    guard let contentHandler, let bestAttemptContent else { return }
-    contentHandler(bestAttemptContent)
+    guard let contentHandler else { return }
+    NottiNotificationServiceExtension.serviceExtensionTimeWillExpire(
+      for: bestAttemptContent, contentHandler: contentHandler
+    )
   }
 }

@@ -256,9 +256,24 @@ class NottiCore(
     // The OS prompt must be triggered from the caller's (UI-capable) thread -
     // only the resulting PATCH is handed to the executor.
     permissionRequester { granted ->
+      // A4 (found in pre-release review): `callback(granted)` below reports
+      // the OS *dialog* result, not whether the backend actually persisted
+      // it - a failed PATCH here (4xx, or backoff exhausted) used to fail
+      // completely silently, with nothing logged and no reconciliation path
+      // (the foreground retry only covers *registration*, never mutations).
+      // Changing the Promise to depend on the PATCH outcome would be a
+      // breaking API change (it currently resolves as soon as the user
+      // answers the OS prompt, without waiting on network); logging the
+      // failure is the fix that fits this pass without that risk.
       mutate("requestPermission") { client, deviceId, token ->
         val result = client.patchDevice(deviceId, token, mapOf("subscribed" to granted))
-        if (result is ApiResult.Success) deviceStore.setSubscribed(granted)
+        when (result) {
+          is ApiResult.Success -> deviceStore.setSubscribed(granted)
+          is ApiResult.Failure -> logger(
+            "Notti.requestPermission: backend PATCH failed after the user answered the OS prompt " +
+              "(${result.message}) - local state now disagrees with the server and is not retried"
+          )
+        }
       }
       callback(granted)
     }
@@ -267,7 +282,10 @@ class NottiCore(
   fun login(externalUserId: String) {
     mutate("login") { client, deviceId, token ->
       val result = client.patchDevice(deviceId, token, mapOf("external_user_id" to externalUserId))
-      if (result is ApiResult.Success) deviceStore.setExternalUserId(externalUserId)
+      when (result) {
+        is ApiResult.Success -> deviceStore.setExternalUserId(externalUserId)
+        is ApiResult.Failure -> logger("Notti.login: PATCH failed (${result.message}) - not retried")
+      }
     }
   }
 
@@ -289,7 +307,10 @@ class NottiCore(
   fun setSubscription(enabled: Boolean) {
     mutate("setSubscription") { client, deviceId, token ->
       val result = client.patchDevice(deviceId, token, mapOf("subscribed" to enabled))
-      if (result is ApiResult.Success) deviceStore.setSubscribed(enabled)
+      when (result) {
+        is ApiResult.Success -> deviceStore.setSubscribed(enabled)
+        is ApiResult.Failure -> logger("Notti.setSubscription: PATCH failed (${result.message}) - not retried")
+      }
     }
   }
 
@@ -297,8 +318,9 @@ class NottiCore(
     mutate("mutateTags") { client, deviceId, token ->
       val merged = NottiDeviceStore.mergeTags(deviceStore.getTags(), add, remove)
       val result = client.patchDevice(deviceId, token, mapOf("tags" to merged))
-      if (result is ApiResult.Success) {
-        deviceStore.setTags(result.response.tags)
+      when (result) {
+        is ApiResult.Success -> deviceStore.setTags(result.response.tags)
+        is ApiResult.Failure -> logger("Notti.mutateTags: PATCH failed (${result.message}) - not retried")
       }
     }
   }
