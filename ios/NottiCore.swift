@@ -66,6 +66,15 @@ public class NottiCore {
   private var registrationState: RegistrationState = .notAttempted
   private var lastAttemptedToken: String?
 
+  /// Notified whenever the persisted device id actually changes (first
+  /// assignment, reinstall, or a re-registration that lands a different id) -
+  /// never on an idempotent re-register that returns the same id already
+  /// cached. Settable rather than constructor-injected because `NottiImpl`
+  /// constructs `NottiCore` before it can wire the Obj-C++ emit handler (see
+  /// ADR-001, docs/adr/001-expose-device-id-getter-and-change-event.md).
+  /// Always invoked on `workQueue`.
+  public var onDeviceIdChanged: ((String) -> Void)?
+
   /// Guards against a foreground-retry storm: `didBecomeActive` can fire
   /// repeatedly (app switcher, control centre, alerts), and only one retry may
   /// be queued at a time. Touched from the notification thread, so it needs
@@ -181,6 +190,11 @@ public class NottiCore {
     }
   }
 
+  /// Cached device id, or `nil` if registration hasn't assigned one yet.
+  public func getDeviceId() -> String? {
+    deviceStore.getDeviceId()
+  }
+
   public func mutateTags(add: [String: String]?, remove: [String]?) {
     workQueue.async { [weak self] in
       guard let self = self, let client = self.apiClient else { return }
@@ -258,7 +272,11 @@ public class NottiCore {
     switch client.createOrUpdateDevice(token: token, platform: platform) {
     case .success(let response):
       registrationState = .succeeded
+      let previousDeviceId = deviceStore.getDeviceId()
       deviceStore.setDeviceId(response.id)
+      if response.id != previousDeviceId {
+        onDeviceIdChanged?(response.id)
+      }
       deviceStore.setLastToken(token)
       deviceStore.setTags(response.tags)
       flushPendingMutations(client, deviceId: response.id, token: token)

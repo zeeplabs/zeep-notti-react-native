@@ -9,7 +9,8 @@ import NativeNotti, { type NotificationPayload } from './NativeNotti';
 
 export type { NotificationPayload };
 
-export type NottiEventName = 'notificationReceived' | 'notificationClicked';
+export type NottiEventName =
+  'notificationReceived' | 'notificationClicked' | 'deviceIdChanged';
 
 /**
  * Add/remove device tags used for Notti Segments. Single-key convenience
@@ -69,6 +70,15 @@ function setSubscription(enabled: boolean): void {
 }
 
 /**
+ * Returns the Notti-internal Device ID, cached natively, or `null` if not
+ * yet assigned. See ADR-001
+ * (docs/adr/001-expose-device-id-getter-and-change-event.md).
+ */
+function getDeviceId(): string | null {
+  return NativeNotti.getDeviceId();
+}
+
+/**
  * Resolves with the notification that cold-launched the app (the user
  * tapped it while the app wasn't running), or `null` if the app was not
  * launched this way. Call this once on startup, before or alongside
@@ -89,14 +99,24 @@ function getInitialNotificationClick(): Promise<NotificationPayload | null> {
  * string-named API.
  */
 function addEventListener(
-  eventName: NottiEventName,
+  eventName: 'notificationReceived' | 'notificationClicked',
   callback: (payload: NotificationPayload) => void
+): EventSubscription;
+function addEventListener(
+  eventName: 'deviceIdChanged',
+  callback: (deviceId: string) => void
+): EventSubscription;
+function addEventListener(
+  eventName: NottiEventName,
+  callback: (payload: any) => void
 ): EventSubscription {
   switch (eventName) {
     case 'notificationReceived':
       return NativeNotti.onNotificationReceived(callback);
     case 'notificationClicked':
       return NativeNotti.onNotificationClicked(callback);
+    case 'deviceIdChanged':
+      return NativeNotti.onDeviceIdChanged(callback);
   }
 }
 
@@ -106,6 +126,7 @@ export const Notti = {
   login,
   logout,
   setSubscription,
+  getDeviceId,
   getInitialNotificationClick,
   addEventListener,
   User,

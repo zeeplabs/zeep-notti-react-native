@@ -20,6 +20,16 @@ export interface Spec extends TurboModule {
   setSubscription(enabled: boolean): void;
 
   /**
+   * Returns the Notti-internal Device ID used by the Notti backend to route
+   * notifications to this device, or `null` if not yet assigned. The value
+   * is cached natively and populated asynchronously after
+   * `initialize`/`login` complete a round-trip with the Notti backend - it
+   * is not guaranteed to be available immediately. See ADR-001
+   * (docs/adr/001-expose-device-id-getter-and-change-event.md).
+   */
+  getDeviceId(): string | null;
+
+  /**
    * Returns the notification the app was cold-launched from by the user
    * tapping it, if any - and only once: the native side clears it after
    * this resolves. Must exist because the click that launches the process
@@ -35,6 +45,12 @@ export interface Spec extends TurboModule {
 
   readonly onNotificationReceived: CodegenTypes.EventEmitter<NotificationPayload>;
   readonly onNotificationClicked: CodegenTypes.EventEmitter<NotificationPayload>;
+
+  /**
+   * Fires when the Device ID is assigned for the first time or updated
+   * (reinstall, device change, revocation/renewal by the Notti backend).
+   */
+  readonly onDeviceIdChanged: CodegenTypes.EventEmitter<string>;
 }
 
 export default TurboModuleRegistry.getEnforcing<Spec>('Notti');

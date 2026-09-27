@@ -166,6 +166,59 @@ final class NottiCoreTests: XCTestCase {
     XCTAssertEqual(store.getTags(), ["plan": "vip"])
   }
 
+  func test_initializeHappyPathExposesThePersistedIdViaGetDeviceId() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
+    let core = newCore()
+
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    XCTAssertEqual(core.getDeviceId(), "device-1")
+  }
+
+  func test_firstRegistrationNotifiesOnDeviceIdChangedWithTheNewlyAssignedId() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
+    let core = newCore()
+    var changes: [String] = []
+    core.onDeviceIdChanged = { changes.append($0) }
+
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    XCTAssertEqual(changes, ["device-1"])
+  }
+
+  func test_reRegistrationThatReturnsTheSameIdDoesNotNotifyOnDeviceIdChangedAgain() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
+    let core = newCore()
+    var changes: [String] = []
+    core.onDeviceIdChanged = { changes.append($0) }
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    core.onTokenRefreshed("new-apns-token")
+    drain(core)
+
+    XCTAssertEqual(changes, ["device-1"])
+  }
+
+  func test_reRegistrationThatReturnsADifferentIdNotifiesOnDeviceIdChangedWithTheNewValue() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-2","tags":{}}"#))
+    let core = newCore()
+    var changes: [String] = []
+    core.onDeviceIdChanged = { changes.append($0) }
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    core.onTokenRefreshed("new-apns-token")
+    drain(core)
+
+    XCTAssertEqual(changes, ["device-1", "device-2"])
+    XCTAssertEqual(core.getDeviceId(), "device-2")
+  }
+
   func test_repeatInitializeWithIdenticalArgsIsANoOp() {
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
     let core = newCore()

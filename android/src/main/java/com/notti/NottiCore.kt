@@ -42,7 +42,15 @@ class NottiCore(
   private val permissionRequester: (callback: (granted: Boolean) -> Unit) -> Unit,
   private val platform: String = "android",
   private val logger: (message: String) -> Unit = {},
-  private val executor: Executor = newDefaultExecutor()
+  private val executor: Executor = newDefaultExecutor(),
+  /**
+   * Notified from [registerDevice] whenever the persisted device id actually
+   * changes (first assignment, reinstall, or a re-registration that lands a
+   * different id) - never on an idempotent re-register that returns the same
+   * id already cached. See ADR-001
+   * (docs/adr/001-expose-device-id-getter-and-change-event.md).
+   */
+  private val onDeviceIdChanged: (String) -> Unit = {}
 ) {
 
   companion object {
@@ -202,7 +210,11 @@ class NottiCore(
       try {
         when (val result = client.createOrUpdateDevice(token, platform)) {
           is ApiResult.Success -> {
+            val previousDeviceId = deviceStore.getDeviceId()
             deviceStore.setDeviceId(result.response.id)
+            if (result.response.id != previousDeviceId) {
+              onDeviceIdChanged(result.response.id)
+            }
             deviceStore.setLastToken(token)
             deviceStore.setTags(result.response.tags)
             registrationState = RegistrationState.REGISTERED
@@ -230,6 +242,9 @@ class NottiCore(
       }
     }
   }
+
+  /** Cached device id, or `null` if registration hasn't assigned one yet. */
+  fun getDeviceId(): String? = deviceStore.getDeviceId()
 
   fun requestPermission(callback: (granted: Boolean) -> Unit) {
     if (apiClient == null) {

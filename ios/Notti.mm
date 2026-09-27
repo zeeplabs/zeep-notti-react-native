@@ -16,6 +16,9 @@
         _impl.emitClickedHandler = ^(NSDictionary *payload) {
             [weakSelf emitOnNotificationClicked:payload];
         };
+        _impl.emitDeviceIdChangedHandler = ^(NSString *deviceId) {
+            [weakSelf emitOnDeviceIdChanged:deviceId];
+        };
     }
     return self;
 }
@@ -58,6 +61,11 @@
 - (void)setSubscription:(BOOL)enabled
 {
     [_impl setSubscription:enabled];
+}
+
+- (NSString *)getDeviceId
+{
+    return [_impl getDeviceId];
 }
 
 - (void)getInitialNotificationClick:(RCTPromiseResolveBlock)resolve

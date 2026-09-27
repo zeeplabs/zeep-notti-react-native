@@ -7,9 +7,11 @@ const mockLogout = jest.fn();
 const mockAddTags = jest.fn();
 const mockRemoveTags = jest.fn();
 const mockSetSubscription = jest.fn();
+const mockGetDeviceId = jest.fn();
 const mockGetInitialNotificationClick = jest.fn();
 const mockOnNotificationReceived = jest.fn();
 const mockOnNotificationClicked = jest.fn();
+const mockOnDeviceIdChanged = jest.fn();
 
 jest.mock('../NativeNotti', () => ({
   __esModule: true,
@@ -21,12 +23,14 @@ jest.mock('../NativeNotti', () => ({
     addTags: (...args: unknown[]) => mockAddTags(...args),
     removeTags: (...args: unknown[]) => mockRemoveTags(...args),
     setSubscription: (...args: unknown[]) => mockSetSubscription(...args),
+    getDeviceId: (...args: unknown[]) => mockGetDeviceId(...args),
     getInitialNotificationClick: (...args: unknown[]) =>
       mockGetInitialNotificationClick(...args),
     onNotificationReceived: (...args: unknown[]) =>
       mockOnNotificationReceived(...args),
     onNotificationClicked: (...args: unknown[]) =>
       mockOnNotificationClicked(...args),
+    onDeviceIdChanged: (...args: unknown[]) => mockOnDeviceIdChanged(...args),
   },
 }));
 
@@ -88,6 +92,18 @@ describe('Notti facade', () => {
     expect(mockSetSubscription).toHaveBeenCalledWith(true);
   });
 
+  it('getDeviceId calls NativeNotti.getDeviceId and returns its result', () => {
+    mockGetDeviceId.mockReturnValueOnce('device-123');
+    const result = Notti.getDeviceId();
+    expect(mockGetDeviceId).toHaveBeenCalledWith();
+    expect(result).toBe('device-123');
+  });
+
+  it('getDeviceId returns null when not yet assigned', () => {
+    mockGetDeviceId.mockReturnValueOnce(null);
+    expect(Notti.getDeviceId()).toBeNull();
+  });
+
   it('User.addTag funnels into NativeNotti.addTags as a single-key map', () => {
     Notti.User.addTag('plan', 'vip');
     expect(mockAddTags).toHaveBeenCalledWith({ plan: 'vip' });
@@ -143,6 +159,17 @@ describe('Notti facade', () => {
     const result = Notti.addEventListener('notificationClicked', callback);
 
     expect(mockOnNotificationClicked).toHaveBeenCalledWith(callback);
+    expect(result).toBe(subscription);
+  });
+
+  it("addEventListener('deviceIdChanged', cb) subscribes via NativeNotti.onDeviceIdChanged", () => {
+    const callback = jest.fn();
+    const subscription = { remove: jest.fn() };
+    mockOnDeviceIdChanged.mockReturnValueOnce(subscription);
+
+    const result = Notti.addEventListener('deviceIdChanged', callback);
+
+    expect(mockOnDeviceIdChanged).toHaveBeenCalledWith(callback);
     expect(result).toBe(subscription);
   });
 });

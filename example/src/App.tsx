@@ -36,9 +36,21 @@ export default function App() {
       console.log('Notti notificationClicked', payload);
     });
 
+    // `null` until registration assigns one - cached locally, no network
+    // round-trip. Persist this alongside your user record once it's set.
+    console.log('Notti getDeviceId', Notti.getDeviceId());
+
+    const deviceIdChanged = Notti.addEventListener(
+      'deviceIdChanged',
+      (deviceId) => {
+        console.log('Notti deviceIdChanged', deviceId);
+      }
+    );
+
     return () => {
       received.remove();
       clicked.remove();
+      deviceIdChanged.remove();
     };
   }, []);
 
@@ -69,6 +81,10 @@ export default function App() {
       <Button
         title="Disable subscription"
         onPress={() => Notti.setSubscription(false)}
+      />
+      <Button
+        title="Log device id"
+        onPress={() => console.log('Notti getDeviceId', Notti.getDeviceId())}
       />
     </View>
   );

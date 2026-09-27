@@ -64,7 +64,8 @@ class NottiCoreTest {
     permissionRequester: (callback: (Boolean) -> Unit) -> Unit = { it(true) },
     logs: MutableList<String>? = null,
     interceptor: Interceptor? = null,
-    coreExecutor: Executor = executor
+    coreExecutor: Executor = executor,
+    onDeviceIdChanged: (String) -> Unit = {}
   ) = NottiCore(
     deviceStore = store,
     apiClientFactory = { appId, clientKey, baseUrl ->
@@ -81,7 +82,8 @@ class NottiCoreTest {
     tokenProvider = tokenProvider,
     permissionRequester = permissionRequester,
     logger = { logs?.add(it) },
-    executor = coreExecutor
+    executor = coreExecutor,
+    onDeviceIdChanged = onDeviceIdChanged
   )
 
   @Test
@@ -215,6 +217,66 @@ class NottiCoreTest {
     assertEquals("device-1", store.getDeviceId())
     assertEquals("fcm-token", store.getLastToken())
     assertEquals(mapOf("plan" to "vip"), store.getTags())
+  }
+
+  @Test
+  fun `initialize happy path exposes the persisted id via getDeviceId`() {
+    server.enqueue(
+      MockResponse().setResponseCode(200)
+        .setBody("""{"id":"device-1","tags":{}}""")
+    )
+    val core = newCore()
+
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    assertEquals("device-1", core.getDeviceId())
+  }
+
+  @Test
+  fun `first registration notifies onDeviceIdChanged with the newly assigned id`() {
+    server.enqueue(
+      MockResponse().setResponseCode(200)
+        .setBody("""{"id":"device-1","tags":{}}""")
+    )
+    val changes = mutableListOf<String>()
+    val core = newCore(onDeviceIdChanged = { changes.add(it) })
+
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    assertEquals(listOf("device-1"), changes)
+  }
+
+  @Test
+  fun `a re-registration that returns the same id does not notify onDeviceIdChanged again`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    val changes = mutableListOf<String>()
+    val core = newCore(onDeviceIdChanged = { changes.add(it) })
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    core.onTokenRefreshed("new-fcm-token")
+    awaitIdle()
+
+    assertEquals(listOf("device-1"), changes)
+  }
+
+  @Test
+  fun `a re-registration that returns a different id notifies onDeviceIdChanged with the new value`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-2","tags":{}}"""))
+    val changes = mutableListOf<String>()
+    val core = newCore(onDeviceIdChanged = { changes.add(it) })
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    core.onTokenRefreshed("new-fcm-token")
+    awaitIdle()
+
+    assertEquals(listOf("device-1", "device-2"), changes)
+    assertEquals("device-2", core.getDeviceId())
   }
 
   @Test

@@ -37,6 +37,15 @@ public class NottiImpl: NSObject {
     didSet { NottiEventBuffer.shared.setHandler(.clicked, emitClickedHandler) }
   }
 
+  /// Set by `Notti.mm`'s `-init` to forward `NottiCore.onDeviceIdChanged` into
+  /// the Codegen event emitter it alone has access to. Not routed through
+  /// `NottiEventBuffer` - unlike a notification tap, there is no cold-start
+  /// replay concern (`getDeviceId()` covers the synchronous case; this only
+  /// fires for a value already assigned or updated while JS is alive).
+  @objc public var emitDeviceIdChangedHandler: ((String) -> Void)? {
+    didSet { core.onDeviceIdChanged = emitDeviceIdChangedHandler }
+  }
+
   let core: NottiCore
 
   @objc public override init() {
@@ -116,6 +125,10 @@ public class NottiImpl: NSObject {
   @objc(setSubscription:)
   public func setSubscription(_ enabled: Bool) {
     core.setSubscription(enabled)
+  }
+
+  @objc public func getDeviceId() -> String? {
+    core.getDeviceId()
   }
 
   /// Backs the Spec's `getInitialNotificationClick()`: returns the click that

@@ -64,7 +64,8 @@ class NottiModule(reactContext: ReactApplicationContext) :
       tokenProvider = { callback -> fetchFcmToken(callback) },
       permissionRequester = { callback -> requestNativePermission(callback) },
       logger = { message -> Log.e(NAME, message) },
-      executor = ioExecutor
+      executor = ioExecutor,
+      onDeviceIdChanged = { deviceId -> emitDeviceIdChanged(deviceId) }
     ).also {
       ownCore = it
       activeCore = it
@@ -102,6 +103,8 @@ class NottiModule(reactContext: ReactApplicationContext) :
 
   internal fun emitClicked(payload: WritableMap) = emitOnNotificationClicked(payload)
 
+  internal fun emitDeviceIdChanged(deviceId: String) = emitOnDeviceIdChanged(deviceId)
+
   override fun initialize(appId: String?, clientKey: String?, baseUrl: String?) {
     core.initialize(appId.orEmpty(), clientKey.orEmpty(), baseUrl.orEmpty())
   }
@@ -131,6 +134,8 @@ class NottiModule(reactContext: ReactApplicationContext) :
   override fun setSubscription(enabled: Boolean) {
     core.setSubscription(enabled)
   }
+
+  override fun getDeviceId(): String? = core.getDeviceId()
 
   /**
    * Hands JS the notification tap that cold-launched the process, once.
