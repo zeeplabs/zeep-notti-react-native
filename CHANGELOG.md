@@ -1,5 +1,17 @@
 # Changelog
 
+# [0.3.0](https://github.com/zeeplabs/zeep-notti-react-native/compare/v0.2.0...v0.3.0) (2026-09-27)
+
+
+### Bug Fixes
+
+* harden device id feature per pre-release review ([c318516](https://github.com/zeeplabs/zeep-notti-react-native/commit/c318516396bab03fdb357dff56156ed9fa0b6712))
+
+
+### Features
+
+* expose device id via getDeviceId() and deviceIdChanged event ([c29fc79](https://github.com/zeeplabs/zeep-notti-react-native/commit/c29fc79d4fd48d6096869e0def43317e1f414bfe))
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
