@@ -105,6 +105,13 @@ public class NottiImpl: NSObject {
           callback(granted)
         }
       },
+      // Segment telemetry P1 (T7): reads the host app's marketing version once
+      // per launch; `Bundle.main.infoDictionary` has no entry for it in an
+      // odd host build, in which case this returns nil and `NottiCore` skips
+      // the sync (SEGTEL edge: no crash, no registration block).
+      versionProvider: {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+      },
       // B1 (found in pre-release review): `NottiCore`'s `logger` parameter
       // defaults to a no-op, so every diagnostic it logs - including the A4
       // fix (mutation-failure logging) - was silently discarded in production

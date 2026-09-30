@@ -60,6 +60,7 @@ final class NottiCoreTests: XCTestCase {
   private func newCore(
     tokenProvider: @escaping (@escaping (String?) -> Void) -> Void = { cb in cb("apns-token") },
     permissionRequester: @escaping (@escaping (Bool) -> Void) -> Void = { cb in cb(true) },
+    versionProvider: @escaping () -> String? = { nil },
     apiClient: NottiApiClient? = nil,
     logs: LogSink? = nil,
     onDeviceIdChanged: @escaping (String) -> Void = { _ in },
@@ -75,6 +76,7 @@ final class NottiCoreTests: XCTestCase {
       },
       tokenProvider: tokenProvider,
       permissionRequester: permissionRequester,
+      versionProvider: versionProvider,
       logger: { message in logs?.append(message) },
       onDeviceIdChanged: onDeviceIdChanged
     )
@@ -1050,6 +1052,72 @@ final class NottiCoreTests: XCTestCase {
       data.append(buffer, count: read)
     }
     return data
+  }
+
+  private func patchBodies(_ requests: [URLRequest]) -> [[String: Any]] {
+    requests.filter { $0.httpMethod == "PATCH" }.map {
+      try! JSONSerialization.jsonObject(with: bodyData($0)) as! [String: Any]
+    }
+  }
+
+  // MARK: - App version sync (T7, SEGTEL-01/02/03/04)
+
+  func test_appVersionDiffOnRegistrationEnqueuesAPatchWithTheVersion() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // app_version PATCH
+    let core = newCore(versionProvider: { "1.2.3" })
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    let requests = StubURLProtocol.recordedRequests()
+    XCTAssertEqual(requests.count, 2, "register + app_version PATCH")
+    XCTAssertEqual(requests[1].httpMethod, "PATCH")
+    let body = patchBodies(requests).first!
+    XCTAssertEqual(body["app_version"] as? String, "1.2.3")
+    XCTAssertEqual(store.getAppVersion(), "1.2.3")
+  }
+
+  func test_appVersionEqualToTheLastSyncedValueDoesNotPatchAgain() {
+    store.setAppVersion("1.2.3")
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration only
+    let core = newCore(versionProvider: { "1.2.3" })
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    XCTAssertEqual(StubURLProtocol.recordedRequests().count, 1, "no PATCH when the version is unchanged")
+    XCTAssertEqual(store.getAppVersion(), "1.2.3")
+  }
+
+  func test_aNilVersionProviderSkipsTheSyncEntirely() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration only
+    let core = newCore(versionProvider: { nil })
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    XCTAssertEqual(StubURLProtocol.recordedRequests().count, 1)
+    XCTAssertNil(store.getAppVersion())
+  }
+
+  func test_aBumpedVersionBetweenTwoRegistrationsResyncsWithTheNewValue() {
+    var currentVersion: String? = "1.2.3"
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration 1
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // app_version 1.2.3
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration 2 (token refresh)
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // app_version 2.0.0
+    let core = newCore(versionProvider: { currentVersion })
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+    XCTAssertEqual(store.getAppVersion(), "1.2.3")
+
+    currentVersion = "2.0.0"
+    core.onTokenRefreshed("new-apns-token")
+    drain(core)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertEqual(bodies.count, 2, "one app_version PATCH per registration")
+    XCTAssertEqual(bodies[0]["app_version"] as? String, "1.2.3")
+    XCTAssertEqual(bodies[1]["app_version"] as? String, "2.0.0")
+    XCTAssertEqual(store.getAppVersion(), "2.0.0")
   }
 }
 

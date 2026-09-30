@@ -35,6 +35,7 @@ public class NottiCore {
   private let apiClientFactory: (_ appId: String, _ clientKey: String, _ baseUrl: String) -> NottiApiClient
   private let tokenProvider: (_ callback: @escaping (String?) -> Void) -> Void
   private let permissionRequester: (_ callback: @escaping (Bool) -> Void) -> Void
+  private let versionProvider: () -> String?
   private let platform: String
   private let logger: (String) -> Void
 
@@ -95,6 +96,7 @@ public class NottiCore {
     apiClientFactory: @escaping (_ appId: String, _ clientKey: String, _ baseUrl: String) -> NottiApiClient,
     tokenProvider: @escaping (_ callback: @escaping (String?) -> Void) -> Void,
     permissionRequester: @escaping (_ callback: @escaping (Bool) -> Void) -> Void,
+    versionProvider: @escaping () -> String? = { nil },
     platform: String = "ios",
     logger: @escaping (String) -> Void = { _ in },
     onDeviceIdChanged: @escaping (String) -> Void = { _ in }
@@ -104,6 +106,7 @@ public class NottiCore {
     self.apiClientFactory = apiClientFactory
     self.tokenProvider = tokenProvider
     self.permissionRequester = permissionRequester
+    self.versionProvider = versionProvider
     self.platform = platform
     self.logger = logger
     self.onDeviceIdChanged = onDeviceIdChanged
@@ -318,6 +321,7 @@ public class NottiCore {
       deviceStore.setLastToken(token)
       deviceStore.setTags(response.tags)
       flushPendingMutations(client, deviceId: response.id, token: token)
+      syncAppVersionIfNeeded(client)
       flushEventQueue()
     case .failure(let message):
       registrationState = .failed
@@ -326,6 +330,26 @@ public class NottiCore {
   }
 
   // MARK: - Foreground retry (spec P1-AC5)
+
+  /// workQueue-only. Diff-and-enqueue (SEGTEL-03): reads the current app
+  /// version via the injected `versionProvider`, and only when it differs
+  /// from the last value successfully synced does it enqueue a PATCH through
+  /// the mutation queue, persisting the new value on Success. A nil read
+  /// (no `CFBundleShortVersionString` in the host bundle) skips entirely —
+  /// no crash, no registration block (SEGTEL edge case).
+  private func syncAppVersionIfNeeded(_ client: NottiApiClient) {
+    guard let current = versionProvider() else { return }
+    guard current != deviceStore.getAppVersion() else { return }
+    performOrQueue(client, description: "app version") { [weak self] client, deviceId, token in
+      let result = client.patchDevice(deviceId: deviceId, token: token, fields: ["app_version": current])
+      switch result {
+      case .success:
+        self?.deviceStore.setAppVersion(current)
+      case .failure(let message):
+        self?.logger("Notti.syncAppVersionIfNeeded: PATCH failed (\(message)) - not retried")
+      }
+    }
+  }
 
   /// Subscribes to `UIApplication.didBecomeActiveNotification` directly - a
   /// plain system notification, so no host-`AppDelegate` forwarding is needed
