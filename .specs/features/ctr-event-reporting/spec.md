@@ -117,28 +117,28 @@ on both platforms, in every app state a receive/click can happen in
 
 | Requirement ID | Story | Phase | Status |
 | --- | --- | --- | --- |
-| SDKCTR-01 | P1: Automatic click reporting (basic report) | Design | Pending |
-| SDKCTR-02 | P1: Automatic click reporting (cold start) | Design | Pending |
-| SDKCTR-03 | P1: Automatic click reporting (exclude non-default action) | Design | Pending |
-| SDKCTR-04 | P1: Automatic click reporting (skip when ids absent) | Design | Pending |
-| SDKCTR-05 | P1: Automatic received reporting (foreground) | Design | Pending |
-| SDKCTR-06 | P1: Automatic received reporting (no background expectation) | Design | Pending |
-| SDKCTR-07 | P1: Retry parity (5x backoff on network/5xx) | Design | Pending |
-| SDKCTR-08 | P1: Retry parity (terminal on 4xx) | Design | Pending |
-| SDKCTR-09 | P1: Retry parity (exhausted retries → queue) | Design | Pending |
-| SDKCTR-10 | P2: Offline queue (write-ahead persistence) | Design | Pending |
-| SDKCTR-11 | P2: Offline queue (cleanup on success/terminal) | Design | Pending |
-| SDKCTR-12 | P2: Offline queue (flush on launch) | Design | Pending |
-| SDKCTR-13 | P2: Offline queue (flush on reconnect) | Design | Pending |
-| SDKCTR-14 | P2: Offline queue (tolerate duplicate flush) | Design | Pending |
+| SDKCTR-01 | P1: Automatic click reporting (basic report) | Implemented | T4/T8 |
+| SDKCTR-02 | P1: Automatic click reporting (cold start) | Implemented | T4/T8 |
+| SDKCTR-03 | P1: Automatic click reporting (exclude non-default action) | Implemented | T8 |
+| SDKCTR-04 | P1: Automatic click reporting (skip when ids absent) | Implemented | T4/T8 |
+| SDKCTR-05 | P1: Automatic received reporting (foreground) | Implemented | T4/T8 |
+| SDKCTR-06 | P1: Automatic received reporting (no background expectation) | Implemented | T4/T8 |
+| SDKCTR-07 | P1: Retry parity (5x backoff on network/5xx) | Implemented | T2/T6 |
+| SDKCTR-08 | P1: Retry parity (terminal on 4xx) | Implemented | T2/T6 |
+| SDKCTR-09 | P1: Retry parity (exhausted retries → queue) | Implemented | T3/T7 |
+| SDKCTR-10 | P2: Offline queue (write-ahead persistence) | Implemented | T1/T5 |
+| SDKCTR-11 | P2: Offline queue (cleanup on success/terminal) | Implemented | T1/T3/T5/T7 |
+| SDKCTR-12 | P2: Offline queue (flush on launch) | Implemented | T3/T7 |
+| SDKCTR-13 | P2: Offline queue (flush on reconnect) | Implemented | T4/T8 |
+| SDKCTR-14 | P2: Offline queue (tolerate duplicate flush) | Implemented | design+flush |
 
-**Coverage:** 14 total, 0 mapped to tasks, 14 unmapped ⚠️ (expected — Design/Tasks not started yet)
+**Coverage:** 14 total, 14 mapped to tasks, 0 unmapped ✅
 
 ---
 
 ## Success Criteria
 
 - [ ] A real device tap (backgrounded and cold-start) results in a `clicked` row reaching the backend's `notification_events` table, verified end-to-end against a running `zeep-notti` instance with the `ctr-tracking` spec deployed.
-- [ ] A simulated 503 on the events endpoint produces exactly 5 attempts with the documented backoff timing, verified via the existing injectable-sleeper unit-test pattern on both platforms.
-- [ ] An event triggered in airplane mode, surviving a force-kill, is reported after connectivity returns — verified via a real or stubbed offline→online transition test on both platforms.
+- [x] A simulated 503 on the events endpoint produces exactly 5 attempts with the documented backoff timing, verified via the existing injectable-sleeper unit-test pattern on both platforms.
+- [x] An event triggered in airplane mode, surviving a force-kill, is reported after connectivity returns — verified via a real or stubbed offline→online transition test on both platforms.
 - [ ] Zero new exports in `src/index.tsx`/`src/NativeNotti.ts` — confirms AD-001 wasn't violated.

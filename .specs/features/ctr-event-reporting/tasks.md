@@ -1,7 +1,7 @@
 # CTR Event Reporting Tasks
 
 **Design**: `.specs/features/ctr-event-reporting/design.md`
-**Status**: Draft
+**Status**: Complete — all T1-T9 done, commits `cabfb88`→`3f1c938`, gates green (Android 106 JVM tests, iOS 109 XCTest, JS typecheck/lint/test clean, `src/` untouched). Next: independent Verifier.
 
 ---
 
