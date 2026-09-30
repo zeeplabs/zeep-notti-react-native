@@ -17,6 +17,23 @@ sealed class ApiResult {
 }
 
 /**
+ * Result of the shared retry loop in [NottiApiClient.executeWithRetry]:
+ * [Success] carries the value `parseSuccess` produced for a usable 2xx,
+ * [Failure] the reason (last HTTP status or network error) once the retry
+ * cap is exhausted or a terminal (4xx) response is received.
+ */
+sealed class RetryResult<out T> {
+  data class Success<T>(val value: T) : RetryResult<T>()
+  data class Failure(val message: String) : RetryResult<Nothing>()
+}
+
+/** Result of [NottiApiClient.reportEvent]: any 2xx is a [Success]. */
+sealed class EventResult {
+  object Success : EventResult()
+  data class Failure(val message: String) : EventResult()
+}
+
+/**
  * Talks to Notti' `/v1/apps/{app_id}/devices` endpoints (design.md
  * NottiApiClient). Retries a 5xx response or network failure with
  * exponential backoff (2s, 4s, 8s, 16s, 32s), capped at 5 attempts, per
@@ -55,6 +72,7 @@ class NottiApiClient(
     // `id` it returns is the resource every later PATCH is addressed to, so a
     // 2xx without a device object is not a usable success.
     return executeWithRetry(request) { bodyString -> parseDeviceResponse(bodyString, fallbackTags = null) }
+      .toApiResult()
   }
 
   /** PATCH always includes the cached `token` field (AD-009 ownership proof). */
@@ -82,7 +100,42 @@ class NottiApiClient(
     val fallbackTags = fields["tags"] as? Map<String, String> ?: emptyMap()
     return executeWithRetry(request) { bodyString ->
       parseDeviceResponse(bodyString, fallbackTags = fallbackTags) ?: DeviceResponse(id = deviceId, tags = fallbackTags)
-    }
+    }.toApiResult()
+  }
+
+  /**
+   * Reports a single push-notification event (e.g. "received" or "clicked")
+   * to `POST /v1/apps/{app_id}/notifications/{notification_id}/events`.
+   *
+   * The request body carries the event's `delivery_id`, `type` and the
+   * device's `token` (snake_case - the backend contract), authenticated with
+   * the client key as `Authorization: Bearer <key>`. Any 2xx acknowledges
+   * the event and the response body is ignored. 5xx responses and network
+   * failures are retried with exponential backoff (2s, 4s, 8s, 16s, 32s)
+   * capped at 5 attempts, matching device registration; 4xx responses are
+   * terminal failures and not retried.
+   */
+  fun reportEvent(notificationId: String, deliveryId: String, type: String, token: String): EventResult {
+    val body = JSONObject()
+      .put("delivery_id", deliveryId)
+      .put("type", type)
+      .put("token", token)
+      .toString()
+      .toRequestBody(jsonMediaType)
+
+    val request = Request.Builder()
+      .url("$baseUrl/v1/apps/$appId/notifications/$notificationId/events")
+      .header("Authorization", "Bearer $clientKey")
+      .post(body)
+      .build()
+
+    // The backend is free to acknowledge an event with 200 + a JSON payload,
+    // a bare 204 No Content, or nothing at all - none of it is needed by the
+    // caller (the local queue entry is removed by its own id once this
+    // returns Success). So any 2xx is a success and `parseSuccess` always
+    // returns a non-null dummy value, never hitting the retry-on-2xx path.
+    return executeWithRetry(request) { true }
+      .toEventResult()
   }
 
   /**
@@ -122,11 +175,11 @@ class NottiApiClient(
   }
 
   /**
-   * `parseSuccess` turns a 2xx body into the [DeviceResponse] to report, or
-   * `null` to treat that 2xx as a retriable failure - mirrors iOS'
+   * `parseSuccess` turns a 2xx body into the value to report, or `null` to
+   * treat that 2xx as a retriable failure - mirrors iOS'
    * `NottiApiClient.executeWithRetry(_:parseSuccess:)`.
    */
-  private fun executeWithRetry(request: Request, parseSuccess: (String) -> DeviceResponse?): ApiResult {
+  private fun <T> executeWithRetry(request: Request, parseSuccess: (String) -> T?): RetryResult<T> {
     var attempt = 0
     var delayMs = BASE_DELAY_MS
     var lastError = "unknown error"
@@ -137,22 +190,22 @@ class NottiApiClient(
         httpClient.newCall(request).execute().use { response ->
           if (response.isSuccessful) {
             val bodyString = response.body?.string().orEmpty()
-            val device = parseSuccess(bodyString)
-            if (device != null) {
-              return ApiResult.Success(device)
+            val value = parseSuccess(bodyString)
+            if (value != null) {
+              return RetryResult.Success(value)
             }
-            // A 2xx that is not the documented device JSON: a captive
-            // portal/proxy answering with HTML, a renamed field, or a
-            // transient proxy glitch. Treated as retriable - same as a 5xx
-            // and matching iOS' NottiApiClient.executeWithRetry - instead
-            // of a terminal failure, since retrying is safe (registration
-            // is idempotent) and gives a genuine transient hiccup a chance
-            // to resolve instead of parking registration on the first bad
+            // A 2xx that parseSuccess could not turn into a usable value (a
+            // captive portal/proxy answering with HTML, a renamed field, or a
+            // transient proxy glitch). Treated as retriable - same as a 5xx
+            // and matching iOS' NottiApiClient.executeWithRetry - instead of
+            // a terminal failure, since retrying is safe (registration is
+            // idempotent) and gives a genuine transient hiccup a chance to
+            // resolve instead of parking registration on the first bad
             // response.
-            lastError = "HTTP ${response.code} with an unparseable device response body"
+            lastError = "HTTP ${response.code} with an unparseable response body"
           } else if (response.code < 500) {
             // 4xx: not retried, terminal failure.
-            return ApiResult.Failure("HTTP ${response.code}")
+            return RetryResult.Failure("HTTP ${response.code}")
           } else {
             lastError = "HTTP ${response.code}"
           }
@@ -167,7 +220,17 @@ class NottiApiClient(
       }
     }
 
-    return ApiResult.Failure(lastError)
+    return RetryResult.Failure(lastError)
+  }
+
+  private fun RetryResult<DeviceResponse>.toApiResult(): ApiResult = when (this) {
+    is RetryResult.Success -> ApiResult.Success(value)
+    is RetryResult.Failure -> ApiResult.Failure(message)
+  }
+
+  private fun RetryResult<*>.toEventResult(): EventResult = when (this) {
+    is RetryResult.Success -> EventResult.Success
+    is RetryResult.Failure -> EventResult.Failure(message)
   }
 
   /**

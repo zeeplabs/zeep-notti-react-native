@@ -371,6 +371,94 @@ class NottiApiClientTest {
     assertEquals("b", topics.getString(1))
   }
 
+  @Test
+  fun `reportEvent sends POST to the events endpoint with bearer auth and snake_case body`() {
+    server.enqueue(MockResponse().setResponseCode(200))
+
+    val result = client.reportEvent(
+      notificationId = "notif-1",
+      deliveryId = "delivery-1",
+      type = "clicked",
+      token = "fcm-token"
+    )
+
+    val recorded = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+    assertEquals("POST", recorded.method)
+    assertEquals("/v1/apps/app-1/notifications/notif-1/events", recorded.path)
+    assertEquals("Bearer secret-key", recorded.getHeader("Authorization"))
+
+    val sentBody = JSONObject(recorded.body.readUtf8())
+    assertEquals("delivery-1", sentBody.getString("delivery_id"))
+    assertEquals("clicked", sentBody.getString("type"))
+    assertEquals("fcm-token", sentBody.getString("token"))
+
+    assertTrue("expected a Success, got $result", result is EventResult.Success)
+  }
+
+  @Test
+  fun `reportEvent retries 5xx responses and exhausts the retry cap at 5 attempts`() {
+    repeat(5) { server.enqueue(MockResponse().setResponseCode(503)) }
+
+    val result = client.reportEvent(
+      notificationId = "notif-1",
+      deliveryId = "delivery-1",
+      type = "clicked",
+      token = "fcm-token"
+    )
+
+    assertEquals(5, server.requestCount)
+    assertEquals(listOf(2000L, 4000L, 8000L, 16000L), sleeps)
+    assertTrue("expected a Failure, got $result", result is EventResult.Failure)
+  }
+
+  @Test
+  fun `reportEvent does not retry 4xx responses`() {
+    // One request per code; requestCount grows by exactly one each time,
+    // proving no retry after a terminal 4xx.
+    for (code in listOf(403, 404, 422)) {
+      val before = server.requestCount
+      server.enqueue(MockResponse().setResponseCode(code))
+
+      val result = client.reportEvent(
+        notificationId = "notif-1",
+        deliveryId = "delivery-1",
+        type = "clicked",
+        token = "fcm-token"
+      )
+
+      assertEquals("expected exactly 1 request for HTTP $code", before + 1, server.requestCount)
+      assertTrue("expected a Failure for HTTP $code, got $result", result is EventResult.Failure)
+      assertEquals("HTTP $code", (result as EventResult.Failure).message)
+    }
+  }
+
+  @Test
+  fun `reportEvent succeeds on any 2xx regardless of body`() {
+    // 200 with an empty body: acknowledged, nothing to parse.
+    server.enqueue(MockResponse().setResponseCode(200).setBody(""))
+    // 201 with a non-JSON body: still a success - unlike device registration,
+    // reportEvent never treats a 2xx body as malformed, so no retry here.
+    server.enqueue(MockResponse().setResponseCode(201).setBody("<html>accepted</html>"))
+
+    val emptyBodyResult = client.reportEvent(
+      notificationId = "notif-1",
+      deliveryId = "delivery-1",
+      type = "clicked",
+      token = "fcm-token"
+    )
+    assertTrue("expected Success for empty 200 body, got $emptyBodyResult", emptyBodyResult is EventResult.Success)
+
+    val nonJsonResult = client.reportEvent(
+      notificationId = "notif-1",
+      deliveryId = "delivery-1",
+      type = "clicked",
+      token = "fcm-token"
+    )
+    assertTrue("expected Success for non-JSON 201 body, got $nonJsonResult", nonJsonResult is EventResult.Success)
+
+    assertEquals(2, server.requestCount)
+  }
+
   /**
    * Minimal re-implementation of AOSP's `JSONStringer.value(Object)` dispatch:
    * only JSONObject/JSONArray/Boolean/Number/null are encoded structurally,
