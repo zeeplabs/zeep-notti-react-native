@@ -61,6 +61,8 @@ final class NottiCoreTests: XCTestCase {
     tokenProvider: @escaping (@escaping (String?) -> Void) -> Void = { cb in cb("apns-token") },
     permissionRequester: @escaping (@escaping (Bool) -> Void) -> Void = { cb in cb(true) },
     versionProvider: @escaping () -> String? = { nil },
+    hasLocationPermission: @escaping () -> Bool = { false },
+    countryProvider: @escaping (@escaping (String?) -> Void) -> Void = { $0(nil) },
     apiClient: NottiApiClient? = nil,
     logs: LogSink? = nil,
     onDeviceIdChanged: @escaping (String) -> Void = { _ in },
@@ -77,6 +79,8 @@ final class NottiCoreTests: XCTestCase {
       tokenProvider: tokenProvider,
       permissionRequester: permissionRequester,
       versionProvider: versionProvider,
+      hasLocationPermission: hasLocationPermission,
+      countryProvider: countryProvider,
       logger: { message in logs?.append(message) },
       onDeviceIdChanged: onDeviceIdChanged
     )
@@ -1208,6 +1212,91 @@ final class NottiCoreTests: XCTestCase {
 
     XCTAssertEqual(store.getFirstSessionAtMs(), 1_000, "first_session_at is set once, never overwritten")
     XCTAssertEqual(store.getSessionStartedAtMs(), 5_000)
+  }
+
+  // MARK: - Location opt-in country (T9, SEGTEL-10..15)
+
+  func test_locationSharingOffNeverReadsCountryEvenWithPermissionGranted() {
+    var countryReads = 0
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    let core = newCore(
+      hasLocationPermission: { true },
+      countryProvider: { cb in countryReads += 1; cb("BR") }
+    )
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    core.handleSessionStart(nowMs: 1_000)
+    drain(core)
+
+    XCTAssertEqual(countryReads, 0, "opt-in off must never read country, even with permission granted")
+    XCTAssertFalse(store.getLocationSharingEnabled())
+    XCTAssertTrue(
+      StubURLProtocol.recordedRequests().allSatisfy { $0.httpMethod == "POST" },
+      "no country PATCH may be issued with location sharing off"
+    )
+  }
+
+  func test_locationSharingOnWithPermissionAndAReadSendsCountryOnSessionStart() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    let core = newCore(
+      hasLocationPermission: { true },
+      countryProvider: { cb in cb("BR") }
+    )
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    core.setLocationSharingEnabled(true)
+    drain(core)
+    XCTAssertTrue(store.getLocationSharingEnabled())
+    XCTAssertEqual(StubURLProtocol.recordedRequests().count, 1, "enabling sends no immediate request")
+
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // country PATCH
+    core.handleSessionStart(nowMs: 1_000)
+    drain(core)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertEqual(bodies.count, 1)
+    XCTAssertEqual(bodies[0]["country"] as? String, "BR")
+  }
+
+  func test_disablingLocationSharingEnqueuesAnExplicitCountryClear() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    let core = newCore()
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    core.setLocationSharingEnabled(true)
+    drain(core)
+    XCTAssertTrue(store.getLocationSharingEnabled())
+
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // country clear PATCH
+    core.setLocationSharingEnabled(false)
+    drain(core)
+
+    XCTAssertFalse(store.getLocationSharingEnabled())
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertEqual(bodies.count, 1)
+    XCTAssertTrue(bodies[0].keys.contains("country"), "opt-out must PATCH country, not merely omit it")
+    XCTAssertTrue(bodies[0]["country"] is NSNull, "opt-out must send an explicit null clear")
+  }
+
+  func test_aNilCountryReadOmitsTheFieldWithoutCrashing() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    let core = newCore(
+      hasLocationPermission: { true },
+      countryProvider: { cb in cb(nil) }
+    )
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    core.setLocationSharingEnabled(true)
+    drain(core)
+    core.handleSessionStart(nowMs: 1_000)
+    drain(core)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertTrue(bodies.allSatisfy { $0["country"] == nil }, "a nil read must omit country entirely")
   }
 }
 

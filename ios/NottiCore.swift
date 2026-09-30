@@ -36,6 +36,8 @@ public class NottiCore {
   private let tokenProvider: (_ callback: @escaping (String?) -> Void) -> Void
   private let permissionRequester: (_ callback: @escaping (Bool) -> Void) -> Void
   private let versionProvider: () -> String?
+  private let hasLocationPermission: () -> Bool
+  private let countryProvider: (@escaping (String?) -> Void) -> Void
   private let platform: String
   private let logger: (String) -> Void
 
@@ -109,6 +111,8 @@ public class NottiCore {
     tokenProvider: @escaping (_ callback: @escaping (String?) -> Void) -> Void,
     permissionRequester: @escaping (_ callback: @escaping (Bool) -> Void) -> Void,
     versionProvider: @escaping () -> String? = { nil },
+    hasLocationPermission: @escaping () -> Bool = { false },
+    countryProvider: @escaping (@escaping (String?) -> Void) -> Void = { $0(nil) },
     platform: String = "ios",
     logger: @escaping (String) -> Void = { _ in },
     onDeviceIdChanged: @escaping (String) -> Void = { _ in }
@@ -119,6 +123,8 @@ public class NottiCore {
     self.tokenProvider = tokenProvider
     self.permissionRequester = permissionRequester
     self.versionProvider = versionProvider
+    self.hasLocationPermission = hasLocationPermission
+    self.countryProvider = countryProvider
     self.platform = platform
     self.logger = logger
     self.onDeviceIdChanged = onDeviceIdChanged
@@ -229,6 +235,21 @@ public class NottiCore {
       guard let self = self, let client = self.apiClient else { return }
       self.performOrQueue(client, description: "setSubscription") { [weak self] client, deviceId, token in
         self?.patchSubscribed(client, deviceId: deviceId, token: token, enabled, logContext: "setSubscription")
+      }
+    }
+  }
+
+  /// P3 opt-in toggle (SEGTEL-10, the single deliberate AD-001 JS-visible API):
+  /// persists the flag, and on opt-out immediately enqueues a `{country: null}`
+  /// clear — never just stops sending (SEGTEL-13). On opt-in it sends nothing
+  /// itself; the next session start attempts the best-effort read.
+  public func setLocationSharingEnabled(_ enabled: Bool) {
+    workQueue.async { [weak self] in
+      guard let self = self else { return }
+      self.deviceStore.setLocationSharingEnabled(enabled)
+      guard !enabled, let client = self.apiClient else { return }
+      self.performOrQueue(client, description: "location sharing opt-out") { client, deviceId, token in
+        _ = client.patchDevice(deviceId: deviceId, token: token, fields: ["country": NSNull()])
       }
     }
   }
@@ -506,6 +527,27 @@ public class NottiCore {
       deviceStore.setFirstSessionAtMs(nowMs)
     }
     deviceStore.setSessionStartedAtMs(nowMs)
+    readCountryIfEnabled()
+  }
+
+  /// workQueue-only. P3 session-start country read (SEGTEL-11): only when the
+  /// opt-in flag is on AND the host app already holds OS location permission
+  /// (check-only, never prompts). The async `countryProvider` result is
+  /// re-gated on the flag at callback time — a toggle flipped off mid-read
+  /// omits the field (SEGTEL-12), and a nil read (permission revoked, no fix,
+  /// geocode failure) omits it silently with no crash or error (SEGTEL-14).
+  private func readCountryIfEnabled() {
+    guard deviceStore.getLocationSharingEnabled(), hasLocationPermission() else { return }
+    countryProvider { [weak self] country in
+      self?.onWorkQueue {
+        guard let self = self else { return }
+        guard self.deviceStore.getLocationSharingEnabled() else { return }
+        guard let country = country, let client = self.apiClient else { return }
+        self.performOrQueue(client, description: "country") { client, deviceId, token in
+          _ = client.patchDevice(deviceId: deviceId, token: token, fields: ["country": country])
+        }
+      }
+    }
   }
 
   /// workQueue-only. Session-end bookkeeping:

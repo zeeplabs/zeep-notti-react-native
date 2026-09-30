@@ -1,6 +1,7 @@
 import Foundation
 import UIKit
 import UserNotifications
+import CoreLocation
 
 /// Thin TurboModule business-logic entry (Swift side of the T2-confirmed
 /// Obj-C++-shim-plus-Swift-class bridging pattern): every Spec method (T4)
@@ -112,6 +113,33 @@ public class NottiImpl: NSObject {
       versionProvider: {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
       },
+      // Segment telemetry P3 (T9): check-only OS location permission read —
+      // the SDK never calls `requestWhenInUseAuthorization` (SEGTEL-14); it
+      // only reports country when the host app has already granted permission
+      // for its own purposes.
+      hasLocationPermission: {
+        switch CLLocationManager.authorizationStatus() {
+        case .authorizedWhenInUse, .authorizedAlways:
+          return true
+        default:
+          return false
+        }
+      },
+      // Segment telemetry P3 (T9): best-effort, async country resolution from
+      // the last cached fix (`CLLocationManager().location`) reverse-geocoded
+      // to its ISO 3166-1 alpha-2 code. A stale fix is acceptable at
+      // country-level granularity (SEGTEL edge case); nil on any failure
+      // (services disabled, no fix, geocode error) → the field is omitted.
+      countryProvider: { callback in
+        let manager = CLLocationManager()
+        guard let location = manager.location else {
+          callback(nil)
+          return
+        }
+        CLGeocoder().reverseGeocodeLocation(location) { placemarks, _ in
+          callback(placemarks?.first?.isoCountryCode)
+        }
+      },
       // B1 (found in pre-release review): `NottiCore`'s `logger` parameter
       // defaults to a no-op, so every diagnostic it logs - including the A4
       // fix (mutation-failure logging) - was silently discarded in production
@@ -215,6 +243,11 @@ public class NottiImpl: NSObject {
   @objc(setSubscription:)
   public func setSubscription(_ enabled: Bool) {
     core.setSubscription(enabled)
+  }
+
+  @objc(setLocationSharingEnabled:)
+  public func setLocationSharingEnabled(_ enabled: Bool) {
+    core.setLocationSharingEnabled(enabled)
   }
 
   @objc public func getDeviceId() -> String? {

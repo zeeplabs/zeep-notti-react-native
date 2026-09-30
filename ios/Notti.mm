@@ -69,6 +69,11 @@
     [_impl setSubscription:enabled];
 }
 
+- (void)setLocationSharingEnabled:(BOOL)enabled
+{
+    [_impl setLocationSharingEnabled:enabled];
+}
+
 - (NSString *)getDeviceId
 {
     return [_impl getDeviceId];
