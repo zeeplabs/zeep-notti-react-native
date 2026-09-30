@@ -66,7 +66,8 @@ class NottiCoreTest {
     interceptor: Interceptor? = null,
     coreExecutor: Executor = executor,
     onDeviceIdChanged: (String) -> Unit = {},
-    eventStore: NottiEventStore = NottiEventStore(prefs)
+    eventStore: NottiEventStore = NottiEventStore(prefs),
+    versionProvider: () -> String? = { null }
   ) = NottiCore(
     deviceStore = store,
     eventStore = eventStore,
@@ -85,7 +86,8 @@ class NottiCoreTest {
     permissionRequester = permissionRequester,
     logger = { logs?.add(it) },
     executor = coreExecutor,
-    onDeviceIdChanged = onDeviceIdChanged
+    onDeviceIdChanged = onDeviceIdChanged,
+    versionProvider = versionProvider
   )
 
   @Test
@@ -539,6 +541,83 @@ class NottiCoreTest {
     assertEquals(mapOf("plan" to "vip"), store.getTags())
     assertEquals(1, patchThreads.size)
     assertNotEquals(callerThread, patchThreads.single())
+  }
+
+  @Test
+  fun `registration success with a version provider diff enqueues a PATCH with the current app version`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    val core = newCore(versionProvider = { "1.2.3" })
+
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+    // The version PATCH is enqueued from inside the registration task, so it
+    // only runs after that task (and this second barrier) complete.
+    awaitIdle()
+
+    assertEquals(2, server.requestCount)
+    assertEquals("POST", requireNotNull(server.takeRequest(5, TimeUnit.SECONDS)).method)
+    val patch = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+    assertEquals("PATCH", patch.method)
+    assertEquals("1.2.3", JSONObject(patch.body.readUtf8()).getString("app_version"))
+    assertEquals("1.2.3", store.getAppVersion())
+  }
+
+  @Test
+  fun `registration success with an unchanged app version does not enqueue a PATCH`() {
+    store.setAppVersion("1.2.3")
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    val core = newCore(versionProvider = { "1.2.3" })
+
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    // Only the registration POST - diff-and-enqueue is a no-op on equal values.
+    assertEquals(1, server.requestCount)
+    assertEquals("1.2.3", store.getAppVersion())
+  }
+
+  @Test
+  fun `registration success with a null version provider enqueues nothing and does not crash`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    val core = newCore(versionProvider = { null })
+
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    assertEquals(1, server.requestCount)
+    assertEquals(null, store.getAppVersion())
+  }
+
+  @Test
+  fun `a bumped app version between two registrations enqueues a PATCH with the new value`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    var currentVersion = "1.2.3"
+    val core = newCore(versionProvider = { currentVersion })
+
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+    awaitIdle() // version PATCH enqueued inside the registration task
+    assertEquals("1.2.3", store.getAppVersion())
+
+    currentVersion = "1.2.4"
+    core.onTokenRefreshed("new-fcm-token")
+    awaitIdle()
+    awaitIdle() // version PATCH enqueued inside the re-registration task
+
+    // Second registration POST + a PATCH carrying the NEW version, proving
+    // diff-and-enqueue rather than always-send.
+    assertEquals(4, server.requestCount)
+    server.takeRequest(5, TimeUnit.SECONDS) // first register
+    assertEquals("1.2.3", JSONObject(requireNotNull(server.takeRequest(5, TimeUnit.SECONDS)).body.readUtf8()).getString("app_version"))
+    server.takeRequest(5, TimeUnit.SECONDS) // second register
+    val secondPatch = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+    assertEquals("PATCH", secondPatch.method)
+    assertEquals("1.2.4", JSONObject(secondPatch.body.readUtf8()).getString("app_version"))
+    assertEquals("1.2.4", store.getAppVersion())
   }
 
   /**

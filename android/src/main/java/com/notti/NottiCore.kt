@@ -46,6 +46,15 @@ class NottiCore(
   private val logger: (message: String) -> Unit = {},
   private val executor: Executor = newDefaultExecutor(),
   /**
+   * Returns the host app's current version string (`PackageInfo.versionName`
+   * on Android, `CFBundleShortVersionString` on iOS), or `null` on failure.
+   * Reads once per registration and is diffed against the last successfully
+   * synced value (`deviceStore.getAppVersion()`) - a change enqueues a device
+   * PATCH (SEGTEL-01/02/03). Injected so [NottiCore] stays `Context`-free and
+   * unit-testable; the default `{ null }` makes the sync a no-op.
+   */
+  private val versionProvider: () -> String? = { null },
+  /**
    * Notified from [registerDevice] whenever the persisted device id actually
    * changes (first assignment, reinstall, or a re-registration that lands a
    * different id) - never on an idempotent re-register that returns the same
@@ -250,6 +259,7 @@ class NottiCore(
             deviceStore.setTags(result.response.tags)
             registrationState = RegistrationState.REGISTERED
             flushPendingMutations()
+            syncAppVersionIfNeeded()
             flushEventQueue()
           }
           is ApiResult.Failure -> {
@@ -390,6 +400,27 @@ class NottiCore(
       }
       val client = apiClient ?: return
       mutation.work(client, deviceId, token)
+    }
+  }
+
+  /**
+   * Reads the host app's current version once per registration (SEGTEL-01) and
+   * enqueues a PATCH when it differs from the last value successfully synced
+   * (SEGTEL-03 diff-and-enqueue). The value is sent as an opaque string with
+   * no client-side semver parsing (SEGTEL-04). A `null` version (reader
+   * failure) skips entirely - no crash, no registration block (SEGTEL edge
+   * case). Called from [registerDevice]'s success branch right after
+   * [flushPendingMutations].
+   */
+  private fun syncAppVersionIfNeeded() {
+    val current = versionProvider() ?: return
+    if (current == deviceStore.getAppVersion()) return
+    mutate("appVersion") { client, deviceId, token ->
+      val result = client.patchDevice(deviceId, token, mapOf("app_version" to current))
+      when (result) {
+        is ApiResult.Success -> deviceStore.setAppVersion(current)
+        is ApiResult.Failure -> logger("Notti.syncAppVersion: PATCH failed (${result.message}) - not retried")
+      }
     }
   }
 

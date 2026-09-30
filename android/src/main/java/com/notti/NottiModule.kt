@@ -91,6 +91,7 @@ class NottiModule(reactContext: ReactApplicationContext) :
       permissionRequester = { callback -> requestNativePermission(callback) },
       logger = { message -> Log.e(NAME, message) },
       executor = ioExecutor,
+      versionProvider = { readAppVersion() },
       // Routed through `activeInstance` (companion object, nulled out by
       // `invalidate()`) rather than capturing `this` directly: `registerDevice`
       // runs on `ioExecutor`, whose `shutdown()` in `invalidate()` only stops
@@ -214,6 +215,21 @@ class NottiModule(reactContext: ReactApplicationContext) :
   override fun getInitialNotificationClick(promise: Promise?) {
     val click = NottiNotificationClickRelay.takePending()
     promise?.resolve(click?.toWritableMap())
+  }
+
+  /**
+   * Reads the host app's version string once per registration (SEGTEL-01).
+   * `PackageInfo.versionName` can throw if the package is absent; the SDK
+   * must never crash here, so any failure resolves `null` - the sync then
+   * skips entirely (SEGTEL edge case).
+   */
+  private fun readAppVersion(): String? = try {
+    reactApplicationContext.packageManager
+      .getPackageInfo(reactApplicationContext.packageName, 0)
+      .versionName
+  } catch (t: Throwable) {
+    Log.e(NAME, "Notti: failed to read app version - ${t.message}")
+    null
   }
 
   /**
