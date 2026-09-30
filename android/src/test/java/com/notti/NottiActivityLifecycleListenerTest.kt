@@ -2,6 +2,7 @@ package com.notti
 
 import android.app.Activity
 import android.content.Intent
+import android.content.SharedPreferences
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.JavaOnlyMap
 import com.facebook.react.bridge.WritableMap
@@ -27,11 +28,20 @@ import org.robolectric.annotation.Implements
 @Config(sdk = [34], shadows = [ShadowArguments::class])
 class NottiActivityLifecycleListenerTest {
 
+  private lateinit var store: NottiEventStore
+
   @Before
   @After
   fun resetProcessWideState() {
     NottiNotificationClickRelay.reset()
     NottiActivityLifecycleListener.resetRegistrationForTest()
+    // handle() routes click events through the companion singleton (the click
+    // hook fires before any module exists on a cold start), which is
+    // process-wide and outlives a single test - reset it and inject a store
+    // backed by an in-memory fake so each case asserts against a clean queue.
+    NottiModule.resetProcessWideStateForTest()
+    store = NottiEventStore(FakeSharedPreferencesForLifecycle())
+    NottiModule.setEventStoreForTest(store)
   }
 
   @Test
@@ -243,6 +253,137 @@ class NottiActivityLifecycleListenerTest {
     val parsed = parseClickIntentExtras(intent)
 
     assertEquals(mapOf("plan" to "vip"), parsed?.data)
+  }
+
+  @Test
+  fun `a clicked notification carrying the SDK ids enqueues a clicked event`() {
+    val intent = Intent().apply {
+      putExtra("google.message_id", "msg-1")
+      putExtra("gcm.n.title", "Hello")
+      putExtra("notification_id", "notif-1")
+      putExtra("delivery_id", "delivery-1")
+    }
+    val activity = Robolectric.buildActivity(Activity::class.java, intent).create().get()
+    val listener = NottiActivityLifecycleListener()
+
+    listener.onActivityResumed(activity)
+
+    val stored = store.all().single()
+    assertEquals("notif-1", stored.notificationId)
+    assertEquals("delivery-1", stored.deliveryId)
+    assertEquals("clicked", stored.type)
+  }
+
+  @Test
+  fun `a clicked notification without the SDK ids is not enqueued`() {
+    val intent = Intent().apply {
+      putExtra("google.message_id", "msg-1")
+      putExtra("gcm.n.title", "Hello")
+      putExtra("plan", "vip")
+    }
+    val activity = Robolectric.buildActivity(Activity::class.java, intent).create().get()
+    val listener = NottiActivityLifecycleListener()
+
+    listener.onActivityResumed(activity)
+
+    assertTrue(store.all().isEmpty())
+  }
+}
+
+/**
+ * In-memory fake of [SharedPreferences] so the detection-site tests can inject
+ * a store on the plain JVM without a real Android runtime - same shape as the
+ * per-file fakes in NottiDeviceStoreTest/NottiEventStoreTest/NottiCoreTest,
+ * renamed to avoid confusion.
+ */
+private class FakeSharedPreferencesForLifecycle : SharedPreferences {
+  private val values = mutableMapOf<String, Any?>()
+
+  override fun getAll(): MutableMap<String, *> = values.toMutableMap()
+
+  override fun getString(key: String?, defValue: String?): String? =
+    values[key] as? String ?: defValue
+
+  override fun getStringSet(key: String?, defValues: MutableSet<String>?): MutableSet<String>? =
+    throw UnsupportedOperationException("not used by the lifecycle tests")
+
+  override fun getInt(key: String?, defValue: Int): Int =
+    values[key] as? Int ?: defValue
+
+  override fun getLong(key: String?, defValue: Long): Long =
+    values[key] as? Long ?: defValue
+
+  override fun getFloat(key: String?, defValue: Float): Float =
+    values[key] as? Float ?: defValue
+
+  override fun getBoolean(key: String?, defValue: Boolean): Boolean =
+    values[key] as? Boolean ?: defValue
+
+  override fun contains(key: String?): Boolean = values.containsKey(key)
+
+  override fun edit(): SharedPreferences.Editor = FakeEditor()
+
+  override fun registerOnSharedPreferenceChangeListener(
+    listener: SharedPreferences.OnSharedPreferenceChangeListener?
+  ) = Unit
+
+  override fun unregisterOnSharedPreferenceChangeListener(
+    listener: SharedPreferences.OnSharedPreferenceChangeListener?
+  ) = Unit
+
+  private inner class FakeEditor : SharedPreferences.Editor {
+    private val pending = mutableMapOf<String, Any?>()
+    private val removals = mutableSetOf<String>()
+    private var shouldClear = false
+
+    override fun putString(key: String?, value: String?): SharedPreferences.Editor {
+      pending[key!!] = value
+      return this
+    }
+
+    override fun putStringSet(key: String?, values: MutableSet<String>?): SharedPreferences.Editor =
+      throw UnsupportedOperationException("not used by the lifecycle tests")
+
+    override fun putInt(key: String?, value: Int): SharedPreferences.Editor {
+      pending[key!!] = value
+      return this
+    }
+
+    override fun putLong(key: String?, value: Long): SharedPreferences.Editor {
+      pending[key!!] = value
+      return this
+    }
+
+    override fun putFloat(key: String?, value: Float): SharedPreferences.Editor {
+      pending[key!!] = value
+      return this
+    }
+
+    override fun putBoolean(key: String?, value: Boolean): SharedPreferences.Editor {
+      pending[key!!] = value
+      return this
+    }
+
+    override fun remove(key: String?): SharedPreferences.Editor {
+      removals.add(key!!)
+      return this
+    }
+
+    override fun clear(): SharedPreferences.Editor {
+      shouldClear = true
+      return this
+    }
+
+    override fun commit(): Boolean {
+      apply()
+      return true
+    }
+
+    override fun apply() {
+      if (shouldClear) values.clear()
+      removals.forEach { values.remove(it) }
+      values.putAll(pending)
+    }
   }
 }
 

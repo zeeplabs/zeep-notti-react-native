@@ -40,5 +40,21 @@ class NottiFirebaseMessagingService : FirebaseMessagingService() {
 
   override fun onMessageReceived(remoteMessage: RemoteMessage) {
     NottiModule.emitNotificationReceived(remoteMessage)
+
+    // Event reporting - the "received" detection site (T4). Fires in the
+    // foreground only (the class doc above); background/killed-state clicks
+    // are detected by the Activity-lifecycle hook instead. The event goes into
+    // the process-wide companion store (this Service runs before the lazy
+    // module exists on a cold start) and is opportunistically flushed if the
+    // core is already live; otherwise it stays queued for the next
+    // network-available / foreground / registration-success trigger. A message
+    // without the SDK's `notification_id`/`delivery_id` keys is not an
+    // event-reporting notification and is skipped silently.
+    val data = parseRemoteMessage(remoteMessage).data
+    val notificationId = data["notification_id"]
+    val deliveryId = data["delivery_id"]
+    if (!notificationId.isNullOrBlank() && !deliveryId.isNullOrBlank()) {
+      NottiModule.enqueueEvent(notificationId, deliveryId, "received")
+    }
   }
 }

@@ -3,7 +3,9 @@ package com.notti
 import android.app.Application
 import android.content.ContentProvider
 import android.content.ContentValues
+import android.content.Context
 import android.database.Cursor
+import android.net.ConnectivityManager
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
@@ -21,9 +23,11 @@ import androidx.lifecycle.ProcessLifecycleOwner
  * launching Activity reads its intent. Same mechanism `androidx.startup` and
  * `react-native-firebase` use.
  *
- * It only installs two listeners - the notification-click detector and the
- * app-foreground observer that resumes registration (spec SDK-05) - no SDK
- * work, no network, nothing that could slow or break host app startup.
+ * It only installs the SDK's process-start hooks - the notification-click
+ * detector, the app-foreground observer that resumes registration (spec
+ * SDK-05), and the network-reconnect observer that flushes the offline event
+ * queue (T4) - and seeds the process-wide event store these sites write to.
+ * No SDK work, no network, nothing that could slow or break host app startup.
  */
 class NottiInitProvider : ContentProvider() {
 
@@ -34,6 +38,20 @@ class NottiInitProvider : ContentProvider() {
       return false
     }
     NottiActivityLifecycleListener.registerOnce(application)
+
+    // Seed the process-wide event store here: the detection sites and the
+    // network observer below fire before the lazy module exists, and this is
+    // the earliest point a Context is available to back the store.
+    NottiModule.getEventStore(application)
+
+    // Flush the queued event store when connectivity returns - the reporting
+    // path for events enqueued while offline (T4). Registered once per
+    // process; the observer itself swallows any rejection (SDK-03).
+    val connectivityManager =
+      application.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+    if (connectivityManager != null) {
+      NottiNetworkObserver(connectivityManager).register()
+    }
 
     // ProcessLifecycleOwner is itself set up by androidx.startup's own
     // ContentProvider, whose creation order relative to this one is not
