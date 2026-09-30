@@ -23,6 +23,15 @@ public class NottiImpl: NSObject {
   @objc public static weak var activeInstance: NottiImpl?
   static var activeCore: NottiCore?
 
+  /// Shared offline event store (T8). `NottiPushDelegate`'s `willPresent`/
+  /// `didReceive` fire on cold start before `NottiImpl` exists, so the store
+  /// the delegate enqueues into and the store `NottiCore.flushEventQueue`
+  /// drains must be the same instance reachable without a live module — the
+  /// same "buffer before module exists" pattern as `NottiEventBuffer.shared`,
+  /// reached through the `activeCore`-style static. Lazily created on the
+  /// first touch from either side.
+  static let eventStore = NottiEventStore(defaults: UserDefaults(suiteName: "notti_prefs") ?? .standard)
+
   /// Set by `Notti.mm`'s `-init` to forward parsed notification payloads
   /// into the Codegen event emitters it alone has access to. Assigning them
   /// registers the emitter with `NottiEventBuffer`, which immediately
@@ -66,6 +75,10 @@ public class NottiImpl: NSObject {
     let box = HandlerBox()
     core = NottiCore(
       deviceStore: NottiDeviceStore(defaults: defaults),
+      // `NottiCore` holds the store strongly, so the shared static here is
+      // enough to keep it alive; the T8 enqueue hookup reaches the same store
+      // through `NottiImpl.eventStore`.
+      eventStore: NottiImpl.eventStore,
       apiClientFactory: { appId, clientKey, baseUrl in
         NottiApiClient(baseUrl: baseUrl, appId: appId, clientKey: clientKey)
       },

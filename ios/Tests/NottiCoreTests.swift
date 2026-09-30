@@ -62,11 +62,13 @@ final class NottiCoreTests: XCTestCase {
     permissionRequester: @escaping (@escaping (Bool) -> Void) -> Void = { cb in cb(true) },
     apiClient: NottiApiClient? = nil,
     logs: LogSink? = nil,
-    onDeviceIdChanged: @escaping (String) -> Void = { _ in }
+    onDeviceIdChanged: @escaping (String) -> Void = { _ in },
+    eventStore: NottiEventStore? = nil
   ) -> NottiCore {
     let session = stubSession()
     let core = NottiCore(
       deviceStore: store,
+      eventStore: eventStore ?? NottiEventStore(defaults: defaults),
       apiClientFactory: { appId, clientKey, baseUrl in
         apiClient
           ?? NottiApiClient(session: session, baseUrl: baseUrl, appId: appId, clientKey: clientKey, sleeper: { _ in })
@@ -616,6 +618,109 @@ final class NottiCoreTests: XCTestCase {
     // must read the tag cache at send time, so it sees "plan" and drops it.
     XCTAssertEqual(bodies[2]["tags"] as? [String: String], [:])
     XCTAssertEqual(store.getTags(), [:])
+  }
+
+  // MARK: - Offline event queue flush (SDKCTR-09/SDKCTR-12)
+
+  func test_flushEventQueueBeforeInitializeIsANoOpAndKeepsTheEvent() {
+    // `apiClient` is nil until `initialize` runs, so even a foreground trigger
+    // must not report anything - and the pending event must stay queued. This
+    // is the closest iOS gets to a direct flush call without `initialize`.
+    let eventStore = NottiEventStore(defaults: defaults)
+    _ = eventStore.enqueue(notificationId: "n-1", deliveryId: "d-1", type: "received")
+    let core = newCore(eventStore: eventStore)
+
+    NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+    drain(core)
+
+    XCTAssertTrue(StubURLProtocol.recordedRequests().isEmpty)
+    XCTAssertEqual(eventStore.all().count, 1)
+  }
+
+  func test_registrationSuccessFlushesAQueuedEventAndRemovesIt() {
+    let eventStore = NottiEventStore(defaults: defaults)
+    _ = eventStore.enqueue(notificationId: "n-1", deliveryId: "d-1", type: "received")
+    let core = newCore(eventStore: eventStore)
+
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    StubURLProtocol.enqueue(.status(200)) // event report
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    let requests = StubURLProtocol.recordedRequests()
+    XCTAssertEqual(requests.count, 2, "register + event report")
+    XCTAssertEqual(requests[1].httpMethod, "POST")
+    XCTAssertEqual(requests[1].url?.path, "/v1/apps/app-1/notifications/n-1/events")
+    let body = try! JSONSerialization.jsonObject(with: bodyData(requests[1])) as! [String: Any]
+    XCTAssertEqual(body["delivery_id"] as? String, "d-1")
+    XCTAssertEqual(body["type"] as? String, "received")
+    XCTAssertEqual(body["token"] as? String, "apns-token")
+    XCTAssertTrue(eventStore.all().isEmpty)
+  }
+
+  func test_flushEventQueueKeepsTheEventWhenReportingFails() {
+    // `reportEvent` already exhausted its own 5-attempt retry cycle with
+    // backoff; a failure returned here means "give up for now", so the event
+    // stays queued for the next registration/foreground flush.
+    let eventStore = NottiEventStore(defaults: defaults)
+    _ = eventStore.enqueue(notificationId: "n-1", deliveryId: "d-1", type: "received")
+    let core = newCore(eventStore: eventStore)
+
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    for _ in 0..<5 { StubURLProtocol.enqueue(.status(500)) } // event report: 5 failed attempts
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    XCTAssertEqual(StubURLProtocol.recordedRequests().count, 6, "register + 5 event attempts")
+    XCTAssertEqual(eventStore.all().count, 1)
+  }
+
+  func test_appForegroundFlushesTheEventQueueEvenWhenAlreadyRegistered() {
+    // A device that is already registered skips the foreground registration
+    // retry but must still get its offline event queue flushed on every
+    // foreground.
+    let eventStore = NottiEventStore(defaults: defaults)
+    let core = newCore(eventStore: eventStore)
+
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+    XCTAssertEqual(StubURLProtocol.recordedRequests().count, 1)
+
+    _ = eventStore.enqueue(notificationId: "n-1", deliveryId: "d-1", type: "clicked")
+    StubURLProtocol.enqueue(.status(200)) // event report
+    NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+    drain(core, timeout: 20)
+
+    let requests = StubURLProtocol.recordedRequests()
+    XCTAssertEqual(requests.count, 2, "register + foreground event report, no re-registration")
+    XCTAssertEqual(requests[1].httpMethod, "POST")
+    XCTAssertEqual(requests[1].url?.path, "/v1/apps/app-1/notifications/n-1/events")
+    XCTAssertTrue(eventStore.all().isEmpty)
+  }
+
+  func test_onNetworkAvailableFlushesAQueuedEventAfterRegistration() {
+    // T8: the network observer (and the push delegate's opportunistic flush)
+    // trigger `onNetworkAvailable`; it must hop onto the work queue and drain
+    // the offline queue the same way the app-foreground trigger does.
+    let eventStore = NottiEventStore(defaults: defaults)
+    let core = newCore(eventStore: eventStore)
+
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+    XCTAssertEqual(StubURLProtocol.recordedRequests().count, 1)
+
+    _ = eventStore.enqueue(notificationId: "n-1", deliveryId: "d-1", type: "clicked")
+    StubURLProtocol.enqueue(.status(200)) // event report
+    core.onNetworkAvailable()
+    drain(core)
+
+    let requests = StubURLProtocol.recordedRequests()
+    XCTAssertEqual(requests.count, 2, "register + network-triggered event report")
+    XCTAssertEqual(requests[1].httpMethod, "POST")
+    XCTAssertEqual(requests[1].url?.path, "/v1/apps/app-1/notifications/n-1/events")
+    XCTAssertTrue(eventStore.all().isEmpty)
   }
 
   // MARK: - Foreground retry after the retry cap is exhausted (P1-AC5)

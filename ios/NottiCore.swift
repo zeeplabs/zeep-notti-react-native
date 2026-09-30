@@ -5,8 +5,8 @@ import UIKit
 
 /// Orchestrates init, device registration, token refresh, permission
 /// requests, and tag/external-id/subscription mutations (design.md
-/// NottiCore). `NottiApiClient`/`NottiDeviceStore` are constructor-injected
-/// so both can be faked in tests; `tokenProvider` and `permissionRequester`
+/// NottiCore). `NottiApiClient`/`NottiDeviceStore`/`NottiEventStore` are
+/// constructor-injected so each can be faked in tests; `tokenProvider` and `permissionRequester`
 /// abstract the platform-specific push-token fetch and OS permission prompt
 /// (owned by the concrete wiring in T14/T15 — e.g. the real APNs
 /// registration flow lives in whatever concrete `tokenProvider` is wired in,
@@ -31,6 +31,7 @@ import UIKit
 public class NottiCore {
 
   private let deviceStore: NottiDeviceStore
+  private let eventStore: NottiEventStore
   private let apiClientFactory: (_ appId: String, _ clientKey: String, _ baseUrl: String) -> NottiApiClient
   private let tokenProvider: (_ callback: @escaping (String?) -> Void) -> Void
   private let permissionRequester: (_ callback: @escaping (Bool) -> Void) -> Void
@@ -90,6 +91,7 @@ public class NottiCore {
 
   public init(
     deviceStore: NottiDeviceStore,
+    eventStore: NottiEventStore,
     apiClientFactory: @escaping (_ appId: String, _ clientKey: String, _ baseUrl: String) -> NottiApiClient,
     tokenProvider: @escaping (_ callback: @escaping (String?) -> Void) -> Void,
     permissionRequester: @escaping (_ callback: @escaping (Bool) -> Void) -> Void,
@@ -98,6 +100,7 @@ public class NottiCore {
     onDeviceIdChanged: @escaping (String) -> Void = { _ in }
   ) {
     self.deviceStore = deviceStore
+    self.eventStore = eventStore
     self.apiClientFactory = apiClientFactory
     self.tokenProvider = tokenProvider
     self.permissionRequester = permissionRequester
@@ -247,6 +250,17 @@ public class NottiCore {
     return semaphore.wait(timeout: .now() + timeout) == .success
   }
 
+  /// Flush trigger for the network observer and the push delegate's
+  /// opportunistic post-enqueue flush (T8): hops onto `workQueue` and drains
+  /// the offline event queue. A no-op when the device is not registered yet —
+  /// `flushEventQueue` guards on `apiClient`/token — and the event stays queued
+  /// for the next registration success or app foreground.
+  internal func onNetworkAvailable() {
+    workQueue.async { [weak self] in
+      self?.flushEventQueue()
+    }
+  }
+
   // MARK: - workQueue-only internals
 
   private func initializeOnQueue(appId: String, clientKey: String, baseUrl: String) {
@@ -304,6 +318,7 @@ public class NottiCore {
       deviceStore.setLastToken(token)
       deviceStore.setTags(response.tags)
       flushPendingMutations(client, deviceId: response.id, token: token)
+      flushEventQueue()
     case .failure(let message):
       registrationState = .failed
       logger("Notti.initialize: device registration failed: \(message)")
@@ -342,6 +357,9 @@ public class NottiCore {
       self.foregroundLock.lock()
       self.foregroundRetryQueued = false
       self.foregroundLock.unlock()
+      // Unconditional: a device that is already registered skips the retry
+      // below but must still get its offline event queue flushed.
+      self.flushEventQueue()
       self.retryRegistrationIfNeeded()
     }
   }
@@ -413,6 +431,32 @@ public class NottiCore {
     logger("Notti: registration complete - flushing \(queued.count) queued mutation(s)")
     for mutation in queued {
       mutation.work(client, deviceId, token)
+    }
+  }
+
+  /// workQueue-only. Drains the offline event queue (`NottiEventStore`),
+  /// reporting each pending event to the backend and removing it on success.
+  /// A no-op until the device is registered with a push token: there is
+  /// nothing to report against, and `reportEvent` needs the token to prove the
+  /// event belongs to the receiving device. On `.failure` the event STAYS
+  /// queued — `reportEvent` already exhausted its own 5-attempt retry cycle
+  /// with backoff, so any failure returned here means "give up for now", and
+  /// the next registration success or app foreground tries again. Mirrors
+  /// `NottiCore.kt`'s `flushEventQueue` exactly.
+  private func flushEventQueue() {
+    guard let client = apiClient, let token = deviceStore.getLastToken() else { return }
+    for event in eventStore.all() {
+      switch client.reportEvent(
+        notificationId: event.notificationId,
+        deliveryId: event.deliveryId,
+        type: event.type,
+        token: token
+      ) {
+      case .success:
+        eventStore.remove(id: event.id)
+      case .failure(let message):
+        logger("Notti.flushEventQueue: event report failed (\(message)) - event stays queued")
+      }
     }
   }
 
