@@ -10,6 +10,19 @@ public enum ApiResult {
   case failure(String)
 }
 
+public enum EventResult {
+  case success
+  case failure(String)
+}
+
+/// The endpoint-agnostic result of `executeWithRetry`: `success(T)` carries
+/// whatever the caller's `parseSuccess` produced, `failure(String)` a
+/// terminal 4xx status or the last error after the retry cap was exhausted.
+private enum RetryResult<T> {
+  case success(T)
+  case failure(String)
+}
+
 private struct NottiApiClientTimeoutError: Error, LocalizedError {
   var errorDescription: String? { "Notti API request timed out" }
 }
@@ -130,7 +143,7 @@ public class NottiApiClient {
     // Registration is the one call that *depends* on the response body: the
     // `id` it returns is the resource every later PATCH is addressed to, so a
     // 2xx without a device object is not a usable success.
-    return executeWithRetry(request) { data in self.parseDeviceResponse(data, fallbackTags: nil) }
+    return apiResult(executeWithRetry(request) { data in self.parseDeviceResponse(data, fallbackTags: nil) })
   }
 
   /// PATCH always includes the cached `token` field (AD-009 ownership proof).
@@ -160,18 +173,64 @@ public class NottiApiClient {
     // persistence of `external_user_id`/tags. Any 2xx is accepted; the body is
     // used when it happens to carry a device object, and otherwise the request
     // itself is the source of truth.
-    return executeWithRetry(request) { [weak self] data in
+    return apiResult(executeWithRetry(request) { [weak self] data in
       if let device = self?.parseDeviceResponse(data, fallbackTags: fallbackTags) { return device }
       return DeviceResponse(id: deviceId, tags: fallbackTags)
+    })
+  }
+
+  /// Reports a single push-notification lifecycle event (design.md offline
+  /// event queue flush — `NottiEventStore`'s `PendingEvent` maps onto
+  /// `notificationId`/`deliveryId`/`type`; `token` is the push token of the
+  /// device that received/clicked). Fire-and-forget like `patchDevice`: a
+  /// REST backend is free to acknowledge the event with `204 No Content`, an
+  /// empty `200` or a bare `{"ok":true}`, so any 2xx is a success and the
+  /// body is ignored. Shares `executeWithRetry`'s policy — 4xx terminal,
+  /// network error/5xx retried, 5-attempt cap with 2s/4s/8s/16s/32s backoff.
+  public func reportEvent(notificationId: String, deliveryId: String, type: String, token: String) -> EventResult {
+    let body: [String: Any] = ["delivery_id": deliveryId, "type": type, "token": token]
+    guard
+      let encodedAppId = Self.percentEncodedPathComponent(appId),
+      let encodedNotificationId = Self.percentEncodedPathComponent(notificationId),
+      let url = URL(string: "\(baseUrl)/v1/apps/\(encodedAppId)/notifications/\(encodedNotificationId)/events")
+    else {
+      return .failure("invalid event-reporting URL built from the configured baseUrl")
+    }
+    var request = URLRequest(url: url, timeoutInterval: Self.requestTimeoutSeconds)
+    request.httpMethod = "POST"
+    request.setValue("Bearer \(clientKey)", forHTTPHeaderField: "Authorization")
+    request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
+    request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+    // Any 2xx is a usable success here, so `parseSuccess` always returns
+    // non-nil and a 2xx is never retried.
+    return eventResult(executeWithRetry(request) { _ in true })
+  }
+
+  /// Maps the shared retry result back to the public `ApiResult` contract.
+  private func apiResult(_ result: RetryResult<DeviceResponse>) -> ApiResult {
+    switch result {
+    case .success(let device): return .success(device)
+    case .failure(let message): return .failure(message)
     }
   }
 
-  /// `parseSuccess` turns a 2xx body into the `DeviceResponse` to report, or
-  /// nil to treat that 2xx as a retriable failure.
-  private func executeWithRetry(
+  /// Maps the shared retry result back to the public `EventResult` contract.
+  private func eventResult(_ result: RetryResult<Bool>) -> EventResult {
+    switch result {
+    case .success: return .success
+    case .failure(let message): return .failure(message)
+    }
+  }
+
+  /// `parseSuccess` turns a 2xx body into the value to report, or nil to
+  /// treat that 2xx as a retriable failure. Generic so every endpoint shares
+  /// the same policy: device calls map `RetryResult<DeviceResponse>` to
+  /// `ApiResult`, `reportEvent` maps `RetryResult<Bool>` to `EventResult`.
+  private func executeWithRetry<T>(
     _ request: URLRequest,
-    parseSuccess: (Data) -> DeviceResponse?
-  ) -> ApiResult {
+    parseSuccess: (Data) -> T?
+  ) -> RetryResult<T> {
     var attempt = 0
     var delayMs = Self.baseDelayMs
     var lastError = "unknown error"
@@ -191,10 +250,10 @@ public class NottiApiClient {
           // deviceId and wipe its local tags, then build every later request
           // against `.../devices/` — a wrong resource. Such a 2xx is treated
           // as a retriable failure instead, exactly like a 5xx.
-          if let device = parseSuccess(data ?? Data()) {
-            return .success(device)
+          if let value = parseSuccess(data ?? Data()) {
+            return .success(value)
           }
-          lastError = "HTTP \(http.statusCode) with an unparseable device response body"
+          lastError = "HTTP \(http.statusCode) with an unparseable response body"
         } else if http.statusCode < 500 {
           // 4xx: not retried, terminal failure.
           return .failure("HTTP \(http.statusCode)")

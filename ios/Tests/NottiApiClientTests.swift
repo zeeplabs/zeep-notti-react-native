@@ -324,6 +324,77 @@ final class NottiApiClientTests: XCTestCase {
     XCTAssertEqual(response.tags, ["plan": "vip"])
   }
 
+  func test_reportEventSendsPostWithCorrectPathHeadersAndBody() {
+    StubURLProtocol.enqueue(.status(201))
+
+    let result = client.reportEvent(notificationId: "notif-1", deliveryId: "delivery-1", type: "clicked", token: "apns-token")
+
+    let recorded = StubURLProtocol.recordedRequests()
+    XCTAssertEqual(recorded.count, 1)
+    XCTAssertEqual(recorded[0].httpMethod, "POST")
+    XCTAssertEqual(recorded[0].url?.path, "/v1/apps/app-1/notifications/notif-1/events")
+    XCTAssertEqual(recorded[0].value(forHTTPHeaderField: "Authorization"), "Bearer secret-key")
+
+    let sentBody = try! JSONSerialization.jsonObject(with: bodyData(recorded[0])) as! [String: Any]
+    XCTAssertEqual(sentBody["delivery_id"] as? String, "delivery-1")
+    XCTAssertEqual(sentBody["type"] as? String, "clicked")
+    XCTAssertEqual(sentBody["token"] as? String, "apns-token")
+
+    guard case .success = result else { return XCTFail("expected success") }
+  }
+
+  func test_reportEvent5xxResponsesExhaustTheRetryCapAtExactlyFiveAttempts() {
+    for _ in 0..<5 { StubURLProtocol.enqueue(.status(503)) }
+
+    let result = client.reportEvent(notificationId: "notif-1", deliveryId: "delivery-1", type: "clicked", token: "t")
+
+    XCTAssertEqual(StubURLProtocol.recordedRequests().count, 5)
+    XCTAssertEqual(sleeps, [2000, 4000, 8000, 16000])
+    guard case .failure = result else { return XCTFail("expected failure") }
+  }
+
+  func test_reportEventTreatsA4xxAsTerminalWithoutRetrying() {
+    for status in [403, 404, 422] {
+      StubURLProtocol.reset()
+      sleeps = []
+      StubURLProtocol.enqueue(.status(status))
+
+      let result = client.reportEvent(notificationId: "notif-1", deliveryId: "delivery-1", type: "clicked", token: "t")
+
+      guard case .failure = result else {
+        return XCTFail("a \(status) must be a failure")
+      }
+      XCTAssertEqual(StubURLProtocol.recordedRequests().count, 1, "a \(status) must not be retried")
+      XCTAssertEqual(sleeps, [], "a \(status) must not back off")
+    }
+  }
+
+  func test_reportEventAcceptsAny2xxRegardlessOfBody() {
+    // Fire-and-forget like PATCH: 204 No Content, an empty 200 and non-JSON
+    // bodies are all normal ack shapes for an event report, and none of them
+    // may be retried.
+    let acknowledgements: [(Int, String)] = [
+      (200, ""),
+      (201, ""),
+      (204, #"{"ok":true}"#),
+      (200, "<html>captive portal</html>"),
+    ]
+
+    for (status, body) in acknowledgements {
+      StubURLProtocol.reset()
+      sleeps = []
+      StubURLProtocol.enqueue(.status(status, body: body))
+
+      let result = client.reportEvent(notificationId: "notif-1", deliveryId: "delivery-1", type: "clicked", token: "t")
+
+      guard case .success = result else {
+        return XCTFail("a \(status) with body '\(body)' must be a success")
+      }
+      XCTAssertEqual(StubURLProtocol.recordedRequests().count, 1, "a \(status) must not be retried")
+      XCTAssertEqual(sleeps, [], "a \(status) must not back off")
+    }
+  }
+
   private func bodyData(_ request: URLRequest) -> Data {
     if let body = request.httpBody { return body }
     guard let stream = request.httpBodyStream else { return Data() }
