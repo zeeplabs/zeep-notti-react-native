@@ -178,4 +178,62 @@ class NottiDeviceStoreTest {
     assertEquals("user-42", state.externalUserId)
     assertTrue(state.subscribed)
   }
+
+  @Test
+  fun `telemetry fields round-trip through SharedPreferences`() {
+    store.setAppVersion("1.2.3")
+    store.setFirstSessionAtMs(1_000L)
+    store.setLastSessionAtMs(31_000L)
+    store.setSessionCount(2)
+    store.setSessionTimeMs(45_000L)
+    store.setSessionStartedAtMs(90_000L)
+    store.setLocationSharingEnabled(true)
+
+    val state = store.getState()
+    assertEquals("1.2.3", state.appVersion)
+    assertEquals(1_000L, state.firstSessionAtMs)
+    assertEquals(31_000L, state.lastSessionAtMs)
+    assertEquals(2, state.sessionCount)
+    assertEquals(45_000L, state.sessionTimeMs)
+    assertEquals(90_000L, state.sessionStartedAtMs)
+    assertTrue(state.locationSharingEnabled)
+  }
+
+  @Test
+  fun `a fresh store over the same SharedPreferences sees persisted telemetry values`() {
+    val prefs = FakeSharedPreferences()
+    NottiDeviceStore(prefs).apply {
+      setAppVersion("1.2.3")
+      setFirstSessionAtMs(1_000L)
+      setLastSessionAtMs(31_000L)
+      setSessionCount(3)
+      setSessionTimeMs(60_000L)
+      setSessionStartedAtMs(90_000L)
+      setLocationSharingEnabled(true)
+    }
+
+    // A second store over the same backing prefs proves real persistence,
+    // not just in-memory round-tripping.
+    val state = NottiDeviceStore(prefs).getState()
+    assertEquals("1.2.3", state.appVersion)
+    assertEquals(1_000L, state.firstSessionAtMs)
+    assertEquals(31_000L, state.lastSessionAtMs)
+    assertEquals(3, state.sessionCount)
+    assertEquals(60_000L, state.sessionTimeMs)
+    assertEquals(90_000L, state.sessionStartedAtMs)
+    assertTrue(state.locationSharingEnabled)
+  }
+
+  @Test
+  fun `telemetry fields default to null-zero-false when absent`() {
+    val state = store.getState()
+
+    assertNull(state.appVersion)
+    assertNull(state.firstSessionAtMs)
+    assertNull(state.lastSessionAtMs)
+    assertEquals(0, state.sessionCount)
+    assertEquals(0L, state.sessionTimeMs)
+    assertNull(state.sessionStartedAtMs)
+    assertFalse(state.locationSharingEnabled)
+  }
 }
