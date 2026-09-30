@@ -25,6 +25,11 @@ Pod::Spec.new do |s|
     core.source_files = "ios/**/*.{h,m,mm,swift,cpp}"
     core.exclude_files = ["ios/Tests/**/*", "ios/NotificationServiceExtension/**/*"]
     core.private_header_files = "ios/**/*.h"
+    # Segment telemetry P3: `NottiImpl` reads the host app's last cached
+    # location fix and reverse-geocodes it to a country code (CoreLocation).
+    # The SDK never requests location permission itself; it only reads when
+    # the host app has already granted it (see spec.md P3 / design.md).
+    core.frameworks = "CoreLocation"
     install_modules_dependencies(core)
   end
 
