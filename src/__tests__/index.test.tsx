@@ -7,6 +7,7 @@ const mockLogout = jest.fn();
 const mockAddTags = jest.fn();
 const mockRemoveTags = jest.fn();
 const mockSetSubscription = jest.fn();
+const mockSetLocationSharingEnabled = jest.fn();
 const mockGetDeviceId = jest.fn();
 const mockGetInitialNotificationClick = jest.fn();
 const mockOnNotificationReceived = jest.fn();
@@ -23,6 +24,8 @@ jest.mock('../NativeNotti', () => ({
     addTags: (...args: unknown[]) => mockAddTags(...args),
     removeTags: (...args: unknown[]) => mockRemoveTags(...args),
     setSubscription: (...args: unknown[]) => mockSetSubscription(...args),
+    setLocationSharingEnabled: (...args: unknown[]) =>
+      mockSetLocationSharingEnabled(...args),
     getDeviceId: (...args: unknown[]) => mockGetDeviceId(...args),
     getInitialNotificationClick: (...args: unknown[]) =>
       mockGetInitialNotificationClick(...args),
@@ -90,6 +93,16 @@ describe('Notti facade', () => {
   it('setSubscription calls NativeNotti.setSubscription with the flag', () => {
     Notti.setSubscription(true);
     expect(mockSetSubscription).toHaveBeenCalledWith(true);
+  });
+
+  it('setLocationSharingEnabled calls NativeNotti.setLocationSharingEnabled with the flag', () => {
+    Notti.setLocationSharingEnabled(true);
+    expect(mockSetLocationSharingEnabled).toHaveBeenCalledWith(true);
+  });
+
+  it('setLocationSharingEnabled forwards a false opt-out', () => {
+    Notti.setLocationSharingEnabled(false);
+    expect(mockSetLocationSharingEnabled).toHaveBeenCalledWith(false);
   });
 
   it('getDeviceId calls NativeNotti.getDeviceId and returns its result', () => {

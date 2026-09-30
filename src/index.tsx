@@ -70,6 +70,19 @@ function setSubscription(enabled: boolean): void {
 }
 
 /**
+ * Opt-in toggle for country-based segment targeting. Defaults to `false`.
+ * The SDK never requests OS location permission itself; it only reads the
+ * device's country at the next session start when the host app has already
+ * granted permission. Calling with `false` clears any previously-synced
+ * country value server-side. This is the one deliberate JS-visible addition
+ * in the segment-telemetry feature (AD-001 exception for privacy-critical
+ * opt-in).
+ */
+function setLocationSharingEnabled(enabled: boolean): void {
+  NativeNotti.setLocationSharingEnabled(enabled);
+}
+
+/**
  * Returns the Notti-internal Device ID, cached natively, or `null` if not
  * yet assigned. See ADR-001
  * (docs/adr/001-expose-device-id-getter-and-change-event.md).
@@ -126,6 +139,7 @@ export const Notti = {
   login,
   logout,
   setSubscription,
+  setLocationSharingEnabled,
   getDeviceId,
   getInitialNotificationClick,
   addEventListener,

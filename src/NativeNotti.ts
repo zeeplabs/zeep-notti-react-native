@@ -24,6 +24,15 @@ export interface Spec extends TurboModule {
   setSubscription(enabled: boolean): void;
 
   /**
+   * Opt-in toggle for sharing the device's reverse-geocoded country with the
+   * backend for segment targeting. Defaults to `false`. The SDK never requests
+   * OS location permission itself - it only reads location at the next session
+   * start if the host app has already granted it. When disabled, any
+   * previously-synced country value is explicitly cleared server-side.
+   */
+  setLocationSharingEnabled(enabled: boolean): void;
+
+  /**
    * Returns the Notti-internal Device ID used by the Notti backend to route
    * notifications to this device, or `null` if not yet assigned. The value
    * is cached natively and populated asynchronously after
