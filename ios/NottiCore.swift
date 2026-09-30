@@ -89,6 +89,18 @@ public class NottiCore {
   private let foregroundLock = NSLock()
   private var foregroundRetryQueued = false
   private var foregroundObserver: NSObjectProtocol?
+  private var backgroundObserver: NSObjectProtocol?
+
+  /// Session-transition state (workQueue-only, T8). iOS fires
+  /// `didBecomeActive` repeatedly without an intervening `didEnterBackground`
+  /// (app switcher peek, control centre, alert), so "becomes active" is not
+  /// itself "a new foreground session". `appIsInBackground` + `hasStartedSession`
+  /// distinguish a real background→foreground (or cold-start) transition — the
+  /// only ones that start a session — from a repeat activation that must not
+  /// falsely end+restart the current session (spec edge case: no inflated
+  /// `session_count` from non-interactive wake-ups).
+  private var appIsInBackground = false
+  private var hasStartedSession = false
 
   public init(
     deviceStore: NottiDeviceStore,
@@ -112,10 +124,14 @@ public class NottiCore {
     self.onDeviceIdChanged = onDeviceIdChanged
     workQueue.setSpecific(key: Self.workQueueKey, value: 1)
     observeAppForeground()
+    observeAppBackground()
   }
 
   deinit {
     if let observer = foregroundObserver {
+      NotificationCenter.default.removeObserver(observer)
+    }
+    if let observer = backgroundObserver {
       NotificationCenter.default.removeObserver(observer)
     }
   }
@@ -367,6 +383,22 @@ public class NottiCore {
     #endif
   }
 
+  /// The T8 session-end hook: mirrors `observeAppForeground` on
+  /// `UIApplication.didEnterBackgroundNotification` (also plain system
+  /// notifications, zero AppDelegate forwarding). Removed in `deinit` like the
+  /// foreground observer.
+  private func observeAppBackground() {
+    #if canImport(UIKit)
+      backgroundObserver = NotificationCenter.default.addObserver(
+        forName: UIApplication.didEnterBackgroundNotification,
+        object: nil,
+        queue: nil
+      ) { [weak self] _ in
+        self?.handleAppDidEnterBackground()
+      }
+    #endif
+  }
+
   private func handleAppDidBecomeActive() {
     foregroundLock.lock()
     if foregroundRetryQueued {
@@ -381,10 +413,28 @@ public class NottiCore {
       self.foregroundLock.lock()
       self.foregroundRetryQueued = false
       self.foregroundLock.unlock()
+      // Session start first (SEGTEL-05): a repeat `didBecomeActive` without an
+      // intervening background must not close+reopen the current session, so
+      // only a real transition (or the cold-start launch) reaches
+      // `handleSessionStartOnQueue`.
+      if self.appIsInBackground || !self.hasStartedSession {
+        self.hasStartedSession = true
+        self.appIsInBackground = false
+        self.handleSessionStartOnQueue(nowMs: self.nowMs())
+      }
       // Unconditional: a device that is already registered skips the retry
       // below but must still get its offline event queue flushed.
       self.flushEventQueue()
       self.retryRegistrationIfNeeded()
+    }
+  }
+
+  /// workQueue-only. Session end on the `didEnterBackgroundNotification` path.
+  private func handleAppDidEnterBackground() {
+    workQueue.async { [weak self] in
+      guard let self = self else { return }
+      self.appIsInBackground = true
+      self.handleSessionEndOnQueue(nowMs: self.nowMs())
     }
   }
 
@@ -420,6 +470,86 @@ public class NottiCore {
         self.registerDevice(client, token)
       }
     }
+  }
+
+  // MARK: - Session lifecycle (T8, SEGTEL-05..09)
+
+  /// Starts (or, on an unclean kill, first closes then re-opens) the current
+  /// session. Public entry point for the lifecycle hooks; hops onto
+  /// `workQueue`, where `handleSessionStartOnQueue` does the real work.
+  internal func handleSessionStart(nowMs: Int64) {
+    workQueue.async { [weak self] in
+      self?.handleSessionStartOnQueue(nowMs: nowMs)
+    }
+  }
+
+  /// Ends the current session (aggregate + snapshot PATCH). Public entry point
+  /// for the background hook; hops onto `workQueue`, where
+  /// `handleSessionEndOnQueue` does the real work.
+  internal func handleSessionEnd(nowMs: Int64) {
+    workQueue.async { [weak self] in
+      self?.handleSessionEndOnQueue(nowMs: nowMs)
+    }
+  }
+
+  /// workQueue-only. Session-start bookkeeping:
+  /// 1. A stale `sessionStartedAtMs` means the previous process was killed
+  ///    while foreground (no clean background transition) — close the missed
+  ///    session with an estimate (SEGTEL-08) before opening the new one.
+  /// 2. `firstSessionAtMs` is set once, never overwritten (SEGTEL-05 AC1).
+  /// 3. Open the new session at `nowMs`.
+  private func handleSessionStartOnQueue(nowMs: Int64) {
+    if deviceStore.getSessionStartedAtMs() != nil {
+      handleSessionEndOnQueue(nowMs: nowMs)
+    }
+    if deviceStore.getFirstSessionAtMs() == nil {
+      deviceStore.setFirstSessionAtMs(nowMs)
+    }
+    deviceStore.setSessionStartedAtMs(nowMs)
+  }
+
+  /// workQueue-only. Session-end bookkeeping:
+  /// 1. No active session → no-op (also excludes widget/extension/background-
+  ///    fetch invocations, which never set `sessionStartedAtMs`).
+  /// 2. Otherwise increment the aggregate, persist it (survives kill), and
+  ///    enqueue a session PATCH whose fields are a **snapshot captured at
+  ///    enqueue time** — a new session starting mid-flush must not be
+  ///    double-counted (SEGTEL-07 AC3, same capture-at-enqueue shape as
+  ///    `mutateTags`).
+  private func handleSessionEndOnQueue(nowMs: Int64) {
+    guard let startedAt = deviceStore.getSessionStartedAtMs() else { return }
+    let sessionCount = deviceStore.getSessionCount() + 1
+    let sessionTimeMs = deviceStore.getSessionTimeMs() + (nowMs - startedAt)
+    deviceStore.setSessionCount(sessionCount)
+    deviceStore.setSessionTimeMs(sessionTimeMs)
+    deviceStore.setLastSessionAtMs(nowMs)
+    deviceStore.setSessionStartedAtMs(nil)
+
+    var snapshot: [String: Any] = [:]
+    if let firstSessionAt = deviceStore.getFirstSessionAtMs() {
+      snapshot["first_session_at"] = Self.formatIsoUtc(firstSessionAt)
+    }
+    snapshot["last_session_at"] = Self.formatIsoUtc(nowMs)
+    snapshot["session_count"] = sessionCount
+    snapshot["session_time_seconds"] = sessionTimeMs / 1000
+
+    guard let client = apiClient else { return }
+    performOrQueue(client, description: "session telemetry") { client, deviceId, token in
+      _ = client.patchDevice(deviceId: deviceId, token: token, fields: snapshot)
+    }
+  }
+
+  private func nowMs() -> Int64 {
+    Int64(Date().timeIntervalSince1970 * 1000)
+  }
+
+  /// ISO-8601 UTC with millisecond precision — the same
+  /// `yyyy-MM-dd'T'HH:mm:ss.SSS'Z'` shape Android's `formatIsoUtc` produces,
+  /// so the backend's Go RFC3339 parse accepts both platforms.
+  private static func formatIsoUtc(_ epochMs: Int64) -> String {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter.string(from: Date(timeIntervalSince1970: Double(epochMs) / 1000))
   }
 
   /// Runs `work` right away when the device already has an id + token, or

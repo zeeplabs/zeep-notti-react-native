@@ -1119,6 +1119,96 @@ final class NottiCoreTests: XCTestCase {
     XCTAssertEqual(bodies[1]["app_version"] as? String, "2.0.0")
     XCTAssertEqual(store.getAppVersion(), "2.0.0")
   }
+
+  // MARK: - Session lifecycle (T8, SEGTEL-05/06/07/08/09)
+
+  func test_sessionStartThenEndIncrementsCountAddsElapsedTimeAndPatchesTheSnapshot() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // session PATCH
+    let core = newCore()
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    core.handleSessionStart(nowMs: 1_000)
+    drain(core)
+    core.handleSessionEnd(nowMs: 31_000)
+    drain(core)
+
+    XCTAssertEqual(store.getSessionCount(), 1)
+    XCTAssertEqual(store.getSessionTimeMs(), 30_000)
+    XCTAssertEqual(store.getLastSessionAtMs(), 31_000)
+    XCTAssertNil(store.getSessionStartedAtMs())
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertEqual(bodies.count, 1)
+    let snapshot = bodies[0]
+    XCTAssertEqual(snapshot["session_count"] as? Int, 1)
+    XCTAssertEqual(snapshot["session_time_seconds"] as? Int, 30)
+    XCTAssertEqual(snapshot["first_session_at"] as? String, "1970-01-01T00:00:01.000Z")
+    XCTAssertEqual(snapshot["last_session_at"] as? String, "1970-01-01T00:00:31.000Z")
+  }
+
+  func test_uncleanKillIsEstimatedAtTheNextSessionStart() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // missed-session PATCH
+    let core = newCore()
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    core.handleSessionStart(nowMs: 1_000)
+    drain(core)
+    // Process killed while foreground: no background transition. Next launch:
+    core.handleSessionStart(nowMs: 61_000)
+    drain(core)
+
+    // The missed session is closed once: 60s of foreground, count 1.
+    XCTAssertEqual(store.getSessionCount(), 1)
+    XCTAssertEqual(store.getSessionTimeMs(), 60_000)
+    XCTAssertEqual(store.getLastSessionAtMs(), 61_000)
+    // ... and a fresh session is now open.
+    XCTAssertEqual(store.getSessionStartedAtMs(), 61_000)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertEqual(bodies.count, 1)
+    XCTAssertEqual(bodies[0]["session_count"] as? Int, 1)
+    XCTAssertEqual(bodies[0]["session_time_seconds"] as? Int, 60)
+  }
+
+  func test_sessionEndWithNoActiveSessionIsANoOp() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    let core = newCore()
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+    XCTAssertNil(store.getSessionStartedAtMs())
+
+    core.handleSessionEnd(nowMs: 5_000)
+    drain(core)
+
+    XCTAssertEqual(StubURLProtocol.recordedRequests().count, 1, "no session PATCH without an active session")
+    XCTAssertEqual(store.getSessionCount(), 0)
+    XCTAssertEqual(store.getSessionTimeMs(), 0)
+    XCTAssertNil(store.getLastSessionAtMs())
+  }
+
+  func test_firstSessionAtIsSetOnceAndNeverOverwritten() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // session 1 PATCH
+    let core = newCore()
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    core.handleSessionStart(nowMs: 1_000)
+    drain(core)
+    XCTAssertEqual(store.getFirstSessionAtMs(), 1_000)
+
+    core.handleSessionEnd(nowMs: 2_000)
+    drain(core)
+    core.handleSessionStart(nowMs: 5_000)
+    drain(core)
+
+    XCTAssertEqual(store.getFirstSessionAtMs(), 1_000, "first_session_at is set once, never overwritten")
+    XCTAssertEqual(store.getSessionStartedAtMs(), 5_000)
+  }
 }
 
 /// An API client that records which thread it was called on and blocks there
