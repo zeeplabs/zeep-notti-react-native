@@ -68,7 +68,9 @@ class NottiCoreTest {
     coreExecutor: Executor = executor,
     onDeviceIdChanged: (String) -> Unit = {},
     eventStore: NottiEventStore = NottiEventStore(prefs),
-    versionProvider: () -> String? = { null }
+    versionProvider: () -> String? = { null },
+    hasLocationPermission: () -> Boolean = { false },
+    countryProvider: (callback: (String?) -> Unit) -> Unit = { cb -> cb(null) }
   ) = NottiCore(
     deviceStore = store,
     eventStore = eventStore,
@@ -88,7 +90,9 @@ class NottiCoreTest {
     logger = { logs?.add(it) },
     executor = coreExecutor,
     onDeviceIdChanged = onDeviceIdChanged,
-    versionProvider = versionProvider
+    versionProvider = versionProvider,
+    hasLocationPermission = hasLocationPermission,
+    countryProvider = countryProvider
   )
 
   @Test
@@ -718,6 +722,103 @@ class NottiCoreTest {
     assertEquals(19_000L, store.getSessionTimeMs())
     assertEquals(30_000L, store.getLastSessionAtMs())
     assertNull(store.getSessionStartedAtMs())
+  }
+
+  @Test
+  fun `opt-in off with permission granted never reads or sends a country field`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    var providerCalls = 0
+    val core = newCore(
+      hasLocationPermission = { true },
+      countryProvider = { cb -> providerCalls++; cb("BR") }
+    )
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    // Flag is off by default (SEGTEL-10); a session start must not even invoke
+    // the country provider (SEGTEL-12 gate).
+    core.onAppForegrounded()
+    awaitIdle()
+    awaitIdle()
+
+    assertEquals(0, providerCalls)
+    assertEquals(1, server.requestCount)
+    assertFalse(store.getLocationSharingEnabled())
+  }
+
+  @Test
+  fun `opt-in on with permission granted enqueues a country PATCH at session start`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    val core = newCore(
+      hasLocationPermission = { true },
+      countryProvider = { cb -> cb("BR") }
+    )
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    // Enabling does not read immediately (SEGTEL-11 read cadence is session start).
+    core.setLocationSharingEnabled(true)
+    awaitIdle()
+    assertEquals(1, server.requestCount)
+
+    core.onAppForegrounded()
+    awaitIdle()
+    awaitIdle() // country PATCH dispatched from the provider callback
+
+    assertEquals(2, server.requestCount)
+    server.takeRequest(5, TimeUnit.SECONDS) // register
+    val patch = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+    assertEquals("PATCH", patch.method)
+    assertEquals("BR", JSONObject(patch.body.readUtf8()).getString("country"))
+    assertTrue(store.getLocationSharingEnabled())
+  }
+
+  @Test
+  fun `toggling location sharing off enqueues an explicit country null clear`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    val core = newCore()
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    core.setLocationSharingEnabled(true)
+    awaitIdle()
+    assertEquals(1, server.requestCount) // enabling reads nothing
+
+    core.setLocationSharingEnabled(false)
+    awaitIdle()
+
+    // Disabling enqueues an immediate {country: null} clear (SEGTEL-13 AC4) -
+    // never just stops sending.
+    assertEquals(2, server.requestCount)
+    server.takeRequest(5, TimeUnit.SECONDS) // register
+    val clear = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+    assertEquals("PATCH", clear.method)
+    assertTrue(JSONObject(clear.body.readUtf8()).isNull("country"))
+    assertFalse(store.getLocationSharingEnabled())
+  }
+
+  @Test
+  fun `opt-in on with a failing country provider omits the field without crashing`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    val core = newCore(
+      hasLocationPermission = { true },
+      countryProvider = { cb -> cb(null) }
+    )
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    core.setLocationSharingEnabled(true)
+    awaitIdle()
+    core.onAppForegrounded()
+    awaitIdle()
+    awaitIdle()
+
+    // No country field anywhere: read failure / revoked permission is treated
+    // the same as no permission - omit, no error (SEGTEL-11/14).
+    assertEquals(1, server.requestCount)
+    assertTrue(store.getLocationSharingEnabled())
   }
 
   /**

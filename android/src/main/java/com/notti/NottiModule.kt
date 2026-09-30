@@ -3,8 +3,11 @@ package com.notti
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.location.Geocoder
+import android.location.LocationManager
 import android.os.Build
 import android.util.Log
+import androidx.core.content.ContextCompat
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReadableArray
@@ -15,6 +18,7 @@ import com.facebook.react.modules.core.PermissionListener
 import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.messaging.RemoteMessage
 import okhttp3.OkHttpClient
+import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
@@ -92,6 +96,8 @@ class NottiModule(reactContext: ReactApplicationContext) :
       logger = { message -> Log.e(NAME, message) },
       executor = ioExecutor,
       versionProvider = { readAppVersion() },
+      hasLocationPermission = { hasLocationPermission() },
+      countryProvider = { callback -> resolveCountry(callback) },
       // Routed through `activeInstance` (companion object, nulled out by
       // `invalidate()`) rather than capturing `this` directly: `registerDevice`
       // runs on `ioExecutor`, whose `shutdown()` in `invalidate()` only stops
@@ -202,6 +208,10 @@ class NottiModule(reactContext: ReactApplicationContext) :
     core.setSubscription(enabled)
   }
 
+  override fun setLocationSharingEnabled(enabled: Boolean) {
+    core.setLocationSharingEnabled(enabled)
+  }
+
   override fun getDeviceId(): String? = core.getDeviceId()
 
   /**
@@ -230,6 +240,51 @@ class NottiModule(reactContext: ReactApplicationContext) :
   } catch (t: Throwable) {
     Log.e(NAME, "Notti: failed to read app version - ${t.message}")
     null
+  }
+
+  /**
+   * Check-only location permission gate (SEGTEL-14): true only when the host
+   * app has already been granted the permission. Never prompts - the SDK only
+   * reads, it never requests OS location permission.
+   */
+  private fun hasLocationPermission(): Boolean =
+    ContextCompat.checkSelfPermission(
+      reactApplicationContext,
+      Manifest.permission.ACCESS_COARSE_LOCATION
+    ) == PackageManager.PERMISSION_GRANTED
+
+  /**
+   * Best-effort country resolution (SEGTEL-11): reads the last known location
+   * (may be a stale cached fix - acceptable for country-level granularity) and
+   * reverse-geocodes it to an ISO 3166-1 alpha-2 `countryCode`. Geocoding is a
+   * blocking network call, so it runs on a background thread. Any failure
+   * (location unavailable, services disabled, no fix, geocode error) resolves
+   * `null` - treated the same as no permission: omit, no error, no prompt.
+   */
+  private fun resolveCountry(callback: (String?) -> Unit) {
+    val context = reactApplicationContext
+    val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+    val location = try {
+      locationManager?.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+        ?: locationManager?.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+    } catch (t: Throwable) {
+      Log.e(NAME, "Notti: failed to read last known location - ${t.message}")
+      null
+    }
+    if (location == null) {
+      callback(null)
+      return
+    }
+    Thread {
+      try {
+        val geocoder = Geocoder(context, Locale.US)
+        val addresses = geocoder.getFromLocation(location.latitude, location.longitude, 1)
+        callback(addresses?.firstOrNull()?.countryCode)
+      } catch (t: Throwable) {
+        Log.e(NAME, "Notti: failed to reverse-geocode location - ${t.message}")
+        callback(null)
+      }
+    }.start()
   }
 
   /**

@@ -59,6 +59,22 @@ class NottiCore(
    */
   private val versionProvider: () -> String? = { null },
   /**
+   * Check-only OS location permission gate (SEGTEL-12/14): true only when the
+   * host app has already been granted location permission. Never prompts - the
+   * SDK only reads, it never requests (SEGTEL-14). Injected so [NottiCore]
+   * stays `Context`-free and unit-testable; the default `{ false }` means the
+   * country read is skipped unless the integrator explicitly opts in and wires
+   * the real permission check.
+   */
+  private val hasLocationPermission: () -> Boolean = { false },
+  /**
+   * Best-effort, async country resolution (SEGTEL-11): reverse-geocodes the
+   * device's last known fix to an ISO 3166-1 alpha-2 code, or invokes the
+   * callback with `null` on any failure. Injected so [NottiCore] stays
+   * `Context`-free; the default no-op provider returns `null` (omit).
+   */
+  private val countryProvider: (callback: (String?) -> Unit) -> Unit = { cb -> cb(null) },
+  /**
    * Notified from [registerDevice] whenever the persisted device id actually
    * changes (first assignment, reinstall, or a re-registration that lands a
    * different id) - never on an idempotent re-register that returns the same
@@ -276,6 +292,32 @@ class NottiCore(
       deviceStore.setFirstSessionAtMs(nowMs)
     }
     deviceStore.setSessionStartedAtMs(nowMs)
+    readCountryIfOptedIn()
+  }
+
+  /**
+   * Best-effort, permission-gated country read at session start (SEGTEL-11):
+   * only when the opt-in flag is on AND the host app already holds location
+   * permission. The async [countryProvider] result is re-checked against the
+   * flag at callback time (the toggle may have flipped off mid-read) and a
+   * `null` country (revoked permission/read failure) is silently omitted -
+   * never prompts, never errors (SEGTEL-12/14). Stale cached fixes are
+   * acceptable for country-level granularity.
+   */
+  private fun readCountryIfOptedIn() {
+    if (!deviceStore.getLocationSharingEnabled() || !hasLocationPermission()) return
+    countryProvider { country ->
+      dispatch("country") {
+        if (!deviceStore.getLocationSharingEnabled() || country == null) return@dispatch
+        mutate("country") { client, deviceId, token ->
+          val result = client.patchDevice(deviceId, token, mapOf("country" to country))
+          when (result) {
+            is ApiResult.Success -> Unit
+            is ApiResult.Failure -> logger("Notti.country: PATCH failed (${result.message}) - not retried")
+          }
+        }
+      }
+    }
   }
 
   /**
@@ -442,6 +484,28 @@ class NottiCore(
       when (result) {
         is ApiResult.Success -> deviceStore.setSubscribed(enabled)
         is ApiResult.Failure -> logger("Notti.setSubscription: PATCH failed (${result.message}) - not retried")
+      }
+    }
+  }
+
+  /**
+   * P3 opt-in toggle (SEGTEL-10/13/15): persists the flag locally (survives
+   * restarts) and, when disabled, immediately enqueues an explicit `{country:
+   * null}` clear so a previously-synced value is removed server-side rather
+   * than just no longer updated (SEGTEL-13 AC4). Enabling does not read
+   * immediately - the next session start attempts it (SEGTEL-11 read cadence).
+   */
+  fun setLocationSharingEnabled(enabled: Boolean) {
+    deviceStore.setLocationSharingEnabled(enabled)
+    if (!enabled) {
+      mutate("setLocationSharingEnabled") { client, deviceId, token ->
+        // JSONObject.NULL is the raw-JSON null sentinel toJsonValue passes
+        // through unchanged - the explicit {country: null} clear (SEGTEL-13).
+        val result = client.patchDevice(deviceId, token, mapOf("country" to org.json.JSONObject.NULL))
+        when (result) {
+          is ApiResult.Success -> Unit
+          is ApiResult.Failure -> logger("Notti.setLocationSharingEnabled: clear PATCH failed (${result.message}) - not retried")
+        }
       }
     }
   }
