@@ -1237,6 +1237,33 @@ final class NottiCoreTests: XCTestCase {
     )
   }
 
+  func test_locationSharingOnWithoutOSPermissionNeverReadsCountry() {
+    var countryReads = 0
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    let core = newCore(
+      hasLocationPermission: { false },
+      countryProvider: { cb in countryReads += 1; cb("BR") }
+    )
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    core.setLocationSharingEnabled(true)
+    drain(core)
+    XCTAssertTrue(store.getLocationSharingEnabled())
+
+    core.handleSessionStart(nowMs: 1_000)
+    drain(core)
+
+    // Opt-in on but the OS has not granted permission: the read is gated
+    // before the provider is ever invoked, and no country field is sent
+    // (SEGTEL-12) - the SDK never requests permission itself (SEGTEL-14).
+    XCTAssertEqual(countryReads, 0, "provider must not be invoked without OS permission")
+    XCTAssertTrue(
+      StubURLProtocol.recordedRequests().allSatisfy { $0.httpMethod == "POST" },
+      "no country PATCH may be issued without OS location permission"
+    )
+  }
+
   func test_locationSharingOnWithPermissionAndAReadSendsCountryOnSessionStart() {
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
     let core = newCore(

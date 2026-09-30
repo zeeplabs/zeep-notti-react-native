@@ -775,6 +775,31 @@ class NottiCoreTest {
   }
 
   @Test
+  fun `opt-in on with no OS location permission never invokes the provider`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    var providerCalls = 0
+    val core = newCore(
+      hasLocationPermission = { false },
+      countryProvider = { cb -> providerCalls++; cb("BR") }
+    )
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    core.setLocationSharingEnabled(true)
+    awaitIdle()
+    core.onAppForegrounded()
+    awaitIdle()
+    awaitIdle()
+
+    // Opt-in on but permission not granted: the read is gated before the
+    // provider is ever invoked, and no country field is sent (SEGTEL-12) -
+    // the SDK never requests permission itself (SEGTEL-14).
+    assertEquals(0, providerCalls)
+    assertEquals(1, server.requestCount) // registration only
+    assertTrue(store.getLocationSharingEnabled())
+  }
+
+  @Test
   fun `toggling location sharing off enqueues an explicit country null clear`() {
     server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
     server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
