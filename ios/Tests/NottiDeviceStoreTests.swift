@@ -74,4 +74,72 @@ final class NottiDeviceStoreTests: XCTestCase {
     XCTAssertEqual(state.externalUserId, "user-42")
     XCTAssertTrue(state.subscribed)
   }
+
+  // MARK: - Segment telemetry fields (T6)
+
+  func test_telemetryFieldsRoundTripThroughUserDefaults() {
+    store.setAppVersion("1.2.3")
+    store.setFirstSessionAtMs(1_000)
+    store.setLastSessionAtMs(2_000)
+    store.setSessionCount(3)
+    store.setSessionTimeMs(45_000)
+    store.setSessionStartedAtMs(5_000)
+    store.setLocationSharingEnabled(true)
+
+    XCTAssertEqual(store.getAppVersion(), "1.2.3")
+    XCTAssertEqual(store.getFirstSessionAtMs(), 1_000)
+    XCTAssertEqual(store.getLastSessionAtMs(), 2_000)
+    XCTAssertEqual(store.getSessionCount(), 3)
+    XCTAssertEqual(store.getSessionTimeMs(), 45_000)
+    XCTAssertEqual(store.getSessionStartedAtMs(), 5_000)
+    XCTAssertTrue(store.getLocationSharingEnabled())
+  }
+
+  func test_telemetryFieldsPersistAcrossANewStoreInstanceOverTheSameDefaults() {
+    store.setAppVersion("2.0.0")
+    store.setFirstSessionAtMs(1_000)
+    store.setLastSessionAtMs(2_000)
+    store.setSessionCount(7)
+    store.setSessionTimeMs(90_000)
+    store.setSessionStartedAtMs(3_000)
+    store.setLocationSharingEnabled(true)
+
+    let fresh = NottiDeviceStore(defaults: defaults)
+    XCTAssertEqual(fresh.getAppVersion(), "2.0.0")
+    XCTAssertEqual(fresh.getFirstSessionAtMs(), 1_000)
+    XCTAssertEqual(fresh.getLastSessionAtMs(), 2_000)
+    XCTAssertEqual(fresh.getSessionCount(), 7)
+    XCTAssertEqual(fresh.getSessionTimeMs(), 90_000)
+    XCTAssertEqual(fresh.getSessionStartedAtMs(), 3_000)
+    XCTAssertTrue(fresh.getLocationSharingEnabled())
+  }
+
+  func test_telemetryFieldsDefaultToDisabledAndZeroForANeverInitializedStore() {
+    XCTAssertNil(store.getAppVersion())
+    XCTAssertNil(store.getFirstSessionAtMs())
+    XCTAssertNil(store.getLastSessionAtMs())
+    XCTAssertEqual(store.getSessionCount(), 0)
+    XCTAssertEqual(store.getSessionTimeMs(), 0)
+    XCTAssertNil(store.getSessionStartedAtMs())
+    XCTAssertFalse(store.getLocationSharingEnabled())
+  }
+
+  func test_getStateIncludesTheNewTelemetryFields() {
+    store.setAppVersion("1.2.3")
+    store.setFirstSessionAtMs(1_000)
+    store.setLastSessionAtMs(2_000)
+    store.setSessionCount(3)
+    store.setSessionTimeMs(45_000)
+    store.setSessionStartedAtMs(5_000)
+    store.setLocationSharingEnabled(true)
+
+    let state = store.getState()
+    XCTAssertEqual(state.appVersion, "1.2.3")
+    XCTAssertEqual(state.firstSessionAtMs, 1_000)
+    XCTAssertEqual(state.lastSessionAtMs, 2_000)
+    XCTAssertEqual(state.sessionCount, 3)
+    XCTAssertEqual(state.sessionTimeMs, 45_000)
+    XCTAssertEqual(state.sessionStartedAtMs, 5_000)
+    XCTAssertTrue(state.locationSharingEnabled)
+  }
 }

@@ -11,13 +11,41 @@ public struct DeviceState {
   public let tags: [String: String]
   public let externalUserId: String?
   public let subscribed: Bool
+  // --- Segment telemetry (T6) ---
+  public let appVersion: String?
+  public let firstSessionAtMs: Int64?
+  public let lastSessionAtMs: Int64?
+  public let sessionCount: Int
+  public let sessionTimeMs: Int64
+  public let sessionStartedAtMs: Int64?
+  public let locationSharingEnabled: Bool
 
-  public init(deviceId: String?, lastToken: String?, tags: [String: String], externalUserId: String?, subscribed: Bool) {
+  public init(
+    deviceId: String?,
+    lastToken: String?,
+    tags: [String: String],
+    externalUserId: String?,
+    subscribed: Bool,
+    appVersion: String? = nil,
+    firstSessionAtMs: Int64? = nil,
+    lastSessionAtMs: Int64? = nil,
+    sessionCount: Int = 0,
+    sessionTimeMs: Int64 = 0,
+    sessionStartedAtMs: Int64? = nil,
+    locationSharingEnabled: Bool = false
+  ) {
     self.deviceId = deviceId
     self.lastToken = lastToken
     self.tags = tags
     self.externalUserId = externalUserId
     self.subscribed = subscribed
+    self.appVersion = appVersion
+    self.firstSessionAtMs = firstSessionAtMs
+    self.lastSessionAtMs = lastSessionAtMs
+    self.sessionCount = sessionCount
+    self.sessionTimeMs = sessionTimeMs
+    self.sessionStartedAtMs = sessionStartedAtMs
+    self.locationSharingEnabled = locationSharingEnabled
   }
 }
 
@@ -28,6 +56,13 @@ public class NottiDeviceStore {
   private static let keyExternalUserId = "notti_external_user_id"
   private static let keySubscribed = "notti_subscribed"
   private static let keyTags = "notti_tags"
+  private static let keyAppVersion = "notti_app_version"
+  private static let keyFirstSessionAtMs = "notti_first_session_at_ms"
+  private static let keyLastSessionAtMs = "notti_last_session_at_ms"
+  private static let keySessionCount = "notti_session_count"
+  private static let keySessionTimeMs = "notti_session_time_ms"
+  private static let keySessionStartedAtMs = "notti_session_started_at_ms"
+  private static let keyLocationSharingEnabled = "notti_location_sharing_enabled"
 
   private let defaults: UserDefaults
 
@@ -98,13 +133,78 @@ public class NottiDeviceStore {
     defaults.set(tags, forKey: Self.keyTags)
   }
 
+  // MARK: - Segment telemetry fields (T6)
+
+  public func getAppVersion() -> String? {
+    defaults.string(forKey: Self.keyAppVersion)
+  }
+
+  public func setAppVersion(_ appVersion: String?) {
+    defaults.set(appVersion, forKey: Self.keyAppVersion)
+  }
+
+  public func getFirstSessionAtMs() -> Int64? {
+    (defaults.object(forKey: Self.keyFirstSessionAtMs) as? NSNumber)?.int64Value
+  }
+
+  public func setFirstSessionAtMs(_ ms: Int64?) {
+    defaults.set(ms.map(NSNumber.init(value:)), forKey: Self.keyFirstSessionAtMs)
+  }
+
+  public func getLastSessionAtMs() -> Int64? {
+    (defaults.object(forKey: Self.keyLastSessionAtMs) as? NSNumber)?.int64Value
+  }
+
+  public func setLastSessionAtMs(_ ms: Int64?) {
+    defaults.set(ms.map(NSNumber.init(value:)), forKey: Self.keyLastSessionAtMs)
+  }
+
+  public func getSessionCount() -> Int {
+    defaults.integer(forKey: Self.keySessionCount)
+  }
+
+  public func setSessionCount(_ count: Int) {
+    defaults.set(count, forKey: Self.keySessionCount)
+  }
+
+  public func getSessionTimeMs() -> Int64 {
+    (defaults.object(forKey: Self.keySessionTimeMs) as? NSNumber)?.int64Value ?? 0
+  }
+
+  public func setSessionTimeMs(_ ms: Int64) {
+    defaults.set(NSNumber(value: ms), forKey: Self.keySessionTimeMs)
+  }
+
+  public func getSessionStartedAtMs() -> Int64? {
+    (defaults.object(forKey: Self.keySessionStartedAtMs) as? NSNumber)?.int64Value
+  }
+
+  public func setSessionStartedAtMs(_ ms: Int64?) {
+    defaults.set(ms.map(NSNumber.init(value:)), forKey: Self.keySessionStartedAtMs)
+  }
+
+  public func getLocationSharingEnabled() -> Bool {
+    defaults.bool(forKey: Self.keyLocationSharingEnabled)
+  }
+
+  public func setLocationSharingEnabled(_ enabled: Bool) {
+    defaults.set(enabled, forKey: Self.keyLocationSharingEnabled)
+  }
+
   public func getState() -> DeviceState {
     DeviceState(
       deviceId: getDeviceId(),
       lastToken: getLastToken(),
       tags: getTags(),
       externalUserId: getExternalUserId(),
-      subscribed: getSubscribed()
+      subscribed: getSubscribed(),
+      appVersion: getAppVersion(),
+      firstSessionAtMs: getFirstSessionAtMs(),
+      lastSessionAtMs: getLastSessionAtMs(),
+      sessionCount: getSessionCount(),
+      sessionTimeMs: getSessionTimeMs(),
+      sessionStartedAtMs: getSessionStartedAtMs(),
+      locationSharingEnabled: getLocationSharingEnabled()
     )
   }
 }
