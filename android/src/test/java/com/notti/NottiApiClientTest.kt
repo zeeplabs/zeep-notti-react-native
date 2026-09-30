@@ -6,6 +6,7 @@ import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.SocketPolicy
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -428,8 +429,27 @@ class NottiApiClientTest {
 
       assertEquals("expected exactly 1 request for HTTP $code", before + 1, server.requestCount)
       assertTrue("expected a Failure for HTTP $code, got $result", result is EventResult.Failure)
-      assertEquals("HTTP $code", (result as EventResult.Failure).message)
+      val failure = result as EventResult.Failure
+      assertEquals("HTTP $code", failure.message)
+      assertTrue("a 4xx must be a terminal failure (dropped from the queue), got $result", failure.terminal)
     }
+  }
+
+  @Test
+  fun `reportEvent 5xx exhaustion is a non-terminal failure`() {
+    repeat(5) { server.enqueue(MockResponse().setResponseCode(500)) }
+
+    val result = client.reportEvent(
+      notificationId = "notif-1",
+      deliveryId = "delivery-1",
+      type = "clicked",
+      token = "fcm-token"
+    )
+
+    assertTrue("expected a Failure, got $result", result is EventResult.Failure)
+    // Retry-cap exhaustion on transient errors is NOT terminal: the event
+    // stays queued for the next flush (SDKCTR-11).
+    assertFalse((result as EventResult.Failure).terminal)
   }
 
   @Test

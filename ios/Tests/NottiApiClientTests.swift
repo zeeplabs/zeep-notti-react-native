@@ -361,12 +361,24 @@ final class NottiApiClientTests: XCTestCase {
 
       let result = client.reportEvent(notificationId: "notif-1", deliveryId: "delivery-1", type: "clicked", token: "t")
 
-      guard case .failure = result else {
+      guard case .failure(_, let terminal) = result else {
         return XCTFail("a \(status) must be a failure")
       }
       XCTAssertEqual(StubURLProtocol.recordedRequests().count, 1, "a \(status) must not be retried")
       XCTAssertEqual(sleeps, [], "a \(status) must not back off")
+      XCTAssertTrue(terminal, "a \(status) must be terminal (event dropped from the queue)")
     }
+  }
+
+  func test_reportEvent5xxExhaustionIsNonTerminal() {
+    for _ in 0..<5 { StubURLProtocol.enqueue(.status(500)) }
+
+    let result = client.reportEvent(notificationId: "notif-1", deliveryId: "delivery-1", type: "clicked", token: "t")
+
+    // Retry-cap exhaustion on transient errors is NOT terminal: the event
+    // stays queued for the next flush (SDKCTR-11).
+    guard case .failure(_, let terminal) = result else { return XCTFail("expected failure") }
+    XCTAssertFalse(terminal)
   }
 
   func test_reportEventAcceptsAny2xxRegardlessOfBody() {

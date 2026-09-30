@@ -20,17 +20,27 @@ sealed class ApiResult {
  * Result of the shared retry loop in [NottiApiClient.executeWithRetry]:
  * [Success] carries the value `parseSuccess` produced for a usable 2xx,
  * [Failure] the reason (last HTTP status or network error) once the retry
- * cap is exhausted or a terminal (4xx) response is received.
+ * cap is exhausted or a terminal (4xx) response is received. `terminal` is
+ * true only when the call was abandoned on a 4xx (never retried, nothing to
+ * gain from trying again later) and false when the retry cap was exhausted on
+ * transient errors - the distinction the offline queue needs to know whether
+ * to discard the event or keep it for the next flush.
  */
 sealed class RetryResult<out T> {
   data class Success<T>(val value: T) : RetryResult<T>()
-  data class Failure(val message: String) : RetryResult<Nothing>()
+  data class Failure(val message: String, val terminal: Boolean = false) : RetryResult<Nothing>()
 }
 
-/** Result of [NottiApiClient.reportEvent]: any 2xx is a [Success]. */
+/**
+ * Result of [NottiApiClient.reportEvent]: any 2xx is a [Success]. A
+ * [Failure] carries whether it was terminal (`terminal` = a 4xx the backend
+ * will never accept, so the event must not be retried again) or transient
+ * (retry cap exhausted on network/5xx, so the event stays queued for the next
+ * flush).
+ */
 sealed class EventResult {
   object Success : EventResult()
-  data class Failure(val message: String) : EventResult()
+  data class Failure(val message: String, val terminal: Boolean) : EventResult()
 }
 
 /**
@@ -204,8 +214,10 @@ class NottiApiClient(
             // response.
             lastError = "HTTP ${response.code} with an unparseable response body"
           } else if (response.code < 500) {
-            // 4xx: not retried, terminal failure.
-            return RetryResult.Failure("HTTP ${response.code}")
+            // 4xx: not retried, terminal failure. Marked terminal so the
+            // offline queue can discard the event - the backend will never
+            // accept it, so keeping it would re-fail forever on every flush.
+            return RetryResult.Failure("HTTP ${response.code}", terminal = true)
           } else {
             lastError = "HTTP ${response.code}"
           }
@@ -220,6 +232,8 @@ class NottiApiClient(
       }
     }
 
+    // Retry cap exhausted on transient (network/5xx) failures only - a 4xx
+    // would have returned above. Not terminal: the event stays queued.
     return RetryResult.Failure(lastError)
   }
 
@@ -230,7 +244,7 @@ class NottiApiClient(
 
   private fun RetryResult<*>.toEventResult(): EventResult = when (this) {
     is RetryResult.Success -> EventResult.Success
-    is RetryResult.Failure -> EventResult.Failure(message)
+    is RetryResult.Failure -> EventResult.Failure(message, terminal)
   }
 
   /**

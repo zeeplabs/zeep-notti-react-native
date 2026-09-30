@@ -675,6 +675,23 @@ final class NottiCoreTests: XCTestCase {
     XCTAssertEqual(eventStore.all().count, 1)
   }
 
+  func test_flushEventQueueDropsTheEventOnATerminal4xxReport() {
+    // A 403 (e.g. stale/mismatched token per spec SDKCTR-11) is terminal: the
+    // backend will never accept it, so the event must be dropped, not left to
+    // re-fail forever on every flush trigger.
+    let eventStore = NottiEventStore(defaults: defaults)
+    _ = eventStore.enqueue(notificationId: "n-1", deliveryId: "d-1", type: "received")
+    let core = newCore(eventStore: eventStore)
+
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    StubURLProtocol.enqueue(.status(403)) // event report: terminal
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    XCTAssertEqual(StubURLProtocol.recordedRequests().count, 2, "register + 1 terminal event attempt")
+    XCTAssertTrue(eventStore.all().isEmpty, "a terminal 4xx must remove the event from the queue")
+  }
+
   func test_appForegroundFlushesTheEventQueueEvenWhenAlreadyRegistered() {
     // A device that is already registered skips the foreground registration
     // retry but must still get its offline event queue flushed on every

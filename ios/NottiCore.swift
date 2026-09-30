@@ -435,14 +435,21 @@ public class NottiCore {
   }
 
   /// workQueue-only. Drains the offline event queue (`NottiEventStore`),
-  /// reporting each pending event to the backend and removing it on success.
-  /// A no-op until the device is registered with a push token: there is
-  /// nothing to report against, and `reportEvent` needs the token to prove the
-  /// event belongs to the receiving device. On `.failure` the event STAYS
-  /// queued — `reportEvent` already exhausted its own 5-attempt retry cycle
-  /// with backoff, so any failure returned here means "give up for now", and
-  /// the next registration success or app foreground tries again. Mirrors
-  /// `NottiCore.kt`'s `flushEventQueue` exactly.
+  /// reporting each pending event to the backend and removing it once the
+  /// backend has acknowledged it. Write-ahead persistence: the event is
+  /// persisted before any report attempt, so a crash mid-flush never loses a
+  /// queued event - at worst it is re-reported, which the backend treats as
+  /// idempotent. A no-op until the device is registered with a push token:
+  /// there is nothing to report against, and `reportEvent` needs the token to
+  /// prove the event belongs to the receiving device.
+  ///
+  /// On a terminal `.failure` (`terminal == true`, a 4xx the backend will
+  /// never accept - e.g. a stale token 403 per spec SDKCTR-11) the event is
+  /// removed too: re-attempting it on every future flush would fail
+  /// identically forever. On a transient `.failure` (`terminal == false`,
+  /// retry cap exhausted on network/5xx) the event STAYS queued and the next
+  /// registration success, app foreground, or network regain tries again.
+  /// Mirrors `NottiCore.kt`'s `flushEventQueue` exactly.
   private func flushEventQueue() {
     guard let client = apiClient, let token = deviceStore.getLastToken() else { return }
     for event in eventStore.all() {
@@ -454,8 +461,13 @@ public class NottiCore {
       ) {
       case .success:
         eventStore.remove(id: event.id)
-      case .failure(let message):
-        logger("Notti.flushEventQueue: event report failed (\(message)) - event stays queued")
+      case .failure(let message, let terminal):
+        if terminal {
+          logger("Notti.flushEventQueue: event report terminally failed (\(message)) - event dropped")
+          eventStore.remove(id: event.id)
+        } else {
+          logger("Notti.flushEventQueue: event report failed (\(message)) - event stays queued")
+        }
       }
     }
   }

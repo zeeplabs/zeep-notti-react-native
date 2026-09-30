@@ -12,15 +12,19 @@ public enum ApiResult {
 
 public enum EventResult {
   case success
-  case failure(String)
+  /// `terminal` is true only for a 4xx the backend will never accept (the
+  /// offline queue discards the event), false when the retry cap was
+  /// exhausted on transient network/5xx errors (the event stays queued).
+  case failure(String, terminal: Bool)
 }
 
 /// The endpoint-agnostic result of `executeWithRetry`: `success(T)` carries
-/// whatever the caller's `parseSuccess` produced, `failure(String)` a
-/// terminal 4xx status or the last error after the retry cap was exhausted.
+/// whatever the caller's `parseSuccess` produced, `failure(String, terminal)`
+/// a terminal 4xx status (terminal = true) or the last error after the retry
+/// cap was exhausted (terminal = false).
 private enum RetryResult<T> {
   case success(T)
-  case failure(String)
+  case failure(String, terminal: Bool)
 }
 
 private struct NottiApiClientTimeoutError: Error, LocalizedError {
@@ -194,7 +198,7 @@ public class NottiApiClient {
       let encodedNotificationId = Self.percentEncodedPathComponent(notificationId),
       let url = URL(string: "\(baseUrl)/v1/apps/\(encodedAppId)/notifications/\(encodedNotificationId)/events")
     else {
-      return .failure("invalid event-reporting URL built from the configured baseUrl")
+      return .failure("invalid event-reporting URL built from the configured baseUrl", terminal: true)
     }
     var request = URLRequest(url: url, timeoutInterval: Self.requestTimeoutSeconds)
     request.httpMethod = "POST"
@@ -211,7 +215,7 @@ public class NottiApiClient {
   private func apiResult(_ result: RetryResult<DeviceResponse>) -> ApiResult {
     switch result {
     case .success(let device): return .success(device)
-    case .failure(let message): return .failure(message)
+    case .failure(let message, _): return .failure(message)
     }
   }
 
@@ -219,7 +223,7 @@ public class NottiApiClient {
   private func eventResult(_ result: RetryResult<Bool>) -> EventResult {
     switch result {
     case .success: return .success
-    case .failure(let message): return .failure(message)
+    case .failure(let message, let terminal): return .failure(message, terminal: terminal)
     }
   }
 
@@ -255,8 +259,10 @@ public class NottiApiClient {
           }
           lastError = "HTTP \(http.statusCode) with an unparseable response body"
         } else if http.statusCode < 500 {
-          // 4xx: not retried, terminal failure.
-          return .failure("HTTP \(http.statusCode)")
+          // 4xx: not retried, terminal failure. Marked terminal so the
+          // offline queue can discard the event - the backend will never
+          // accept it, so keeping it would re-fail forever on every flush.
+          return .failure("HTTP \(http.statusCode)", terminal: true)
         } else {
           lastError = "HTTP \(http.statusCode)"
         }
@@ -268,7 +274,9 @@ public class NottiApiClient {
       }
     }
 
-    return .failure(lastError)
+    // Retry cap exhausted on transient (network/5xx) failures only - a 4xx
+    // would have returned above. Not terminal: the event stays queued.
+    return .failure(lastError, terminal: false)
   }
 
   private func syncDataTask(_ request: URLRequest) -> (Data?, URLResponse?, Error?) {

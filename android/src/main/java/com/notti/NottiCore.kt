@@ -415,16 +415,17 @@ class NottiCore(
    * and removing it only once the backend has acknowledged it. Write-ahead
    * persistence: the event is persisted *before* any report attempt, so a
    * crash mid-flush never loses a queued event - at worst it is re-reported,
-   * which the backend treats as idempotent. The remove-on-success-only
-   * contract is what makes that safe: an event is removed from the disk
-   * queue exactly when `reportEvent` returns [EventResult.Success], never
-   * before.
+   * which the backend treats as idempotent. The remove-on-success contract is
+   * what makes that safe: an event is removed from the disk queue exactly when
+   * `reportEvent` returns [EventResult.Success], never before.
    *
-   * On [EventResult.Failure] the event STAYS queued: `reportEvent` already
-   * exhausted its own 5-attempt retry/backoff internally before returning
-   * Failure, so a Failure here means "give up for now" and the event is left
-   * for the next flush trigger (registration success or app foreground)
-   * rather than re-distinguishing 4xx from exhausted-5xx.
+   * On a terminal [EventResult.Failure] (`terminal == true`, a 4xx the backend
+   * will never accept - e.g. a stale token 403 per spec SDKCTR-11) the event is
+   * ALSO removed: re-attempting it on every future flush would fail identically
+   * forever. On a transient [EventResult.Failure] (`terminal == false`, retry
+   * cap exhausted on network/5xx) the event STAYS queued: `reportEvent` already
+   * exhausted its own 5-attempt retry/backoff, so it is left for the next flush
+   * trigger (registration success, app foreground, or network regained).
    *
    * No-op when there is no API client (never initialized) or no persisted
    * token to authenticate the report with. Performs blocking HTTP, so it must
@@ -436,9 +437,13 @@ class NottiCore(
     eventStore.all().forEach { event ->
       when (val result = client.reportEvent(event.notificationId, event.deliveryId, event.type, token)) {
         is EventResult.Success -> eventStore.remove(event.id)
-        is EventResult.Failure -> logger(
-          "Notti.flushEventQueue: event report failed (${result.message}) - event stays queued"
-        )
+        is EventResult.Failure ->
+          if (result.terminal) {
+            logger("Notti.flushEventQueue: event report terminally failed (${result.message}) - event dropped")
+            eventStore.remove(event.id)
+          } else {
+            logger("Notti.flushEventQueue: event report failed (${result.message}) - event stays queued")
+          }
       }
     }
   }

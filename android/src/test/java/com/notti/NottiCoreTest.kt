@@ -1039,6 +1039,23 @@ class NottiCoreTest {
     assertEquals("/v1/apps/app-1/notifications/notification-1/events", report.path)
     assertTrue(eventStore.all().isEmpty())
   }
+
+  @Test
+  fun `flushEventQueue drops the event on a terminal 4xx report`() {
+    val eventStore = NottiEventStore(prefs)
+    eventStore.enqueue("notification-1", "delivery-1", "received")
+    val core = newCore(eventStore = eventStore)
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    // A 403 (e.g. stale/mismatched token per spec SDKCTR-11) is terminal: the
+    // backend will never accept it, so the event must be dropped, not left to
+    // re-fail forever on every flush trigger.
+    server.enqueue(MockResponse().setResponseCode(403))
+
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    assertTrue("a terminal 4xx must remove the event from the queue", eventStore.all().isEmpty())
+  }
 }
 
 /** Same in-memory SharedPreferences fake used by NottiDeviceStoreTest. */
