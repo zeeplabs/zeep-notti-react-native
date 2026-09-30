@@ -1,6 +1,10 @@
 package com.notti
 
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
@@ -188,6 +192,13 @@ class NottiCore(
    * or start a retry storm).
    */
   fun onAppForegrounded() {
+    // Session start runs first, before any flush/retry logic: an unclean kill
+    // (force-quit/crash with no background transition) leaves `session_started_at`
+    // set, and this closes the missed session with an estimate before a new one
+    // opens (SEGTEL-08). Store-only bookkeeping + possibly an enqueued session
+    // PATCH; no blocking I/O on the caller's thread.
+    handleSessionStart(System.currentTimeMillis())
+
     // Flush the event queue unconditionally, before the registration-state
     // guard below: queued event reporting is independent of whether
     // registration needs retrying (a REGISTERED device still owes event
@@ -236,6 +247,85 @@ class NottiCore(
   internal fun onNetworkAvailable() {
     dispatch("flushEventQueue") { flushEventQueue() }
   }
+
+  /**
+   * Background/terminate hook (SEGTEL-06): ends the current session, if any,
+   * persisting the aggregate and enqueueing a snapshot PATCH. Mirrors
+   * [onAppForegrounded]'s executor handoff - the store reads/writes and the
+   * PATCH enqueue must not run on the caller's (main) thread. Called from
+   * [NottiForegroundObserver.onStop].
+   */
+  fun onAppBackgrounded() {
+    dispatch("handleSessionEnd") { handleSessionEnd(System.currentTimeMillis()) }
+  }
+
+  /**
+   * Session start (SEGTEL-05/08): called at the top of [onAppForegrounded]
+   * before any flush/retry logic. If `session_started_at` is already set, the
+   * previous session never received a background transition (unclean kill:
+   * force-quit/crash) - close it with an estimate via [handleSessionEnd] using
+   * the stored start and the current time (SEGTEL-08). Then set
+   * `first_session_at` once (never overwritten) and open the new session.
+   * Store-only, plus a possible session PATCH enqueue via [handleSessionEnd].
+   */
+  internal fun handleSessionStart(nowMs: Long) {
+    if (deviceStore.getSessionStartedAtMs() != null) {
+      handleSessionEnd(nowMs)
+    }
+    if (deviceStore.getFirstSessionAtMs() == null) {
+      deviceStore.setFirstSessionAtMs(nowMs)
+    }
+    deviceStore.setSessionStartedAtMs(nowMs)
+  }
+
+  /**
+   * Session end (SEGTEL-06/07): no-op when no session is active (`session_started_at`
+   * null - also excludes widget/extension/background-fetch invocations, which
+   * never set it). Otherwise increments the count, adds the elapsed foreground
+   * time, records `last_session_at`, clears the in-flight session, persists the
+   * aggregate (survives process death, SEGTEL-09), and enqueues a session PATCH
+   * carrying a **snapshot captured at enqueue time** of the four aggregate fields
+   * - so a new session starting mid-flush is never double-counted or lost
+   * (SEGTEL edge case, same capture-at-enqueue shape as `mutateTags`).
+   */
+  internal fun handleSessionEnd(nowMs: Long) {
+    val startedAt = deviceStore.getSessionStartedAtMs() ?: return
+    val count = deviceStore.getSessionCount() + 1
+    val timeMs = deviceStore.getSessionTimeMs() + (nowMs - startedAt)
+    deviceStore.setSessionCount(count)
+    deviceStore.setSessionTimeMs(timeMs)
+    deviceStore.setLastSessionAtMs(nowMs)
+    deviceStore.setSessionStartedAtMs(null)
+
+    val firstAt = deviceStore.getFirstSessionAtMs()
+    val snapshot = mutableMapOf<String, Any>(
+      "last_session_at" to formatIsoUtc(nowMs),
+      "session_count" to count,
+      "session_time_seconds" to timeMs / 1000
+    )
+    if (firstAt != null) {
+      snapshot["first_session_at"] = formatIsoUtc(firstAt)
+    }
+    mutate("session") { client, deviceId, token ->
+      val result = client.patchDevice(deviceId, token, snapshot)
+      when (result) {
+        is ApiResult.Success -> Unit // backend is sink; aggregate already persisted
+        is ApiResult.Failure -> logger("Notti.session: PATCH failed (${result.message}) - not retried")
+      }
+    }
+  }
+
+  /**
+   * Formats an epoch-ms timestamp as UTC ISO-8601 (`yyyy-MM-dd'T'HH:mm:ss.SSS'Z'`)
+   * for the session PATCH payload. No `java.time` (minSdk 24, no desugaring) -
+   * `SimpleDateFormat` with an explicit UTC `TimeZone`; the literal `'Z'` in the
+   * pattern matches the RFC3339 shape the backend's Go parser accepts. Matches
+   * the iOS helper's output.
+   */
+  internal fun formatIsoUtc(epochMs: Long): String =
+    SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
+      .apply { timeZone = TimeZone.getTimeZone("UTC") }
+      .format(Date(epochMs))
 
   /**
    * Holds [mutationLock] across the whole call/response/store-write sequence,

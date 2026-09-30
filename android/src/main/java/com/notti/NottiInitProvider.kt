@@ -93,10 +93,16 @@ class NottiInitProvider : ContentProvider() {
  * App-level foreground signal (whole process, not per-Activity). Registration
  * gives up after `NottiApiClient`'s 5-attempt backoff; without this the
  * device would stay unregistered until the process is killed. [NottiCore]
- * itself decides whether a retry is actually warranted.
+ * itself decides whether a retry is actually warranted. `onStop` is the
+ * missing background hook (SEGTEL-06): [NottiCore.onAppBackgrounded] ends the
+ * current session and enqueues its aggregate PATCH.
  */
 internal object NottiForegroundObserver : DefaultLifecycleObserver {
   override fun onStart(owner: LifecycleOwner) {
     NottiModule.activeCore?.onAppForegrounded()
+  }
+
+  override fun onStop(owner: LifecycleOwner) {
+    NottiModule.activeCore?.onAppBackgrounded()
   }
 }

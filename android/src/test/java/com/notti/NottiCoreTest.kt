@@ -9,6 +9,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -620,6 +621,105 @@ class NottiCoreTest {
     assertEquals("1.2.4", store.getAppVersion())
   }
 
+  @Test
+  fun `session end after a foreground start aggregates count and time and enqueues a snapshot PATCH`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    val core = newCore()
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    core.handleSessionStart(1_000L)
+    core.handleSessionEnd(31_000L)
+    awaitIdle()
+
+    assertEquals(1, store.getSessionCount())
+    assertEquals(30_000L, store.getSessionTimeMs())
+    assertEquals(31_000L, store.getLastSessionAtMs())
+    assertEquals(1_000L, store.getFirstSessionAtMs())
+    assertNull(store.getSessionStartedAtMs())
+
+    server.takeRequest(5, TimeUnit.SECONDS) // the initial register
+    val patch = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+    assertEquals("PATCH", patch.method)
+    val body = JSONObject(patch.body.readUtf8())
+    assertEquals("1970-01-01T00:00:01.000Z", body.getString("first_session_at"))
+    assertEquals("1970-01-01T00:00:31.000Z", body.getString("last_session_at"))
+    assertEquals(1, body.getInt("session_count"))
+    assertEquals(30, body.getInt("session_time_seconds"))
+  }
+
+  @Test
+  fun `a session start after an unclean kill closes the missed session once and opens a new one`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    val core = newCore()
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    // Session starts, the process is killed with no background transition, and
+    // the next launch's session start must close the missed session using the
+    // stored start as the estimate (SEGTEL-08).
+    core.handleSessionStart(1_000L)
+    core.handleSessionStart(61_000L)
+    awaitIdle()
+
+    assertEquals(1, store.getSessionCount())
+    assertEquals(60_000L, store.getSessionTimeMs())
+    assertEquals(61_000L, store.getLastSessionAtMs())
+    // A new session is open for the relaunch.
+    assertEquals(61_000L, store.getSessionStartedAtMs())
+    assertEquals(1_000L, store.getFirstSessionAtMs())
+
+    server.takeRequest(5, TimeUnit.SECONDS) // the initial register
+    val patch = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+    assertEquals("PATCH", patch.method)
+    val body = JSONObject(patch.body.readUtf8())
+    assertEquals(1, body.getInt("session_count"))
+    assertEquals(60, body.getInt("session_time_seconds"))
+  }
+
+  @Test
+  fun `session end with no active session is a no-op with no PATCH`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    val core = newCore()
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    core.handleSessionEnd(5_000L)
+    awaitIdle()
+
+    // Only the registration POST - no session PATCH, no aggregate touched
+    // (excludes widget/background-fetch wake-ups, SEGTEL edge case).
+    assertEquals(1, server.requestCount)
+    assertEquals(0, store.getSessionCount())
+    assertEquals(0L, store.getSessionTimeMs())
+    assertNull(store.getLastSessionAtMs())
+    assertNull(store.getSessionStartedAtMs())
+  }
+
+  @Test
+  fun `first_session_at is set on the first session start and never overwritten later`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    val core = newCore()
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    core.handleSessionStart(1_000L)
+    core.handleSessionEnd(10_000L)
+    core.handleSessionStart(20_000L)
+    core.handleSessionEnd(30_000L)
+    awaitIdle()
+
+    assertEquals(1_000L, store.getFirstSessionAtMs())
+    assertEquals(2, store.getSessionCount())
+    assertEquals(19_000L, store.getSessionTimeMs())
+    assertEquals(30_000L, store.getLastSessionAtMs())
+    assertNull(store.getSessionStartedAtMs())
+  }
+
   /**
    * In-memory stand-in for the Notti devices endpoint, as an OkHttp
    * interceptor (no socket at all), so a POST and a PATCH can be interleaved
@@ -811,14 +911,28 @@ class NottiCoreTest {
   @Test
   fun `app foreground does not re-register a device that is already registered`() {
     server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    // Two session PATCHes: each extra foreground without a background closes the
+    // prior session via an unclean-kill estimate (SEGTEL-08).
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
     val core = newCore()
     core.initialize("app-1", "key", validBaseUrl)
     awaitIdle()
 
     repeat(3) { core.onAppForegrounded() }
     awaitIdle()
+    awaitIdle() // session PATCHes enqueued inside the foreground tasks
 
-    assertEquals(1, server.requestCount)
+    // Exactly one registration POST (no re-registration); the two extra requests
+    // are session PATCHes, not registration attempts.
+    assertEquals(3, server.requestCount)
+    assertEquals("POST", requireNotNull(server.takeRequest(5, TimeUnit.SECONDS)).method)
+    val sessionPatch1 = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+    assertEquals("PATCH", sessionPatch1.method)
+    assertTrue(JSONObject(sessionPatch1.body.readUtf8()).has("session_count"))
+    val sessionPatch2 = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+    assertEquals("PATCH", sessionPatch2.method)
+    assertTrue(JSONObject(sessionPatch2.body.readUtf8()).has("session_count"))
   }
 
   @Test
@@ -838,6 +952,9 @@ class NottiCoreTest {
     }
     server.enqueue(MockResponse().setResponseCode(400)) // terminal failure, no retry cap burn
     server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    // The four extra foregrounds each close a prior session (unclean-kill
+    // estimate) and enqueue a session PATCH; those flush after registration.
+    repeat(4) { server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}""")) }
     val core = newCore(interceptor = gateSecondRequest)
     core.initialize("app-1", "key", validBaseUrl)
     awaitIdle()
@@ -847,13 +964,18 @@ class NottiCoreTest {
     assertTrue(retryInFlight.await(5, TimeUnit.SECONDS))
 
     // Several more foregrounds (tab switching, lock/unlock) while that retry
-    // is still in flight must produce no further attempts - otherwise every
-    // foreground stacks another registration call.
+    // is still in flight must produce no further *registration* attempts -
+    // otherwise every foreground stacks another registration call. They do
+    // close and re-open sessions (queued session PATCHes), never register.
     repeat(4) { core.onAppForegrounded() }
     releaseRetry.countDown()
     awaitIdle()
+    awaitIdle() // queued session PATCHes flush inside the registration task
 
-    assertEquals(2, server.requestCount)
+    assertEquals(6, server.requestCount)
+    val methods = (0 until 6).map { requireNotNull(server.takeRequest(5, TimeUnit.SECONDS)).method }
+    // Exactly two registration POSTs (first attempt + one retry) - no stacking.
+    assertEquals(2, methods.count { it == "POST" })
     assertEquals("device-1", store.getDeviceId())
   }
 
@@ -916,11 +1038,17 @@ class NottiCoreTest {
     assertEquals(0, server.requestCount)
 
     server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    // The second foreground closes the first session (unclean-kill estimate)
+    // before the token arrives; that PATCH is queued and flushed on registration.
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
     core.onAppForegrounded()
     awaitIdle()
+    awaitIdle() // the queued session PATCH flushes inside the registration task
 
     assertEquals(3, tokenRequests)
-    assertEquals(1, server.requestCount)
+    // One registration POST (the retry still fires despite the wedged fetch)
+    // plus the queued session PATCH.
+    assertEquals(2, server.requestCount)
     assertEquals("device-1", store.getDeviceId())
   }
 
