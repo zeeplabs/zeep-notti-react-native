@@ -1,7 +1,7 @@
 # Segment Telemetry Reporting Tasks
 
 **Design**: `.specs/features/segment-telemetry-reporting/design.md`
-**Status**: In Design — tasks drafted, pending approval. Execute not started.
+**Status**: Complete — all T1-T10 done, commits `981bb92`→`60389ee`, gates green (Android 123 JVM tests, iOS 127 XCTest, JS 20 Jest + typecheck/lint clean). Cross-platform review found and fixed one real issue: `Notti.podspec`'s Core subspec never declared `CoreLocation` (used by `NottiImpl` for the P3 country read) — `core.frameworks = "CoreLocation"` added in `60389ee`. Next: independent Verifier.
 
 ---
 

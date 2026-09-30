@@ -114,27 +114,27 @@ This spec defines what the SDK needs to capture and report so a future backend c
 
 | Requirement ID | Story | Phase | Status |
 | --- | --- | --- | --- |
-| SEGTEL-01 | P1: App version | Pending | Pending |
-| SEGTEL-02 | P1: App version | Pending | Pending |
-| SEGTEL-03 | P1: App version | Pending | Pending |
-| SEGTEL-04 | P1: App version | Pending | Pending |
-| SEGTEL-05 | P2: Session lifecycle | Pending | Pending |
-| SEGTEL-06 | P2: Session lifecycle | Pending | Pending |
-| SEGTEL-07 | P2: Session lifecycle | Pending | Pending |
-| SEGTEL-08 | P2: Session lifecycle | Pending | Pending |
-| SEGTEL-09 | P2: Session lifecycle | Pending | Pending |
-| SEGTEL-10 | P3: Location/country | Pending | Pending |
-| SEGTEL-11 | P3: Location/country | Pending | Pending |
-| SEGTEL-12 | P3: Location/country | Pending | Pending |
-| SEGTEL-13 | P3: Location/country | Pending | Pending |
-| SEGTEL-14 | P3: Location/country | Pending | Pending |
-| SEGTEL-15 | P3: Location/country | Pending | Pending |
+| SEGTEL-01 | P1: App version | Implemented | Implemented |
+| SEGTEL-02 | P1: App version | Implemented | Implemented |
+| SEGTEL-03 | P1: App version | Implemented | Implemented |
+| SEGTEL-04 | P1: App version | Implemented | Implemented |
+| SEGTEL-05 | P2: Session lifecycle | Implemented | Implemented |
+| SEGTEL-06 | P2: Session lifecycle | Implemented | Implemented |
+| SEGTEL-07 | P2: Session lifecycle | Implemented | Implemented |
+| SEGTEL-08 | P2: Session lifecycle | Implemented | Implemented |
+| SEGTEL-09 | P2: Session lifecycle | Implemented | Implemented |
+| SEGTEL-10 | P3: Location/country | Implemented | Implemented |
+| SEGTEL-11 | P3: Location/country | Implemented | Implemented |
+| SEGTEL-12 | P3: Location/country | Implemented | Implemented |
+| SEGTEL-13 | P3: Location/country | Implemented | Implemented |
+| SEGTEL-14 | P3: Location/country | Implemented | Implemented |
+| SEGTEL-15 | P3: Location/country | Implemented | Implemented |
 
 **ID format:** `SEGTEL-NN`
 
 **Status values:** Pending -> In Design -> In Tasks -> Implemented -> Verified
 
-**Coverage:** 15 total, 0 mapped to tasks, 15 unmapped (spec phase only — Design/Tasks not started; blocked on a backend companion spec before Design per Problem Statement)
+**Coverage:** 15 total, 15 mapped to tasks, 0 unmapped — all Implemented (T1-T10, commits `981bb92`→`60389ee`), pending independent Verifier.
 
 ---
 
