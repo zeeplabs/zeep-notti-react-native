@@ -42,6 +42,11 @@ public class NottiPushDelegate: NSObject, UNUserNotificationCenterDelegate {
 
   private override init() {
     super.init()
+    // Start the network observer once per process (T8): the host app assigns
+    // this delegate on every cold start (README), so `shared`'s first touch —
+    // and therefore this init — is the guaranteed "start once even on cold
+    // start" spot for the offline-event flush trigger.
+    NottiNetworkObserver.shared.start()
   }
 
   public func userNotificationCenter(
@@ -64,6 +69,7 @@ public class NottiPushDelegate: NSObject, UNUserNotificationCenterDelegate {
         identifier: notification.request.identifier,
         payload: parsed.toEventPayload()
       )
+      enqueueIfReportable(parsed, type: "received")
     }
     // `.list` was missing: without it, a notification presented in the
     // foreground never lands in Notification Center afterwards.
@@ -96,7 +102,25 @@ public class NottiPushDelegate: NSObject, UNUserNotificationCenterDelegate {
       identifier: response.notification.request.identifier,
       payload: parsed.toEventPayload()
     )
+    enqueueIfReportable(parsed, type: "clicked")
     completionHandler()
+  }
+
+  /// Queues the offline-reportable event for `parsed` when its payload carries
+  /// both `notification_id` and `delivery_id` (the same detection rule as
+  /// Android), then opportunistically triggers a flush through the live core.
+  /// On cold start the core does not exist yet (`NottiImpl.activeCore` is nil),
+  /// so the event simply stays queued until registration success, the next app
+  /// foreground, or the network observer flushes it. Skipped silently
+  /// otherwise.
+  private func enqueueIfReportable(_ parsed: ParsedNotification, type: String) {
+    guard let notificationId = parsed.data["notification_id"], !notificationId.isEmpty,
+      let deliveryId = parsed.data["delivery_id"], !deliveryId.isEmpty
+    else {
+      return
+    }
+    NottiImpl.eventStore.enqueue(notificationId: notificationId, deliveryId: deliveryId, type: type)
+    NottiImpl.activeCore?.onNetworkAvailable()
   }
 
   private static func isRemotePush(_ userInfo: [AnyHashable: Any]) -> Bool {
