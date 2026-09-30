@@ -9,16 +9,16 @@
 /* Begin PBXBuildFile section */
 		00ABD540138176E59717A72D /* NottiEventStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B5754F6C0BCAADDE21153D3 /* NottiEventStore.swift */; };
 		0B3F0B613DF47A4DC2E57BC8 /* NottiEventStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1EA95D6D54B3CAAF04960C6 /* NottiEventStoreTests.swift */; };
-		0c13ec34595b36506c09e32e /* NottiImpl.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3f0b3f51e7e781e5702d9c98 /* NottiImpl.swift */; };
 		0C80B921A6F3F58F76C31292 /* libPods-NottiExample.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 5DCACB8F33CDC322A6C60F78 /* libPods-NottiExample.a */; };
+		0c13ec34595b36506c09e32e /* NottiImpl.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3f0b3f51e7e781e5702d9c98 /* NottiImpl.swift */; };
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
 		20010A737E96A9EDF397382E /* NottiEventBufferTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D773528AA0DC9AF4437AA31 /* NottiEventBufferTests.swift */; };
 		20F21722749D363B750A38F9 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */; };
 		227ED15BDA75DECF463FC812 /* NottiNotificationParsing.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD432AFD45EE2CB59BB9A11C /* NottiNotificationParsing.swift */; };
 		357194195CF7D1DED1627862 /* NottiExampleNotificationService.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 84D01DBBF8D63FBAE59B465A /* NottiExampleNotificationService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		48c916894d1519a8fbe72ad0 /* NottiPushDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40d45ab6ceefcf863e71399f /* NottiPushDelegate.swift */; };
-		573284BB805932288A5C5007 /* libPods-NottiExampleNotificationService.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A2E32411B2EE282B0551F2D5 /* libPods-NottiExampleNotificationService.a */; };
 		56bcef1ec8cdeb91cdc84e09 /* NottiPushDelegateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = d126d6de7b0c01ed06380e8e /* NottiPushDelegateTests.swift */; };
+		573284BB805932288A5C5007 /* libPods-NottiExampleNotificationService.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A2E32411B2EE282B0551F2D5 /* libPods-NottiExampleNotificationService.a */; };
 		6B58EE0B7DF4BE0449113A52 /* NottiApiClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3F52CBFE06F315AB26D629E /* NottiApiClient.swift */; };
 		761780ED2CA45674006654EE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761780EC2CA45674006654EE /* AppDelegate.swift */; };
 		8004A6506E30F4A727E98466 /* StubURLProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06056BFA6D5837995568BBE9 /* StubURLProtocol.swift */; };
@@ -26,15 +26,15 @@
 		84C444AA5EE3BAB765CF74DE /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DB1E07D38B042BD584F25C1 /* NotificationService.swift */; };
 		8D322FCF630D19C71C2DABFC /* NottiNotificationParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7815D06C60911EB6700CF44D /* NottiNotificationParsingTests.swift */; };
 		ADDDDAD11B3275F030FDE5DA /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21CFCCD5C376ED5BDA3F591C /* Foundation.framework */; };
-		b856e66df9c60438ae3e4165 /* NottiNetworkObserverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = f87325434599b530175c4764 /* NottiNetworkObserverTests.swift */; };
 		C3B35F1FF90D796D94E4CFD0 /* NottiEventBuffer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40D3C4FFC4B44CDF88EB5472 /* NottiEventBuffer.swift */; };
 		D0FCD1D1E721EBA17221E9FE /* NottiCoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46D6073908A65F6250CB30D9 /* NottiCoreTests.swift */; };
 		D96B74E00C4288D3CB75E386 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 9A21C704380E495E9684E854 /* Foundation.framework */; };
 		EC4A7D89F80C44E9E2AC39C3 /* NottiApiClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5112E264FB65968CEA8B9A1B /* NottiApiClientTests.swift */; };
-		f36ce96b455f9bce18f00748 /* NottiNetworkObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9c59c2317ee1d68afd0953ed /* NottiNetworkObserver.swift */; };
 		F84378136AEBA4711642174A /* NottiDeviceStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 426B42B3BA73ABC080A1B717 /* NottiDeviceStoreTests.swift */; };
 		F844827EE098CCD3D726811E /* NottiDeviceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33216B0956254CF362007CD7 /* NottiDeviceStore.swift */; };
 		FC9FAC31E2199BC44DDB0B17 /* NottiCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D977C699E4908D806CEA914 /* NottiCore.swift */; };
+		b856e66df9c60438ae3e4165 /* NottiNetworkObserverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = f87325434599b530175c4764 /* NottiNetworkObserverTests.swift */; };
+		f36ce96b455f9bce18f00748 /* NottiNetworkObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9c59c2317ee1d68afd0953ed /* NottiNetworkObserver.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -63,7 +63,6 @@
 
 /* Begin PBXFileReference section */
 		06056BFA6D5837995568BBE9 /* StubURLProtocol.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = StubURLProtocol.swift; sourceTree = "<group>"; };
-		8B5754F6C0BCAADDE21153D3 /* NottiEventStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiEventStore.swift; sourceTree = "<group>"; };
 		13B07F961A680F5B00A75B9A /* NottiExample.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NottiExample.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		13B07FB51A68108700A75B9A /* Images.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Images.xcassets; path = NottiExample/Images.xcassets; sourceTree = "<group>"; };
 		13B07FB61A68108700A75B9A /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = Info.plist; path = NottiExample/Info.plist; sourceTree = "<group>"; };
@@ -71,8 +70,8 @@
 		21CFCCD5C376ED5BDA3F591C /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		2D977C699E4908D806CEA914 /* NottiCore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiCore.swift; sourceTree = "<group>"; };
 		33216B0956254CF362007CD7 /* NottiDeviceStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiDeviceStore.swift; sourceTree = "<group>"; };
-		3f0b3f51e7e781e5702d9c98 /* NottiImpl.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiImpl.swift; sourceTree = "<group>"; };
 		3B4392A12AC88292D35C810B /* Pods-NottiExample.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-NottiExample.debug.xcconfig"; path = "Target Support Files/Pods-NottiExample/Pods-NottiExample.debug.xcconfig"; sourceTree = "<group>"; };
+		3f0b3f51e7e781e5702d9c98 /* NottiImpl.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiImpl.swift; sourceTree = "<group>"; };
 		40D3C4FFC4B44CDF88EB5472 /* NottiEventBuffer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiEventBuffer.swift; sourceTree = "<group>"; };
 		40d45ab6ceefcf863e71399f /* NottiPushDelegate.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiPushDelegate.swift; sourceTree = "<group>"; };
 		426B42B3BA73ABC080A1B717 /* NottiDeviceStoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiDeviceStoreTests.swift; sourceTree = "<group>"; };
@@ -82,12 +81,12 @@
 		5709B34CF0A7D63546082F79 /* Pods-NottiExample.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-NottiExample.release.xcconfig"; path = "Target Support Files/Pods-NottiExample/Pods-NottiExample.release.xcconfig"; sourceTree = "<group>"; };
 		5DCACB8F33CDC322A6C60F78 /* libPods-NottiExample.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-NottiExample.a"; sourceTree = BUILT_PRODUCTS_DIR; };
 		6D773528AA0DC9AF4437AA31 /* NottiEventBufferTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = NottiEventBufferTests.swift; path = Tests/NottiEventBufferTests.swift; sourceTree = "<group>"; };
-		D1EA95D6D54B3CAAF04960C6 /* NottiEventStoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiEventStoreTests.swift; sourceTree = "<group>"; };
 		761780EC2CA45674006654EE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = NottiExample/AppDelegate.swift; sourceTree = "<group>"; };
 		7815D06C60911EB6700CF44D /* NottiNotificationParsingTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiNotificationParsingTests.swift; sourceTree = "<group>"; };
 		7DB377A3B0D5458D4B4A0B7C /* NottiTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NottiTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = LaunchScreen.storyboard; path = NottiExample/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		84D01DBBF8D63FBAE59B465A /* NottiExampleNotificationService.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NottiExampleNotificationService.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		8B5754F6C0BCAADDE21153D3 /* NottiEventStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiEventStore.swift; sourceTree = "<group>"; };
 		9A21C704380E495E9684E854 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS14.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		9c59c2317ee1d68afd0953ed /* NottiNetworkObserver.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiNetworkObserver.swift; sourceTree = "<group>"; };
 		A2E32411B2EE282B0551F2D5 /* libPods-NottiExampleNotificationService.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-NottiExampleNotificationService.a"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -95,9 +94,10 @@
 		B689BCF641ACCAC13F04C7E0 /* Pods-NottiExampleNotificationService.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-NottiExampleNotificationService.debug.xcconfig"; path = "Target Support Files/Pods-NottiExampleNotificationService/Pods-NottiExampleNotificationService.debug.xcconfig"; sourceTree = "<group>"; };
 		C58A3A3D9EBEB1343113FEAF /* Pods-NottiExampleNotificationService.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-NottiExampleNotificationService.release.xcconfig"; path = "Target Support Files/Pods-NottiExampleNotificationService/Pods-NottiExampleNotificationService.release.xcconfig"; sourceTree = "<group>"; };
 		CD432AFD45EE2CB59BB9A11C /* NottiNotificationParsing.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiNotificationParsing.swift; sourceTree = "<group>"; };
+		D1EA95D6D54B3CAAF04960C6 /* NottiEventStoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiEventStoreTests.swift; sourceTree = "<group>"; };
 		DA4ACA366E1F5E06B947B616 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		d126d6de7b0c01ed06380e8e /* NottiPushDelegateTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiPushDelegateTests.swift; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
+		d126d6de7b0c01ed06380e8e /* NottiPushDelegateTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiPushDelegateTests.swift; sourceTree = "<group>"; };
 		f87325434599b530175c4764 /* NottiNetworkObserverTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiNetworkObserverTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
