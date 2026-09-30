@@ -59,6 +59,20 @@ class NottiModule(reactContext: ReactApplicationContext) :
   private val prefs = reactApplicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
   /**
+   * Persisted disk queue of push-notification events waiting to be reported.
+   * Same SharedPreferences file as [NottiDeviceStore] (its own key,
+   * `notti_pending_events`, lives inside the store); injected into [core] so
+   * the reporting task can drain it once registration succeeds, the app
+   * returns to the foreground, or connectivity returns.
+   *
+   * This is the companion's process-wide singleton (see `getEventStore`): the
+   * detection sites fire on a cold start before this instance exists, yet the
+   * reporting core must drain exactly what they enqueued - so there is one
+   * store per process, not one per instance.
+   */
+  private val eventStore = NottiModule.getEventStore(reactApplicationContext)
+
+  /**
    * Shared by [NottiCore] (blocking HTTP + retry backoff) and the FCM-token
    * `Task` listener below, so neither ever runs on the main looper.
    */
@@ -69,6 +83,7 @@ class NottiModule(reactContext: ReactApplicationContext) :
   private val core: NottiCore by lazy {
     NottiCore(
       deviceStore = NottiDeviceStore(prefs),
+      eventStore = eventStore,
       apiClientFactory = { appId, clientKey, baseUrl ->
         NottiApiClient(OkHttpClient(), baseUrl, appId, clientKey)
       },
@@ -292,6 +307,85 @@ class NottiModule(reactContext: ReactApplicationContext) :
     internal fun emitNotificationReceived(remoteMessage: RemoteMessage) {
       val instance = activeInstance ?: return
       instance.emitReceived(parseRemoteMessage(remoteMessage).toWritableMap())
+    }
+
+    /**
+     * Process-wide event queue shared by every detection site and the
+     * reporting core. The detection sites ([NottiFirebaseMessagingService],
+     * the Activity-lifecycle click hook) fire on a COLD START - before this
+     * lazy module instance (and its `prefs`/`eventStore` instance fields)
+     * exists - yet the [NottiCore] that flushes must drain exactly what those
+     * sites enqueued. So the store lives here, on the companion: constructed
+     * once, lazily on first use, backed by whichever `Context` is available at
+     * that moment (the `Application` during cold start, the react context once
+     * the module exists - the same `notti_prefs` file either way, since both
+     * are the same process), and never re-created per call. The instance's
+     * `eventStore` field is this very singleton, so core and detection sites
+     * share one store.
+     */
+    @Volatile
+    private var eventStore: NottiEventStore? = null
+
+    /**
+     * Backing context for [eventStore], seeded as early as possible
+     * ([NottiInitProvider.onCreate], then module construction) so
+     * [enqueueEvent] can materialize the singleton even when called before
+     * any module exists.
+     */
+    @Volatile
+    private var eventStoreContext: Context? = null
+
+    /**
+     * Returns the process-wide [eventStore], creating it on first use with
+     * [context]'s `notti_prefs` [SharedPreferences]. Safe from any thread: a
+     * racing pair of calls only builds two short-lived stores, of which one
+     * wins and the other is discarded - both would have read/written the same
+     * disk file anyway, so no event can be lost to the loser.
+     */
+    internal fun getEventStore(context: Context): NottiEventStore {
+      eventStoreContext = context
+      val existing = eventStore
+      if (existing != null) return existing
+      synchronized(this) {
+        val current = eventStore
+        if (current != null) return current
+        return NottiEventStore(context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE))
+          .also { eventStore = it }
+      }
+    }
+
+    /**
+     * Detection-site entry point (T4). Enqueues a received/clicked event into
+     * the process-wide [eventStore], then opportunistically asks the live core
+     * (if one exists) to flush it - a no-op on a cold start, where the core is
+     * not constructed yet and the flush is simply deferred to the next
+     * network-available / foreground / registration-success trigger.
+     *
+     * Callers are [NottiFirebaseMessagingService] (foreground receive) and
+     * [NottiActivityLifecycleListener] (click), both of which run with an
+     * available `applicationContext` long before this lazy module exists;
+     * [eventStoreContext] was seeded by [NottiInitProvider] at process start,
+     * so the singleton is created here if a detection site somehow runs first.
+     */
+    internal fun enqueueEvent(notificationId: String, deliveryId: String, type: String) {
+      val store = eventStore ?: getEventStore(eventStoreContext ?: return)
+      store.enqueue(notificationId, deliveryId, type)
+      activeCore?.onNetworkAvailable()
+    }
+
+    /** Test-only: companion statics are process-wide and outlive a single test case. */
+    internal fun resetProcessWideStateForTest() {
+      synchronized(NottiModule::class.java) {
+        activeInstance = null
+        activeCore = null
+      }
+      eventStore = null
+      eventStoreContext = null
+    }
+
+    /** Test-only: swap in a store backed by an in-memory [SharedPreferences] fake. */
+    internal fun setEventStoreForTest(store: NottiEventStore) {
+      eventStore = store
     }
 
   }

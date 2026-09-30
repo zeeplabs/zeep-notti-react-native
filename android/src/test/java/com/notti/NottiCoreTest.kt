@@ -65,9 +65,11 @@ class NottiCoreTest {
     logs: MutableList<String>? = null,
     interceptor: Interceptor? = null,
     coreExecutor: Executor = executor,
-    onDeviceIdChanged: (String) -> Unit = {}
+    onDeviceIdChanged: (String) -> Unit = {},
+    eventStore: NottiEventStore = NottiEventStore(prefs)
   ) = NottiCore(
     deviceStore = store,
+    eventStore = eventStore,
     apiClientFactory = { appId, clientKey, baseUrl ->
       NottiApiClient(
         httpClient = OkHttpClient.Builder()
@@ -961,6 +963,81 @@ class NottiCoreTest {
     assertEquals(emptyMap<String, String>(), store.getTags())
     assertEquals("user-42", store.getExternalUserId())
     assertEquals(2, server.requestCount)
+  }
+
+  @Test
+  fun `flushEventQueue with apiClient == null does not crash and makes no calls`() {
+    val eventStore = NottiEventStore(prefs)
+    val core = newCore(eventStore = eventStore)
+    val queued = eventStore.enqueue("notification-1", "delivery-1", "received")
+
+    // No initialize(): the API client is never built, so the flush must be a
+    // safe no-op rather than a crash on the executor.
+    core.onAppForegrounded()
+    awaitIdle()
+
+    assertEquals(0, server.requestCount)
+    assertEquals(listOf(queued), eventStore.all())
+  }
+
+  @Test
+  fun `registration success flushes a queued event and removes it`() {
+    val eventStore = NottiEventStore(prefs)
+    eventStore.enqueue("notification-1", "delivery-1", "received")
+    val core = newCore(eventStore = eventStore)
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    server.enqueue(MockResponse().setResponseCode(200))
+
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    val register = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+    assertEquals("/v1/apps/app-1/devices", register.path)
+    val report = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+    assertEquals("POST", report.method)
+    assertEquals("/v1/apps/app-1/notifications/notification-1/events", report.path)
+    assertTrue(eventStore.all().isEmpty())
+  }
+
+  @Test
+  fun `flushEventQueue keeps the event when reportEvent fails`() {
+    val eventStore = NottiEventStore(prefs)
+    val queued = eventStore.enqueue("notification-1", "delivery-1", "received")
+    val core = newCore(eventStore = eventStore)
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    // reportEvent burns its full retry cap (5 attempts) before returning
+    // Failure; the event must stay queued for a later flush, not be dropped.
+    repeat(5) { server.enqueue(MockResponse().setResponseCode(500)) }
+
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    assertEquals(listOf(queued), eventStore.all())
+  }
+
+  @Test
+  fun `onAppForegrounded flushes the event queue even when already REGISTERED`() {
+    val eventStore = NottiEventStore(prefs)
+    val core = newCore(eventStore = eventStore)
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    // A new event lands after registration; a later foreground must still
+    // flush it even though the registration-state guard would otherwise
+    // early-return for an already-registered device.
+    eventStore.enqueue("notification-1", "delivery-1", "clicked")
+    server.enqueue(MockResponse().setResponseCode(200))
+
+    core.onAppForegrounded()
+    awaitIdle()
+
+    val register = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+    assertEquals("/v1/apps/app-1/devices", register.path)
+    val report = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+    assertEquals("POST", report.method)
+    assertEquals("/v1/apps/app-1/notifications/notification-1/events", report.path)
+    assertTrue(eventStore.all().isEmpty())
   }
 }
 

@@ -8,8 +8,9 @@ import java.util.concurrent.RejectedExecutionException
 /**
  * Orchestrates init, device registration, token refresh, permission
  * requests, and tag/external-id/subscription mutations (design.md
- * NottiCore). `NottiApiClient`/`NottiDeviceStore` are constructor-injected
- * so both can be faked in tests; `tokenProvider` and `permissionRequester`
+ * NottiCore). `NottiApiClient`/`NottiDeviceStore`/`NottiEventStore` are
+ * constructor-injected so they can be faked in tests; `tokenProvider` and
+ * `permissionRequester`
  * abstract the platform-specific push-token fetch and OS permission prompt
  * (owned by the concrete wiring in T8/NottiModule — e.g. the Android <13
  * auto-grant behavior from spec P2-AC4 lives in whatever concrete
@@ -37,6 +38,7 @@ import java.util.concurrent.RejectedExecutionException
  */
 class NottiCore(
   private val deviceStore: NottiDeviceStore,
+  private val eventStore: NottiEventStore,
   private val apiClientFactory: (appId: String, clientKey: String, baseUrl: String) -> NottiApiClient,
   private val tokenProvider: (callback: (token: String?) -> Unit) -> Unit,
   private val permissionRequester: (callback: (granted: Boolean) -> Unit) -> Unit,
@@ -177,6 +179,15 @@ class NottiCore(
    * or start a retry storm).
    */
   fun onAppForegrounded() {
+    // Flush the event queue unconditionally, before the registration-state
+    // guard below: queued event reporting is independent of whether
+    // registration needs retrying (a REGISTERED device still owes event
+    // reports, and there is no point waiting for registration when none is
+    // in progress). Blocking HTTP, so it is handed to the executor like every
+    // other network touch and runs ahead of any registration retry this
+    // method goes on to trigger.
+    dispatch("flushEventQueue") { flushEventQueue() }
+
     val client = apiClient ?: return
     if (registrationState == RegistrationState.REGISTERED ||
       registrationState == RegistrationState.IN_FLIGHT
@@ -204,6 +215,20 @@ class NottiCore(
   }
 
   /**
+   * Flush trigger for callers that run outside this module - the network
+   * observer and the event-detection enqueue helper (T4) - and, on a cold
+   * start, often before it exists at all (they no-op through the null
+   * [NottiModule.activeCore] until it does). [flushEventQueue] is private and
+   * performs blocking HTTP, so like [onAppForegrounded] this hands the work
+   * to [executor] rather than running on the caller's thread: the
+   * `ConnectivityManager` callback that reaches this can be on a binder
+   * thread. Mirrors iOS' `NottiCore.onNetworkAvailable`.
+   */
+  internal fun onNetworkAvailable() {
+    dispatch("flushEventQueue") { flushEventQueue() }
+  }
+
+  /**
    * Holds [mutationLock] across the whole call/response/store-write sequence,
    * for the same reason `mutateTags` does: the POST response carries the
    * device's server-side `tags`, so registration is itself a read-modify-write
@@ -225,6 +250,7 @@ class NottiCore(
             deviceStore.setTags(result.response.tags)
             registrationState = RegistrationState.REGISTERED
             flushPendingMutations()
+            flushEventQueue()
           }
           is ApiResult.Failure -> {
             registrationState = RegistrationState.FAILED
@@ -380,6 +406,39 @@ class NottiCore(
         mutation.work(client, deviceId, token)
       } catch (t: Throwable) {
         logger("Notti.${mutation.operation}: queued call failed - ${t.message}")
+      }
+    }
+  }
+
+  /**
+   * Drains [NottiEventStore] by reporting each queued event to the backend
+   * and removing it only once the backend has acknowledged it. Write-ahead
+   * persistence: the event is persisted *before* any report attempt, so a
+   * crash mid-flush never loses a queued event - at worst it is re-reported,
+   * which the backend treats as idempotent. The remove-on-success-only
+   * contract is what makes that safe: an event is removed from the disk
+   * queue exactly when `reportEvent` returns [EventResult.Success], never
+   * before.
+   *
+   * On [EventResult.Failure] the event STAYS queued: `reportEvent` already
+   * exhausted its own 5-attempt retry/backoff internally before returning
+   * Failure, so a Failure here means "give up for now" and the event is left
+   * for the next flush trigger (registration success or app foreground)
+   * rather than re-distinguishing 4xx from exhausted-5xx.
+   *
+   * No-op when there is no API client (never initialized) or no persisted
+   * token to authenticate the report with. Performs blocking HTTP, so it must
+   * be handed to [executor] via [dispatch] and never called directly.
+   */
+  private fun flushEventQueue() {
+    val client = apiClient ?: return
+    val token = deviceStore.getLastToken() ?: return
+    eventStore.all().forEach { event ->
+      when (val result = client.reportEvent(event.notificationId, event.deliveryId, event.type, token)) {
+        is EventResult.Success -> eventStore.remove(event.id)
+        is EventResult.Failure -> logger(
+          "Notti.flushEventQueue: event report failed (${result.message}) - event stays queued"
+        )
       }
     }
   }
