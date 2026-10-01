@@ -18,6 +18,24 @@
 - **Date**: 2026-09-05
 - **Status**: active-confirmed by spike (T2, 2026-09-05) — Swift Turbo Module bridging works via an Obj-C++ `getTurboModule:`/`moduleName` shim (`ios/Notti.mm`) delegating into a plain Swift class exposed through CocoaPods' auto-generated `Notti-Swift.h`, confirmed by a real `pod install` + Xcode build succeeding in this repo. Not an officially-documented Meta pattern (`reactnative.dev`'s Turbo Native Modules docs show Obj-C++ only, Context7 MCP unavailable in this environment) — corroborated by independent 2025 community write-ups and by this repo's own passing build. Full detail in `design.md`'s "iOS APNs delegate hooks" component.
 
+## Pre-release review v0.3.0..HEAD (rule changes)
+
+Status: implementado nas duas plataformas (Android + iOS), com testes unitários, no working tree — **ainda não commitado**; gates não reexecutados nesta passada de docs.
+
+- SDKCTR-08/11: `408`/`429` → transient (retry + keep queued). Implementado no `executeWithRetry` compartilhado de cada plataforma, logo vale também para registro (`POST /devices`) e todo `PATCH` de device (5 tentativas, esperas 2s/4s/8s/16s). Sem `Retry-After`.
+- SEGTEL-08: heartbeat de foreground a cada 60s (só em foreground) fecha sessão órfã no último heartbeat. Teto: Android 12h, iOS 24h; sem heartbeat = 0s. Chave: `notti_last_foreground_at_ms` (Android) / `notti_session_last_seen_at_ms` (iOS). Gate de sessão por processo nas duas plataformas (Android `NottiModule.processSessionGate`; iOS `NottiImpl.processSessionGate` / `NottiCore.SessionGate`, fecha no `didEnterBackground`). Reload do JS em foreground: o core novo adota a sessão persistida (iOS `adoptOpenSessionOnQueue`: sem fechar como órfã, `session_count` inalterado, só religa o heartbeat). iOS `NottiCore.invalidate()` (via `NottiImpl.invalidate`) remove observers e para o heartbeat do core antigo.
+- SEGTEL-13: `pendingCountryClear` persistido até 2xx no `{country: null}`; reenviado em registro/foreground/rede.
+- SEGTEL-07: coalescência de telemetria por chave antes do registro. Semântica do teto de 32 difere: Android — telemetria não conta nem é expulsa; iOS — conta e é expulsa primeiro. Após o registro, cada ida a background manda 1 PATCH de sessão na hora.
+- Android `NottiEventStore`: lock de processo em enqueue/remove/all.
+- Docs/packaging: README (data collection, heartbeat, retry policy, fila pré-registro, known limitations, privacy labels, LGPD note, storage keys, Expo `aps-environment`), CHANGELOG `[Unreleased]`, `package.json` `files` excludes native tests, CI runs NSE test scheme, plugin `resolveApsEnvironment` extracted + Jest tests (no behavior change).
+
+## Known limitations (abertas)
+
+- **Backend ainda não aceita os campos** (DEVTEL-01..13 Pending em `saas/zeep-notti`): `app_version`, sessão e `country` são ignorados pelo servidor com HTTP 200; o SDK marca `app_version`/`country` como sincronizados e não reenvia até o valor mudar. TODO `segtel-app-version-ack` (Android `NottiCore`; no iOS a mesma nota é `TODO(review item 7)`). Decisão pendente: backend ecoar `app_version` no response ou SDK reenviar a cada registro.
+- **Fila de eventos CTR com head-of-line blocking:** flush em ordem para no primeiro erro não terminal; evento com `5xx`/`429` determinístico bloqueia a fila até ser expulso por 32 eventos novos. Sem TTL por evento, sem honrar `Retry-After`.
+- **Clear de country com 4xx permanente** (401/403/404) fica pendente e é reenviado a cada gatilho (registro, foreground, rede); agora gera log distinto, sem dado pessoal, nas duas plataformas.
+- **Validações pendentes em device real:** fechamento de sessão em cold start/kill nas duas plataformas; background task do iOS com rede lenta; `CLLocationManager` sem warning de runtime; valor de `aps-environment` em build EAS `preview`.
+
 ## Handoff
 
 - **Feature**: ctr-event-reporting
@@ -27,7 +45,7 @@
 - **Next step**: none — feature verified READY. Verifier verdict 13/14 first pass, SDKCTR-11 fixed and re-verified (terminal-4xx now removed from queue on both platforms), all gates green. Feature complete.
 - **Blockers**: none.
 - **Implementation notes**: (1) `NottiEventStore` is a `NottiModule`/`NottiImpl` companion singleton (cold-start safe — detection fires before the lazy module/core exists), seeded from `NottiInitProvider.onCreate` on Android, `NottiPushDelegate.shared`'s init on iOS; the core's injected store IS that singleton so flush drains exactly what detection enqueued. (2) `flushEventQueue` is private + blocking; the network observer and the opportunistic post-enqueue flush reach it via a new `internal onNetworkAvailable()` that hops onto the executor/workQueue. (3) iOS test infra friction (T8): `UNNotification`/`UNNotificationResponse` have no public init (built via runtime alloc + KVC) and `UNUserNotificationCenter.current()` asserts in the hostless test bundle (dummy center via `class_createInstance`) — that's the only genuinely new test-infrastructure piece. (4) `NottiEventStore` gained a `reset()` test hook on iOS mirroring `NottiEventBuffer.reset()`. (5) Test-count growth per task verified at each gate; L-003 lesson (explicit MockWebServer takeRequest timeouts) was already followed in new tests.
-- **Uncommitted files**: `.specs/features/notification-action-buttons/` and `.specs/features/segment-telemetry-reporting/` are OTHER features' untracked spec dirs, pre-existing, not part of this work.
+- **Uncommitted files**: `.specs/features/notification-action-buttons/` and `.specs/features/segment-telemetry-reporting/` are OTHER features' untracked spec dirs, pre-existing, not part of this work. (Histórico desta handoff; o estado atual do working tree está em "Pre-release review" acima.)
 - **Branch**: main
 
 ## Handoff (previous: sdk-core-v1)

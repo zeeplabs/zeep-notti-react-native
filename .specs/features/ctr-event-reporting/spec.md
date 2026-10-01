@@ -124,15 +124,23 @@ on both platforms, in every app state a receive/click can happen in
 | SDKCTR-05 | P1: Automatic received reporting (foreground) | Implemented | T4/T8 |
 | SDKCTR-06 | P1: Automatic received reporting (no background expectation) | Implemented | T4/T8 |
 | SDKCTR-07 | P1: Retry parity (5x backoff on network/5xx) | Implemented | T2/T6 |
-| SDKCTR-08 | P1: Retry parity (terminal on 4xx) | Implemented | T2/T6 |
+| SDKCTR-08 | P1: Retry parity (terminal on 4xx, except 408/429 → transient) | Implemented (pre-release review, working tree) | T2/T6 + pre-release review |
 | SDKCTR-09 | P1: Retry parity (exhausted retries → queue) | Implemented | T3/T7 |
 | SDKCTR-10 | P2: Offline queue (write-ahead persistence) | Implemented | T1/T5 |
-| SDKCTR-11 | P2: Offline queue (cleanup on success/terminal) | Implemented | T1/T3/T5/T7 |
+| SDKCTR-11 | P2: Offline queue (cleanup on success/terminal; 408/429 now transient → kept queued) | Implemented (pre-release review, working tree) | T1/T3/T5/T7 + pre-release review |
 | SDKCTR-12 | P2: Offline queue (flush on launch) | Implemented | T3/T7 |
 | SDKCTR-13 | P2: Offline queue (flush on reconnect) | Implemented | T4/T8 |
 | SDKCTR-14 | P2: Offline queue (tolerate duplicate flush) | Implemented | design+flush |
 
 **Coverage:** 14 total, 14 mapped to tasks, 0 unmapped ✅
+
+**Rule change (pre-release review, v0.3.0..HEAD):** HTTP `408` and `429` are reclassified from terminal to transient (retried with the same backoff; on exhaustion the event stays queued instead of being removed). Affects SDKCTR-08 (classification) and SDKCTR-11 (queue cleanup only on 2xx or a terminal 4xx other than 408/429).
+
+Status: implemented on both platforms in the shared retry loop — Android `NottiApiClient.executeWithRetry` (`response.code < 500 && != 408 && != 429` → terminal), iOS `NottiApiClient.executeWithRetry` + `isTransientClientError`. Unit tests cover 408/429 on both (`NottiApiClientTest.kt`, `NottiApiClientTests.swift`). At the time of this edit the change is in the working tree, not yet committed; gates not re-run by this docs pass.
+
+Scope note: the classification lives in the shared `executeWithRetry`, so it applies equally to device registration (`POST /devices`) and every device `PATCH`, not only to the events endpoint. Effective schedule: 5 attempts, waits of 2s/4s/8s/16s between them (the "2s…32s" list in AC1 above names five delays, but no wait follows the 5th attempt). `Retry-After` is not honored.
+
+Known limitation (not covered by any requirement): flush sends events in order and stops at the first non-terminal failure, so an event that deterministically gets `5xx`/`429` blocks the queue until 32 newer events evict it (no per-event TTL).
 
 ---
 

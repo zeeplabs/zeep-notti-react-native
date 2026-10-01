@@ -120,13 +120,13 @@ This spec defines what the SDK needs to capture and report so a future backend c
 | SEGTEL-04 | P1: App version | Implemented | Implemented |
 | SEGTEL-05 | P2: Session lifecycle | Implemented | Implemented |
 | SEGTEL-06 | P2: Session lifecycle | Implemented | Implemented |
-| SEGTEL-07 | P2: Session lifecycle | Implemented | Implemented |
-| SEGTEL-08 | P2: Session lifecycle | Implemented | Implemented |
+| SEGTEL-07 | P2: Session lifecycle (snapshot PATCH per session end; telemetry coalescing before registration) | Implemented (pre-release review, working tree) | Coalescing implemented on both platforms (queue-limit semantics differ, see below) |
+| SEGTEL-08 | P2: Session lifecycle (unclean kill closed at last heartbeat) | Implemented (pre-release review, working tree) | Heartbeat implemented on both platforms |
 | SEGTEL-09 | P2: Session lifecycle | Implemented | Implemented |
 | SEGTEL-10 | P3: Location/country | Implemented | Implemented |
 | SEGTEL-11 | P3: Location/country | Implemented | Implemented |
 | SEGTEL-12 | P3: Location/country | Implemented | Implemented |
-| SEGTEL-13 | P3: Location/country | Implemented | Implemented |
+| SEGTEL-13 | P3: Location/country (opt-out clear persisted via `pendingCountryClear` until 2xx) | Implemented (pre-release review, working tree) | `pendingCountryClear` implemented on both platforms |
 | SEGTEL-14 | P3: Location/country | Implemented | Implemented |
 | SEGTEL-15 | P3: Location/country | Implemented | Implemented |
 
@@ -134,7 +134,16 @@ This spec defines what the SDK needs to capture and report so a future backend c
 
 **Status values:** Pending -> In Design -> In Tasks -> Implemented -> Verified
 
-**Coverage:** 15 total, 15 mapped to tasks, 0 unmapped — all Implemented (T1-T10, commits `981bb92`→`60389ee`), pending independent Verifier.
+**Coverage:** 15 total, 15 mapped to tasks, 0 unmapped — all Implemented (T1-T10, commits `981bb92`→`60389ee`; SEGTEL-07/08/13 revisions in the working tree), pending independent Verifier.
+
+**Rule changes from pre-release review (v0.3.0..HEAD)** — implemented on both platforms with unit tests (`NottiCoreTest.kt`, `NottiCoreTests.swift`); at the time of this edit the code is in the working tree, not yet committed, and gates were not re-run by this docs pass:
+
+- **SEGTEL-08 (heartbeat):** while a session is open and the app is in the foreground, a last-foreground timestamp is persisted every 60s (Android `NottiForegroundObserver` main-looper ticker between `onStart`/`onStop`, key `notti_last_foreground_at_ms`; iOS `DispatchSourceTimer` on the work queue that only writes while `appIsForeground`, key `notti_session_last_seen_at_ms`). An orphaned session (force-quit/crash) is closed at that timestamp on next launch instead of `now`, which counted dead time as foreground. Credited duration capped at 12h on Android (`MAX_ORPHAN_SESSION_MS`) and 24h on iOS (`maxOrphanSessionMs`); with no heartbeat beyond the session start it is credited 0s. Both platforms have a process-wide session gate (Android `NottiModule.processSessionGate`; iOS `NottiImpl.processSessionGate`, an `NSLock`-protected `NottiCore.SessionGate`, closed on `didEnterBackground`) so an RN reload or duplicate foreground signal does not open a second session. On a JS reload in the foreground, the new core adopts the persisted open session (iOS `adoptOpenSessionOnQueue`: no orphan close, `session_count` unchanged, only the heartbeat is resumed). iOS `NottiCore.invalidate()` (from `NottiImpl.invalidate`) removes the old core's observers and stops its heartbeat, leaving the persisted session and the gate for the new core. A country clear rejected with a permanent 4xx (401/403/404) logs a distinct message without personal data on both platforms; it stays pending and is re-sent by trigger.
+- **SEGTEL-13 (`pendingCountryClear`):** opt-out sets a persisted `notti_pending_country_clear` flag, cleared only on a 2xx for the `{country: null}` PATCH, and re-sent on registration success, app foreground and network regain (covers opt-out before `initialize`, offline, 5xx, process death). Any failure, including a permanent 4xx, keeps it pending, so a permanently rejected clear is re-sent on every trigger. `notti_last_synced_country` tracks the last acknowledged value. Armed only when a country may exist server-side (sharing was on, a country was synced, or a clear is already owed).
+- **SEGTEL-07 (sync cadence and coalescing):** each session end produces a cumulative snapshot PATCH. Once the device is registered it is sent immediately (one PATCH per move to background; iOS wraps it in a background task) — AC3's "same batching cadence, not a dedicated per-session request" holds only before registration. Before registration, telemetry mutations (session, country, app version) carry a coalesce key and a newer one replaces the queued one. The 32-entry pending-mutation limit differs per platform:
+  - **Android** (`NottiCore.runOrQueue`): telemetry does not count toward the limit and is never evicted (at most one entry per key; country set and country clear share the `country` key). At 32 user mutations, the oldest user mutation is dropped.
+  - **iOS** (`NottiCore.performOrQueue`): telemetry counts toward the limit. When full, the first queued telemetry entry is evicted; if only user mutations are queued, a new telemetry mutation is dropped and a new user mutation evicts the oldest user mutation. The iOS country clear does not go through this queue (`attemptPendingCountryClear` runs only when the device is addressable; otherwise the persisted flag waits for registration).
+- **Backend dependency (open):** until the backend accepts the fields (DEVTEL-01..13 pending in `zeep-notti`), `app_version`, session fields and `country` are ignored with HTTP 200, and the SDK marks `app_version`/`country` as synced (not re-sent until changed). TODO `segtel-app-version-ack` (Android `NottiCore.syncAppVersionIfNeeded`; iOS carries the same note as `TODO(review item 7)` in `syncAppVersionIfNeeded`).
 
 ---
 
