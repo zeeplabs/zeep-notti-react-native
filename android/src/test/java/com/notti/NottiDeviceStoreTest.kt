@@ -18,6 +18,9 @@ import org.junit.Test
 private class FakeSharedPreferences : SharedPreferences {
   private val values = mutableMapOf<String, Any?>()
 
+  /** Keys written through a synchronous `commit()` (vs fire-and-forget `apply()`). */
+  val committedKeys = mutableSetOf<String>()
+
   override fun getAll(): MutableMap<String, *> = values.toMutableMap()
 
   override fun getString(key: String?, defValue: String?): String? =
@@ -94,6 +97,7 @@ private class FakeSharedPreferences : SharedPreferences {
     }
 
     override fun commit(): Boolean {
+      committedKeys.addAll(pending.keys)
       apply()
       return true
     }
@@ -235,5 +239,18 @@ class NottiDeviceStoreTest {
     assertEquals(0L, state.sessionTimeMs)
     assertNull(state.sessionStartedAtMs)
     assertFalse(state.locationSharingEnabled)
+  }
+
+  @Test
+  fun `opt-out flags are written with a synchronous commit so they survive process death`() {
+    val prefs = FakeSharedPreferences()
+    val durable = NottiDeviceStore(prefs)
+
+    durable.setLocationSharingEnabled(false)
+    durable.setPendingCountryClear(true)
+
+    assertTrue(prefs.committedKeys.contains("notti_location_sharing_enabled"))
+    assertTrue(prefs.committedKeys.contains("notti_pending_country_clear"))
+    assertTrue(durable.getPendingCountryClear())
   }
 }

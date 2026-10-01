@@ -70,7 +70,9 @@ class NottiCoreTest {
     eventStore: NottiEventStore = NottiEventStore(prefs),
     versionProvider: () -> String? = { null },
     hasLocationPermission: () -> Boolean = { false },
-    countryProvider: (callback: (String?) -> Unit) -> Unit = { cb -> cb(null) }
+    countryProvider: (callback: (String?) -> Unit) -> Unit = { cb -> cb(null) },
+    clock: () -> Long = { System.currentTimeMillis() },
+    sessionGate: NottiCore.SessionGate = NottiCore.SessionGate()
   ) = NottiCore(
     deviceStore = store,
     eventStore = eventStore,
@@ -92,7 +94,9 @@ class NottiCoreTest {
     onDeviceIdChanged = onDeviceIdChanged,
     versionProvider = versionProvider,
     hasLocationPermission = hasLocationPermission,
-    countryProvider = countryProvider
+    countryProvider = countryProvider,
+    clock = clock,
+    sessionGate = sessionGate
   )
 
   @Test
@@ -654,25 +658,28 @@ class NottiCoreTest {
   }
 
   @Test
-  fun `a session start after an unclean kill closes the missed session once and opens a new one`() {
+  fun `a session start after an unclean kill closes the missed session at the last heartbeat, not at relaunch time`() {
     server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
     server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
     val core = newCore()
     core.initialize("app-1", "key", validBaseUrl)
     awaitIdle()
 
-    // Session starts, the process is killed with no background transition, and
-    // the next launch's session start must close the missed session using the
-    // stored start as the estimate (SEGTEL-08).
+    // Session starts, a foreground heartbeat lands 20s in, then the process is
+    // killed with no background transition. The relaunch (an hour later) must
+    // close the missed session at the LAST KNOWN FOREGROUND timestamp
+    // (SEGTEL-08) - not at relaunch time, which would inflate session_time by
+    // the whole time the app was dead.
     core.handleSessionStart(1_000L)
-    core.handleSessionStart(61_000L)
+    core.recordForegroundHeartbeatAt(21_000L)
+    core.handleSessionStart(3_601_000L)
     awaitIdle()
 
     assertEquals(1, store.getSessionCount())
-    assertEquals(60_000L, store.getSessionTimeMs())
-    assertEquals(61_000L, store.getLastSessionAtMs())
+    assertEquals(20_000L, store.getSessionTimeMs())
+    assertEquals(21_000L, store.getLastSessionAtMs())
     // A new session is open for the relaunch.
-    assertEquals(61_000L, store.getSessionStartedAtMs())
+    assertEquals(3_601_000L, store.getSessionStartedAtMs())
     assertEquals(1_000L, store.getFirstSessionAtMs())
 
     server.takeRequest(5, TimeUnit.SECONDS) // the initial register
@@ -680,7 +687,40 @@ class NottiCoreTest {
     assertEquals("PATCH", patch.method)
     val body = JSONObject(patch.body.readUtf8())
     assertEquals(1, body.getInt("session_count"))
-    assertEquals(60, body.getInt("session_time_seconds"))
+    assertEquals(20, body.getInt("session_time_seconds"))
+  }
+
+  @Test
+  fun `an orphaned session with no heartbeat contributes zero time instead of the dead interval`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    val core = newCore()
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    core.handleSessionStart(1_000L)
+    core.handleSessionStart(86_401_000L) // relaunch a day later
+    awaitIdle()
+
+    assertEquals(1, store.getSessionCount())
+    assertEquals(0L, store.getSessionTimeMs())
+  }
+
+  @Test
+  fun `an orphaned session heartbeat is bounded by the max orphan session cap`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    val core = newCore()
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    core.handleSessionStart(1_000L)
+    // A heartbeat far beyond any plausible session (clock jump) is clamped.
+    core.recordForegroundHeartbeatAt(1_000L + NottiCore.MAX_ORPHAN_SESSION_MS * 3)
+    core.handleSessionStart(1_000L + NottiCore.MAX_ORPHAN_SESSION_MS * 4)
+    awaitIdle()
+
+    assertEquals(NottiCore.MAX_ORPHAN_SESSION_MS, store.getSessionTimeMs())
   }
 
   @Test
@@ -844,6 +884,418 @@ class NottiCoreTest {
     // the same as no permission - omit, no error (SEGTEL-11/14).
     assertEquals(1, server.requestCount)
     assertTrue(store.getLocationSharingEnabled())
+  }
+
+  // ---------------------------------------------------------------------
+  // Pre-release review fixes (v0.3.0..HEAD)
+  // ---------------------------------------------------------------------
+
+  /** Executor whose tasks only run when the test says so - deterministic interleaving. */
+  private class ManualExecutor : Executor {
+    val tasks = ArrayDeque<Runnable>()
+    override fun execute(command: Runnable) { tasks.addLast(command) }
+    fun runNext() { tasks.removeFirst().run() }
+    fun runAll() { while (tasks.isNotEmpty()) runNext() }
+  }
+
+  private fun registerOk() =
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+
+  private fun drainRequests(): List<okhttp3.mockwebserver.RecordedRequest> =
+    (0 until server.requestCount).map { requireNotNull(server.takeRequest(5, TimeUnit.SECONDS)) }
+
+  @Test
+  fun `opting out before initialize still clears country once registration completes`() {
+    // A previous launch opted in (and may have synced a country).
+    store.setLocationSharingEnabled(true)
+    val core = newCore()
+
+    // LGPD: the opt-out lands before initialize() - there is no API client yet.
+    core.setLocationSharingEnabled(false)
+    assertTrue(store.getPendingCountryClear())
+
+    registerOk()
+    registerOk() // the clear PATCH
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+    awaitIdle()
+
+    val requests = drainRequests()
+    assertEquals(2, requests.size)
+    assertEquals("PATCH", requests[1].method)
+    assertTrue(JSONObject(requests[1].body.readUtf8()).isNull("country"))
+    assertFalse("flag is dropped only after a 2xx", store.getPendingCountryClear())
+  }
+
+  @Test
+  fun `a failed country clear stays pending and is re-sent on the next foreground`() {
+    registerOk()
+    val core = newCore()
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+    core.setLocationSharingEnabled(true)
+
+    repeat(5) { server.enqueue(MockResponse().setResponseCode(503)) } // offline/5xx
+    core.setLocationSharingEnabled(false)
+    awaitIdle()
+    assertEquals(6, server.requestCount)
+    assertTrue("a failed clear must stay pending", store.getPendingCountryClear())
+
+    registerOk() // the retried clear PATCH
+    core.onAppForegrounded()
+    awaitIdle()
+    awaitIdle()
+
+    assertEquals(7, server.requestCount)
+    val last = drainRequests().last()
+    assertEquals("PATCH", last.method)
+    assertTrue(JSONObject(last.body.readUtf8()).isNull("country"))
+    assertFalse(store.getPendingCountryClear())
+  }
+
+  @Test
+  fun `opting out without ever having opted in sends no clear PATCH`() {
+    registerOk()
+    val core = newCore()
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    core.setLocationSharingEnabled(false)
+    awaitIdle()
+    core.onAppForegrounded()
+    awaitIdle()
+
+    assertEquals(1, server.requestCount) // registration only
+    assertFalse(store.getPendingCountryClear())
+  }
+
+  @Test
+  fun `a country read queued before registration is never sent if the user opts out first`() {
+    val manual = ManualExecutor()
+    var tokenCallback: ((String?) -> Unit)? = null
+    val core = newCore(
+      coreExecutor = manual,
+      tokenProvider = { cb -> tokenCallback = cb },
+      hasLocationPermission = { true },
+      countryProvider = { cb -> cb("BR") }
+    )
+    core.initialize("app-1", "key", validBaseUrl)
+    core.setLocationSharingEnabled(true)
+    core.onAppForegrounded()
+    manual.runAll() // geocode resolved -> country PATCH queued (not registered yet)
+
+    core.setLocationSharingEnabled(false) // opt-out lands while BR is still queued
+    manual.runAll()
+
+    repeat(3) { registerOk() }
+    requireNotNull(tokenCallback).invoke("fcm-token")
+    manual.runAll()
+
+    val bodies = drainRequests().drop(1).map { JSONObject(it.body.readUtf8()) }
+    assertTrue("BR must never reach the server after opt-out: $bodies",
+      bodies.none { it.optString("country") == "BR" })
+    assertTrue(bodies.any { it.has("country") && it.isNull("country") })
+  }
+
+  @Test
+  fun `an unchanged country is not re-sent on every foreground`() {
+    repeat(12) { registerOk() }
+    val core = newCore(hasLocationPermission = { true }, countryProvider = { cb -> cb("BR") })
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+    core.setLocationSharingEnabled(true)
+
+    repeat(3) {
+      core.onAppForegrounded()
+      awaitIdle(); awaitIdle()
+      core.onAppBackgrounded()
+      awaitIdle(); awaitIdle()
+    }
+
+    val countryPatches = drainRequests().filter {
+      it.method == "PATCH" && JSONObject(it.body.readUtf8()).has("country")
+    }
+    assertEquals(1, countryPatches.size)
+  }
+
+  @Test
+  fun `a second foreground signal for the same process session does not open a second session`() {
+    val core = newCore(clock = { 1_000L })
+
+    core.onAppForegrounded()
+    awaitIdle()
+    // Cold start: the module-creation sync and the lifecycle observer can both
+    // report the same foreground - only one session may result.
+    core.onAppForegrounded()
+    awaitIdle()
+
+    assertEquals(0, store.getSessionCount())
+    assertEquals(1_000L, store.getSessionStartedAtMs())
+  }
+
+  // ---------------------------------------------------------------------
+  // Final review fixes (A-F)
+  // ---------------------------------------------------------------------
+
+  @Test
+  fun `re-consent after a clear whose ack was lost forgets the synced country so it is re-sent`() {
+    // State left by: opt-in, BR synced, opt-out whose clear reached the server
+    // but whose 2xx never came back - clear still pending, lastSynced still BR.
+    store.setLocationSharingEnabled(false)
+    store.setPendingCountryClear(true)
+    store.setLastSyncedCountry("BR")
+    repeat(4) { registerOk() }
+    val core = newCore(hasLocationPermission = { true }, countryProvider = { cb -> cb("BR") })
+
+    core.setLocationSharingEnabled(true)
+
+    assertFalse(store.getPendingCountryClear())
+    assertNull("re-consent must forget the synced value (iOS parity)", store.getLastSyncedCountry())
+
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+    core.onAppForegrounded()
+    awaitIdle(); awaitIdle()
+
+    val countryBodies = drainRequests().filter { it.method == "PATCH" }
+      .map { JSONObject(it.body.readUtf8()) }.filter { it.has("country") }
+    assertEquals(listOf("BR"), countryBodies.map { it.optString("country") })
+    assertEquals("BR", store.getLastSyncedCountry())
+  }
+
+  @Test
+  fun `re-enabling while already enabled does not drop the synced country`() {
+    store.setLocationSharingEnabled(true)
+    store.setLastSyncedCountry("BR")
+    val core = newCore()
+
+    core.setLocationSharingEnabled(true)
+
+    assertEquals("BR", store.getLastSyncedCountry())
+  }
+
+  @Test
+  fun `a pending country clear runs before queued mutations on registration and is sent exactly once`() {
+    var tokenCallback: ((String?) -> Unit)? = null
+    val core = newCore(tokenProvider = { cb -> tokenCallback = cb })
+    core.initialize("app-1", "key", validBaseUrl)
+    core.setLocationSharingEnabled(true)
+    core.login("u1")
+    core.addTagsForTest()
+    core.setLocationSharingEnabled(false) // clear owed, queued behind login/tags
+    awaitIdle()
+    assertTrue(store.getPendingCountryClear())
+
+    registerOk()
+    repeat(5) { server.enqueue(MockResponse().setResponseCode(204)) }
+    requireNotNull(tokenCallback).invoke("fcm-token")
+    awaitIdle()
+
+    val bodies = drainRequests().drop(1).map { JSONObject(it.body.readUtf8()) }
+    val clears = bodies.filter { it.has("country") && it.isNull("country") }
+    assertEquals("clear sent exactly once: $bodies", 1, clears.size)
+    assertTrue("LGPD clear must go first: $bodies", bodies.first().let { it.has("country") && it.isNull("country") })
+    assertTrue(bodies.any { it.optString("external_user_id") == "u1" })
+    assertFalse(store.getPendingCountryClear())
+  }
+
+  private fun NottiCore.addTagsForTest() = mutateTags(add = mapOf("k" to "v"), remove = null)
+
+  @Test
+  fun `a country clear rejected with a permanent 4xx logs distinctly and stays pending`() {
+    registerOk()
+    val logs = mutableListOf<String>()
+    val core = newCore(logs = logs)
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+    core.setLocationSharingEnabled(true)
+
+    server.enqueue(MockResponse().setResponseCode(403))
+    core.setLocationSharingEnabled(false)
+    awaitIdle()
+
+    assertEquals("4xx is not retried in-call", 2, server.requestCount)
+    assertTrue(store.getPendingCountryClear())
+    val rejected = logs.filter { it.contains("clear PATCH rejected permanently") }
+    assertEquals(logs.toString(), 1, rejected.size)
+    assertTrue(rejected.single().contains("HTTP 403"))
+
+    // Still re-sent on the next trigger.
+    registerOk()
+    core.onAppForegrounded()
+    awaitIdle(); awaitIdle()
+    assertEquals(3, server.requestCount)
+    assertFalse(store.getPendingCountryClear())
+  }
+
+  @Test
+  fun `a transient clear failure keeps the generic log, not the permanent-4xx one`() {
+    registerOk()
+    val logs = mutableListOf<String>()
+    val core = newCore(logs = logs)
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+    core.setLocationSharingEnabled(true)
+
+    repeat(5) { server.enqueue(MockResponse().setResponseCode(503)) }
+    core.setLocationSharingEnabled(false)
+    awaitIdle()
+
+    assertTrue(logs.none { it.contains("rejected permanently") })
+    assertTrue(logs.any { it.contains("clear PATCH failed") })
+  }
+
+  @Test
+  fun `a session gate opened while the executor is shut down is closed again`() {
+    val gate = NottiCore.SessionGate()
+    val dead = Executors.newSingleThreadExecutor().apply { shutdown() }
+    val core = newCore(coreExecutor = dead, sessionGate = gate)
+
+    core.onAppForegrounded()
+
+    assertFalse("rejected session start must not leave the gate open", gate.isActive)
+  }
+
+  @Test
+  fun `RN reload - a second core sharing the process gate does not open a second session`() {
+    val gate = NottiCore.SessionGate()
+    val coreA = newCore(clock = { 1_000L }, sessionGate = gate)
+    coreA.onAppForegrounded()
+    awaitIdle()
+
+    // Reload while foregrounded: core A is invalidated, core B is created and
+    // replays the (still current) foreground.
+    val coreB = newCore(clock = { 9_000L }, sessionGate = gate)
+    NottiForegroundObserver.syncWithCurrentState(coreB) { true }
+    awaitIdle()
+
+    assertEquals(0, store.getSessionCount())
+    assertEquals(1_000L, store.getSessionStartedAtMs())
+  }
+
+  @Test
+  fun `RN reload - background with no live core closes the process gate so the next foreground opens a session`() {
+    val gate = NottiCore.SessionGate()
+    var now = 1_000L
+    val coreA = newCore(clock = { now }, sessionGate = gate)
+    coreA.onAppForegrounded()
+    awaitIdle()
+    coreA.recordForegroundHeartbeatAt(21_000L)
+
+    // Core A invalidated by a reload; the user backgrounds before core B exists.
+    NottiForegroundObserver.handleProcessBackground(core = null, gate = gate)
+    assertFalse(gate.isActive)
+
+    // Much later the app returns; core B is created and replays the foreground.
+    now = 500_000L
+    val coreB = newCore(clock = { now }, sessionGate = gate)
+    NottiForegroundObserver.syncWithCurrentState(coreB) { true }
+    awaitIdle()
+
+    // The orphaned session from core A is closed at its last heartbeat (no
+    // background time counted) and a new one is open.
+    assertEquals(1, store.getSessionCount())
+    assertEquals(20_000L, store.getSessionTimeMs())
+    assertEquals(500_000L, store.getSessionStartedAtMs())
+  }
+
+  @Test
+  fun `foreground sync on core creation starts the cold-start session when the process is already started`() {
+    val core = newCore(clock = { 5_000L })
+
+    NottiForegroundObserver.syncWithCurrentState(core) { true }
+    awaitIdle()
+
+    assertEquals(5_000L, store.getSessionStartedAtMs())
+  }
+
+  @Test
+  fun `foreground sync on core creation does nothing when the process is not started`() {
+    val core = newCore(clock = { 5_000L })
+
+    NottiForegroundObserver.syncWithCurrentState(core) { false }
+    awaitIdle()
+
+    assertNull(store.getSessionStartedAtMs())
+  }
+
+  @Test
+  fun `session start and end use the timestamp captured at the lifecycle callback, on the executor`() {
+    var now = 1_000L
+    val manual = ManualExecutor()
+    val core = newCore(coreExecutor = manual, clock = { now })
+
+    core.onAppForegrounded()
+    assertNull("session start must not touch the store on the caller (main) thread", store.getSessionStartedAtMs())
+    now = 31_000L
+    core.onAppBackgrounded()
+    now = 999_000L // executor runs late - must not leak into the session
+
+    manual.runAll()
+
+    assertEquals(1, store.getSessionCount())
+    assertEquals(30_000L, store.getSessionTimeMs())
+    assertEquals(31_000L, store.getLastSessionAtMs())
+  }
+
+  @Test
+  fun `flush stops at the first transient failure instead of burning retries on every event`() {
+    val eventStore = NottiEventStore(prefs)
+    repeat(3) { eventStore.enqueue("n-$it", "d-$it", "clicked") }
+    val core = newCore(eventStore = eventStore)
+    registerOk()
+    // Enough 503s for the old (buggy) behavior too, so it fails instead of hanging.
+    repeat(15) { server.enqueue(MockResponse().setResponseCode(503)) }
+
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    assertEquals("1 register + 5 attempts for the first event only", 6, server.requestCount)
+    assertEquals(3, eventStore.all().size)
+  }
+
+  @Test
+  fun `repeated flush triggers while one is pending are coalesced into a single flush`() {
+    val eventStore = NottiEventStore(prefs)
+    val core = newCore(eventStore = eventStore)
+    registerOk()
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+    eventStore.enqueue("n-1", "d-1", "clicked")
+    repeat(25) { server.enqueue(MockResponse().setResponseCode(503)) }
+
+    val gate = CountDownLatch(1)
+    executor.execute { gate.await(5, TimeUnit.SECONDS) }
+    repeat(5) { core.onNetworkAvailable() }
+    gate.countDown()
+    awaitIdle()
+
+    assertEquals("one flush (5 attempts) after the registration POST", 6, server.requestCount)
+  }
+
+  @Test
+  fun `telemetry never evicts queued login or tag mutations and is coalesced per key`() {
+    var tokenCallback: ((String?) -> Unit)? = null
+    val core = newCore(tokenProvider = { cb -> tokenCallback = cb })
+    core.initialize("app-1", "key", validBaseUrl)
+
+    repeat(32) { core.login("user-$it") }
+    for (i in 0 until 5) {
+      core.handleSessionStart(i * 10_000L)
+      core.handleSessionEnd(i * 10_000L + 1_000L)
+    }
+    awaitIdle()
+
+    registerOk()
+    repeat(33) { server.enqueue(MockResponse().setResponseCode(204)) }
+    requireNotNull(tokenCallback).invoke("fcm-token")
+    awaitIdle()
+
+    val bodies = drainRequests().drop(1).map { JSONObject(it.body.readUtf8()) }
+    assertEquals((0 until 32).map { "user-$it" }, bodies.filter { it.has("external_user_id") }.map { it.getString("external_user_id") })
+    val sessions = bodies.filter { it.has("session_count") }
+    assertEquals("session snapshots coalesce to the latest", 1, sessions.size)
+    assertEquals(5, sessions.single().getInt("session_count"))
   }
 
   /**
@@ -1037,28 +1489,20 @@ class NottiCoreTest {
   @Test
   fun `app foreground does not re-register a device that is already registered`() {
     server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
-    // Two session PATCHes: each extra foreground without a background closes the
-    // prior session via an unclean-kill estimate (SEGTEL-08).
-    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
-    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
     val core = newCore()
     core.initialize("app-1", "key", validBaseUrl)
     awaitIdle()
 
     repeat(3) { core.onAppForegrounded() }
     awaitIdle()
-    awaitIdle() // session PATCHes enqueued inside the foreground tasks
+    awaitIdle()
 
-    // Exactly one registration POST (no re-registration); the two extra requests
-    // are session PATCHes, not registration attempts.
-    assertEquals(3, server.requestCount)
+    // Exactly one registration POST (no re-registration). Repeated foreground
+    // signals with no background in between are the same process session
+    // (session gate), so they also produce no orphan-close session PATCHes.
+    assertEquals(1, server.requestCount)
     assertEquals("POST", requireNotNull(server.takeRequest(5, TimeUnit.SECONDS)).method)
-    val sessionPatch1 = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
-    assertEquals("PATCH", sessionPatch1.method)
-    assertTrue(JSONObject(sessionPatch1.body.readUtf8()).has("session_count"))
-    val sessionPatch2 = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
-    assertEquals("PATCH", sessionPatch2.method)
-    assertTrue(JSONObject(sessionPatch2.body.readUtf8()).has("session_count"))
+    assertEquals(0, store.getSessionCount())
   }
 
   @Test
@@ -1078,9 +1522,6 @@ class NottiCoreTest {
     }
     server.enqueue(MockResponse().setResponseCode(400)) // terminal failure, no retry cap burn
     server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
-    // The four extra foregrounds each close a prior session (unclean-kill
-    // estimate) and enqueue a session PATCH; those flush after registration.
-    repeat(4) { server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}""")) }
     val core = newCore(interceptor = gateSecondRequest)
     core.initialize("app-1", "key", validBaseUrl)
     awaitIdle()
@@ -1091,15 +1532,15 @@ class NottiCoreTest {
 
     // Several more foregrounds (tab switching, lock/unlock) while that retry
     // is still in flight must produce no further *registration* attempts -
-    // otherwise every foreground stacks another registration call. They do
-    // close and re-open sessions (queued session PATCHes), never register.
+    // otherwise every foreground stacks another registration call. With no
+    // background in between they are also the same session (session gate).
     repeat(4) { core.onAppForegrounded() }
     releaseRetry.countDown()
     awaitIdle()
-    awaitIdle() // queued session PATCHes flush inside the registration task
+    awaitIdle()
 
-    assertEquals(6, server.requestCount)
-    val methods = (0 until 6).map { requireNotNull(server.takeRequest(5, TimeUnit.SECONDS)).method }
+    assertEquals(2, server.requestCount)
+    val methods = (0 until 2).map { requireNotNull(server.takeRequest(5, TimeUnit.SECONDS)).method }
     // Exactly two registration POSTs (first attempt + one retry) - no stacking.
     assertEquals(2, methods.count { it == "POST" })
     assertEquals("device-1", store.getDeviceId())
@@ -1164,17 +1605,15 @@ class NottiCoreTest {
     assertEquals(0, server.requestCount)
 
     server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
-    // The second foreground closes the first session (unclean-kill estimate)
-    // before the token arrives; that PATCH is queued and flushed on registration.
-    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
     core.onAppForegrounded()
     awaitIdle()
-    awaitIdle() // the queued session PATCH flushes inside the registration task
+    awaitIdle()
 
     assertEquals(3, tokenRequests)
-    // One registration POST (the retry still fires despite the wedged fetch)
-    // plus the queued session PATCH.
-    assertEquals(2, server.requestCount)
+    // One registration POST (the retry still fires despite the wedged fetch).
+    // The repeated foreground is the same process session (session gate), so
+    // no orphan-close session PATCH is produced.
+    assertEquals(1, server.requestCount)
     assertEquals("device-1", store.getDeviceId())
   }
 

@@ -11,6 +11,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 
@@ -96,13 +97,77 @@ class NottiInitProvider : ContentProvider() {
  * itself decides whether a retry is actually warranted. `onStop` is the
  * missing background hook (SEGTEL-06): [NottiCore.onAppBackgrounded] ends the
  * current session and enqueues its aggregate PATCH.
+ *
+ * While started it also ticks a foreground heartbeat every
+ * [NottiCore.HEARTBEAT_INTERVAL_MS] on the main looper (SEGTEL-08: the "last
+ * known foreground timestamp" used to close a session orphaned by a kill).
+ * The ticker reads [NottiModule.activeCore] on every tick, so it keeps working
+ * when the lazy core is only created after `onStart` (the usual cold start).
  */
 internal object NottiForegroundObserver : DefaultLifecycleObserver {
+  private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
+
+  /** Where the callbacks/ticker find the live core. Test seam; production never reassigns it. */
+  @Volatile
+  internal var coreProvider: () -> NottiCore? = { NottiModule.activeCore }
+
+  private val heartbeat = object : Runnable {
+    override fun run() {
+      coreProvider()?.recordForegroundHeartbeat()
+      mainHandler.postDelayed(this, NottiCore.HEARTBEAT_INTERVAL_MS)
+    }
+  }
+
   override fun onStart(owner: LifecycleOwner) {
-    NottiModule.activeCore?.onAppForegrounded()
+    coreProvider()?.onAppForegrounded()
+    mainHandler.removeCallbacks(heartbeat)
+    mainHandler.postDelayed(heartbeat, NottiCore.HEARTBEAT_INTERVAL_MS)
   }
 
   override fun onStop(owner: LifecycleOwner) {
-    NottiModule.activeCore?.onAppBackgrounded()
+    mainHandler.removeCallbacks(heartbeat)
+    handleProcessBackground(coreProvider(), NottiModule.processSessionGate)
+  }
+
+  /**
+   * Closes the process-wide session gate even when no core is live: an RN
+   * reload invalidates core A and the user can background before core B
+   * exists. Left open, the gate would make core B's foreground a no-op (no
+   * new session) and the old session would later be closed counting the
+   * whole background interval. The orphaned session itself is closed by the
+   * next session start at its last heartbeat (SEGTEL-08).
+   */
+  internal fun handleProcessBackground(core: NottiCore?, gate: NottiCore.SessionGate) {
+    gate.close()
+    core?.onAppBackgrounded()
+  }
+
+  /**
+   * Cold-start session fix: [NottiModule]'s core is lazy, so on a normal
+   * launch `onStart` above fires while [NottiModule.activeCore] is still null
+   * and the launch session was never counted. Called right after a core is
+   * created; if the process is already STARTED, the missed foreground is
+   * replayed. Posted to the main looper (lifecycle state is main-thread
+   * owned); a double signal (this + a late `onStart`) is deduped by the
+   * core's session gate.
+   */
+  internal fun onCoreCreated(core: NottiCore) {
+    try {
+      mainHandler.post {
+        syncWithCurrentState(core) {
+          ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+        }
+      }
+    } catch (t: Throwable) {
+      Log.e(NottiModule.NAME, "Notti: could not sync the initial foreground state - ${t.message}")
+    }
+  }
+
+  internal fun syncWithCurrentState(core: NottiCore, isProcessStarted: () -> Boolean) {
+    try {
+      if (isProcessStarted()) core.onAppForegrounded()
+    } catch (t: Throwable) {
+      Log.e(NottiModule.NAME, "Notti: could not sync the initial foreground state - ${t.message}")
+    }
   }
 }

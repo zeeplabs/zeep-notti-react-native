@@ -84,6 +84,16 @@ class NottiModule(reactContext: ReactApplicationContext) :
     Thread(runnable, "notti-io").apply { isDaemon = true }
   }
 
+  /**
+   * Reverse geocoding is a blocking network call: it gets its own
+   * single-thread daemon executor (instead of a new `Thread` per foreground)
+   * so it never stalls registration/event reporting on [ioExecutor] and
+   * concurrent foregrounds cannot pile up threads.
+   */
+  private val geoExecutor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
+    Thread(runnable, "notti-geo").apply { isDaemon = true }
+  }
+
   private val core: NottiCore by lazy {
     NottiCore(
       deviceStore = NottiDeviceStore(prefs),
@@ -105,10 +115,14 @@ class NottiModule(reactContext: ReactApplicationContext) :
       // moment still completes and would otherwise emit through a module RN
       // has already torn down. Mirrors `emitNotificationReceived`'s companion
       // object bridge below.
-      onDeviceIdChanged = { deviceId -> activeInstance?.emitDeviceIdChanged(deviceId) }
+      onDeviceIdChanged = { deviceId -> activeInstance?.emitDeviceIdChanged(deviceId) },
+      sessionGate = processSessionGate
     ).also {
       ownCore = it
       activeCore = it
+      // The process-lifecycle onStart for this launch usually fired before
+      // this lazy core existed - replay it so the cold-start session counts.
+      NottiForegroundObserver.onCoreCreated(it)
     }
   }
 
@@ -153,6 +167,7 @@ class NottiModule(reactContext: ReactApplicationContext) :
       if (ownCore != null && activeCore === ownCore) activeCore = null
     }
     ioExecutor.shutdown()
+    geoExecutor.shutdown()
     super.invalidate()
   }
 
@@ -275,16 +290,22 @@ class NottiModule(reactContext: ReactApplicationContext) :
       callback(null)
       return
     }
-    Thread {
-      try {
-        val geocoder = Geocoder(context, Locale.US)
-        val addresses = geocoder.getFromLocation(location.latitude, location.longitude, 1)
-        callback(addresses?.firstOrNull()?.countryCode)
-      } catch (t: Throwable) {
-        Log.e(NAME, "Notti: failed to reverse-geocode location - ${t.message}")
-        callback(null)
+    try {
+      geoExecutor.execute {
+        try {
+          val geocoder = Geocoder(context, Locale.US)
+          @Suppress("DEPRECATION")
+          val addresses = geocoder.getFromLocation(location.latitude, location.longitude, 1)
+          callback(addresses?.firstOrNull()?.countryCode)
+        } catch (t: Throwable) {
+          Log.e(NAME, "Notti: failed to reverse-geocode location - ${t.message}")
+          callback(null)
+        }
       }
-    }.start()
+    } catch (e: java.util.concurrent.RejectedExecutionException) {
+      // Module torn down: no country this time (treated as omit, SEGTEL-14).
+      callback(null)
+    }
   }
 
   /**
@@ -370,6 +391,14 @@ class NottiModule(reactContext: ReactApplicationContext) :
       private set
 
     /**
+     * Process-wide "foreground session open" gate shared by every core this
+     * process creates: an RN reload re-creates the module/core while the app
+     * stays foregrounded, and that must not open (and orphan-close) a second
+     * session for the same foreground.
+     */
+    internal val processSessionGate = NottiCore.SessionGate()
+
+    /**
      * I3 (found in pre-release review): callers used to build the
      * [WritableMap] (a JNI allocation) unconditionally, then discard it here
      * when no module existed yet - now the null-check happens first, before
@@ -414,13 +443,17 @@ class NottiModule(reactContext: ReactApplicationContext) :
      * disk file anyway, so no event can be lost to the loser.
      */
     internal fun getEventStore(context: Context): NottiEventStore {
-      eventStoreContext = context
+      // Never retain the caller's context itself: it is a
+      // ReactApplicationContext on module construction, and this static
+      // would keep the whole torn-down RN context alive after a reload.
+      eventStoreContext = context.applicationContext ?: context
       val existing = eventStore
       if (existing != null) return existing
       synchronized(this) {
         val current = eventStore
         if (current != null) return current
-        return NottiEventStore(context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE))
+        val appContext = context.applicationContext ?: context
+        return NottiEventStore(appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE))
           .also { eventStore = it }
       }
     }
@@ -450,6 +483,7 @@ class NottiModule(reactContext: ReactApplicationContext) :
         activeInstance = null
         activeCore = null
       }
+      processSessionGate.close()
       eventStore = null
       eventStoreContext = null
     }

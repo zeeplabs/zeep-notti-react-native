@@ -158,4 +158,87 @@ class NottiEventStoreTest {
     assertEquals("notif-1", all[0].notificationId)
     assertEquals("notif-2", all[1].notificationId)
   }
+
+  @Test
+  fun `corrupted JSON on disk yields an empty queue and is cleared, never a throw`() {
+    prefs.edit().putString("notti_pending_events", "{not json").apply()
+
+    assertTrue(store.all().isEmpty())
+    // Cleared, so a later enqueue starts from a clean queue instead of
+    // re-failing the parse forever.
+    assertEquals(null, prefs.getString("notti_pending_events", null))
+    store.enqueue("notif-1", "delivery-1", "clicked")
+    assertEquals(1, store.all().size)
+  }
+
+  @Test
+  fun `a record missing a required field is treated as corruption, not a throw`() {
+    prefs.edit().putString("notti_pending_events", """[{"id":"x"}]""").apply()
+
+    assertTrue(store.all().isEmpty())
+  }
+
+  @Test
+  fun `concurrent enqueue and remove never lose an event`() {
+    // Widen the read-modify-write window so an unsynchronized all()+write()
+    // loses updates deterministically rather than by luck.
+    val slowPrefs = SlowThreadSafePrefs()
+    val racingStore = NottiEventStore(slowPrefs)
+    val seed = (0 until 8).map { racingStore.enqueue("seed-$it", "d-$it", "received") }
+
+    val start = java.util.concurrent.CountDownLatch(1)
+    val enqueuer = Thread {
+      start.await()
+      repeat(16) { racingStore.enqueue("new-$it", "d-$it", "clicked") }
+    }
+    val remover = Thread {
+      start.await()
+      seed.forEach { racingStore.remove(it.id) }
+    }
+    enqueuer.start(); remover.start()
+    start.countDown()
+    enqueuer.join(10_000); remover.join(10_000)
+
+    val remaining = racingStore.all()
+    assertEquals(16, remaining.size)
+    assertTrue(remaining.all { it.notificationId.startsWith("new-") })
+  }
+}
+
+/** Thread-safe in-memory prefs whose reads yield, to expose lost updates. */
+private class SlowThreadSafePrefs : SharedPreferences {
+  private val values = java.util.concurrent.ConcurrentHashMap<String, Any>()
+  override fun getAll(): MutableMap<String, *> = HashMap(values)
+  override fun getString(key: String?, defValue: String?): String? {
+    val v = values[key] as? String
+    Thread.sleep(2)
+    return v ?: defValue
+  }
+  override fun getStringSet(key: String?, defValues: MutableSet<String>?): MutableSet<String>? = defValues
+  override fun getInt(key: String?, defValue: Int) = values[key] as? Int ?: defValue
+  override fun getLong(key: String?, defValue: Long) = values[key] as? Long ?: defValue
+  override fun getFloat(key: String?, defValue: Float) = values[key] as? Float ?: defValue
+  override fun getBoolean(key: String?, defValue: Boolean) = values[key] as? Boolean ?: defValue
+  override fun contains(key: String?) = values.containsKey(key)
+  override fun edit(): SharedPreferences.Editor = Editor()
+  override fun registerOnSharedPreferenceChangeListener(l: SharedPreferences.OnSharedPreferenceChangeListener?) = Unit
+  override fun unregisterOnSharedPreferenceChangeListener(l: SharedPreferences.OnSharedPreferenceChangeListener?) = Unit
+
+  private inner class Editor : SharedPreferences.Editor {
+    private val pending = mutableMapOf<String, Any?>()
+    private val removals = mutableSetOf<String>()
+    override fun putString(key: String?, value: String?) = apply { pending[key!!] = value }
+    override fun putStringSet(key: String?, v: MutableSet<String>?) = apply { pending[key!!] = v }
+    override fun putInt(key: String?, value: Int) = apply { pending[key!!] = value }
+    override fun putLong(key: String?, value: Long) = apply { pending[key!!] = value }
+    override fun putFloat(key: String?, value: Float) = apply { pending[key!!] = value }
+    override fun putBoolean(key: String?, value: Boolean) = apply { pending[key!!] = value }
+    override fun remove(key: String?) = apply { removals.add(key!!) }
+    override fun clear() = apply { removals.addAll(values.keys) }
+    override fun commit(): Boolean { apply(); return true }
+    override fun apply() {
+      removals.forEach { values.remove(it) }
+      pending.forEach { (k, v) -> if (v == null) values.remove(k) else values[k] = v }
+    }
+  }
 }

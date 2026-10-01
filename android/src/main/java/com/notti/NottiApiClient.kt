@@ -1,5 +1,7 @@
 package com.notti
 
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -13,7 +15,12 @@ data class DeviceResponse(val id: String, val tags: Map<String, String>)
 
 sealed class ApiResult {
   data class Success(val response: DeviceResponse) : ApiResult()
-  data class Failure(val message: String) : ApiResult()
+  /**
+   * `terminal` = abandoned on a non-retried 4xx (401/403/404/...): the same
+   * request will keep failing until something outside the SDK changes
+   * (credentials, device row). Callers use it only to log distinctly.
+   */
+  data class Failure(val message: String, val terminal: Boolean = false) : ApiResult()
 }
 
 /**
@@ -123,7 +130,8 @@ class NottiApiClient(
    * the event and the response body is ignored. 5xx responses and network
    * failures are retried with exponential backoff (2s, 4s, 8s, 16s, 32s)
    * capped at 5 attempts, matching device registration; 4xx responses are
-   * terminal failures and not retried.
+   * terminal failures and not retried, except 408/429 (transient: retried,
+   * and non-terminal if the cap is exhausted).
    */
   fun reportEvent(notificationId: String, deliveryId: String, type: String, token: String): EventResult {
     val body = JSONObject()
@@ -133,11 +141,24 @@ class NottiApiClient(
       .toString()
       .toRequestBody(jsonMediaType)
 
-    val request = Request.Builder()
-      .url("$baseUrl/v1/apps/$appId/notifications/$notificationId/events")
-      .header("Authorization", "Bearer $clientKey")
-      .post(body)
-      .build()
+    // Built segment-by-segment so a notification id carrying `/`, `?`, `#`
+    // or spaces is percent-encoded as ONE path segment (same as iOS'
+    // `percentEncodedPathComponent`) instead of rewriting the path/query. A
+    // URL that cannot be built at all can never succeed on a later flush
+    // either, so it is reported as terminal (the queue drops it) rather than
+    // thrown - an exception here would leave the record as a poison pill
+    // re-thrown on every flush.
+    val url = eventsUrl(notificationId)
+      ?: return EventResult.Failure("invalid events URL for notification id", terminal = true)
+    val request = try {
+      Request.Builder()
+        .url(url)
+        .header("Authorization", "Bearer $clientKey")
+        .post(body)
+        .build()
+    } catch (e: IllegalArgumentException) {
+      return EventResult.Failure("invalid events request: ${e.message}", terminal = true)
+    }
 
     // The backend is free to acknowledge an event with 200 + a JSON payload,
     // a bare 204 No Content, or nothing at all - none of it is needed by the
@@ -146,6 +167,20 @@ class NottiApiClient(
     // returns a non-null dummy value, never hitting the retry-on-2xx path.
     return executeWithRetry(request) { true }
       .toEventResult()
+  }
+
+  private fun eventsUrl(notificationId: String): HttpUrl? = try {
+    baseUrl.toHttpUrlOrNull()
+      ?.newBuilder()
+      ?.addPathSegment("v1")
+      ?.addPathSegment("apps")
+      ?.addPathSegment(appId)
+      ?.addPathSegment("notifications")
+      ?.addPathSegment(notificationId)
+      ?.addPathSegment("events")
+      ?.build()
+  } catch (e: IllegalArgumentException) {
+    null
   }
 
   /**
@@ -213,10 +248,15 @@ class NottiApiClient(
             // resolve instead of parking registration on the first bad
             // response.
             lastError = "HTTP ${response.code} with an unparseable response body"
-          } else if (response.code < 500) {
+          } else if (response.code < 500 && response.code != 408 && response.code != 429) {
             // 4xx: not retried, terminal failure. Marked terminal so the
             // offline queue can discard the event - the backend will never
             // accept it, so keeping it would re-fail forever on every flush.
+            // Exceptions: 408 Request Timeout and 429 Too Many Requests are
+            // transient by definition (the same request can succeed later),
+            // so they fall through to the retry/backoff branch below and, if
+            // the cap is exhausted, end as a NON-terminal failure - the event
+            // stays queued (SDKCTR-08/11 as revised in the v0.3.x review).
             return RetryResult.Failure("HTTP ${response.code}", terminal = true)
           } else {
             lastError = "HTTP ${response.code}"
@@ -239,7 +279,7 @@ class NottiApiClient(
 
   private fun RetryResult<DeviceResponse>.toApiResult(): ApiResult = when (this) {
     is RetryResult.Success -> ApiResult.Success(value)
-    is RetryResult.Failure -> ApiResult.Failure(message)
+    is RetryResult.Failure -> ApiResult.Failure(message, terminal)
   }
 
   private fun RetryResult<*>.toEventResult(): EventResult = when (this) {

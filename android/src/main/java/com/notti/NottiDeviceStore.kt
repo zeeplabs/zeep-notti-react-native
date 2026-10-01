@@ -40,6 +40,9 @@ class NottiDeviceStore(private val prefs: SharedPreferences) {
     private const val KEY_SESSION_TIME_MS = "notti_session_time_ms"
     private const val KEY_SESSION_STARTED_AT = "notti_session_started_at_ms"
     private const val KEY_LOCATION_SHARING_ENABLED = "notti_location_sharing_enabled"
+    private const val KEY_PENDING_COUNTRY_CLEAR = "notti_pending_country_clear"
+    private const val KEY_LAST_SYNCED_COUNTRY = "notti_last_synced_country"
+    private const val KEY_LAST_FOREGROUND_AT = "notti_last_foreground_at_ms"
 
     /**
      * Pure merge of the current tag map against an add map and/or a remove
@@ -152,6 +155,38 @@ class NottiDeviceStore(private val prefs: SharedPreferences) {
   fun getLocationSharingEnabled(): Boolean = prefs.getBoolean(KEY_LOCATION_SHARING_ENABLED, false)
 
   fun setLocationSharingEnabled(locationSharingEnabled: Boolean) {
-    prefs.edit().putBoolean(KEY_LOCATION_SHARING_ENABLED, locationSharingEnabled).apply()
+    // commit(), not apply(): an opt-out must survive process death. Callers are off main (RN native-modules thread / notti-io).
+    prefs.edit().putBoolean(KEY_LOCATION_SHARING_ENABLED, locationSharingEnabled).commit()
+  }
+
+  /**
+   * LGPD opt-out durability (SEGTEL-13): true from the moment location sharing
+   * is turned off (after having been on / after a country was synced) until a
+   * `{country: null}` PATCH is acknowledged with a 2xx. Persisted so an opt-out
+   * issued before `initialize()`, offline, or killed mid-retry is re-sent on
+   * the next registration/foreground/flush instead of being lost.
+   */
+  fun getPendingCountryClear(): Boolean = prefs.getBoolean(KEY_PENDING_COUNTRY_CLEAR, false)
+
+  fun setPendingCountryClear(pending: Boolean) {
+    // commit(), not apply(): the LGPD clear obligation must survive process death. Callers are off main (RN native-modules thread / notti-io).
+    prefs.edit().putBoolean(KEY_PENDING_COUNTRY_CLEAR, pending).commit()
+  }
+
+  /** Last country acknowledged by the backend (diff before re-sending), or null. */
+  fun getLastSyncedCountry(): String? = prefs.getString(KEY_LAST_SYNCED_COUNTRY, null)
+
+  fun setLastSyncedCountry(country: String?) {
+    prefs.edit().putString(KEY_LAST_SYNCED_COUNTRY, country).apply()
+  }
+
+  /**
+   * Last known foreground timestamp of the in-flight session (SEGTEL-08
+   * heartbeat): the end used to close a session orphaned by a kill/crash.
+   */
+  fun getLastForegroundAtMs(): Long? = prefs.getLong(KEY_LAST_FOREGROUND_AT, -1L).takeIf { it >= 0 }
+
+  fun setLastForegroundAtMs(lastForegroundAtMs: Long?) {
+    prefs.edit().putLong(KEY_LAST_FOREGROUND_AT, lastForegroundAtMs ?: -1L).apply()
   }
 }

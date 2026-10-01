@@ -479,6 +479,76 @@ class NottiApiClientTest {
     assertEquals(2, server.requestCount)
   }
 
+  @Test
+  fun `reportEvent treats 429 as transient - full retry schedule, then a non-terminal failure`() {
+    repeat(5) { server.enqueue(MockResponse().setResponseCode(429)) }
+
+    val result = client.reportEvent("notif-1", "delivery-1", "clicked", "fcm-token")
+
+    assertEquals(5, server.requestCount)
+    assertEquals(listOf(2000L, 4000L, 8000L, 16000L), sleeps)
+    assertTrue("expected a Failure, got $result", result is EventResult.Failure)
+    assertFalse("HTTP 429 is transient: the event must stay queued", (result as EventResult.Failure).terminal)
+  }
+
+  @Test
+  fun `reportEvent treats 408 as transient - retried with backoff, then a non-terminal failure`() {
+    // OkHttp itself silently re-sends a 408 once per call, so the raw request
+    // count is not 5 - assert on the SDK's own backoff schedule instead.
+    server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+      override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest) =
+        MockResponse().setResponseCode(408)
+    }
+
+    val result = client.reportEvent("notif-1", "delivery-1", "clicked", "fcm-token")
+
+    assertEquals(listOf(2000L, 4000L, 8000L, 16000L), sleeps)
+    assertTrue("expected a Failure, got $result", result is EventResult.Failure)
+    assertFalse("HTTP 408 is transient: the event must stay queued", (result as EventResult.Failure).terminal)
+  }
+
+  @Test
+  fun `reportEvent retries a 429 and succeeds once the backend recovers`() {
+    server.enqueue(MockResponse().setResponseCode(429))
+    server.enqueue(MockResponse().setResponseCode(200))
+
+    val result = client.reportEvent("notif-1", "delivery-1", "clicked", "fcm-token")
+
+    assertEquals(2, server.requestCount)
+    assertTrue("expected Success after a 429 retry, got $result", result is EventResult.Success)
+  }
+
+  @Test
+  fun `reportEvent percent-encodes the notification id as a single path segment`() {
+    server.enqueue(MockResponse().setResponseCode(200))
+
+    val result = client.reportEvent("a/b?c d#e", "delivery-1", "clicked", "fcm-token")
+
+    val recorded = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+    assertEquals("/v1/apps/app-1/notifications/a%2Fb%3Fc%20d%23e/events", recorded.path)
+    assertTrue(result is EventResult.Success)
+  }
+
+  @Test
+  fun `reportEvent with an unbuildable URL is a terminal failure, never a throw`() {
+    val broken = NottiApiClient(
+      httpClient = OkHttpClient(),
+      baseUrl = "not a url",
+      appId = "app-1",
+      clientKey = "secret-key",
+      sleeper = { }
+    )
+
+    val result = broken.reportEvent("notif-1", "delivery-1", "clicked", "fcm-token")
+
+    assertTrue("expected a Failure, got $result", result is EventResult.Failure)
+    assertTrue(
+      "an unbuildable URL can never succeed - must be terminal so the event is not a poison pill",
+      (result as EventResult.Failure).terminal
+    )
+    assertEquals(0, server.requestCount)
+  }
+
   /**
    * Minimal re-implementation of AOSP's `JSONStringer.value(Object)` dispatch:
    * only JSONObject/JSONArray/Boolean/Number/null are encoded structurally,

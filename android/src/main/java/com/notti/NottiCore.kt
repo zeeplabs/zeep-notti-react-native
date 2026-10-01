@@ -8,6 +8,7 @@ import java.util.TimeZone
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Orchestrates init, device registration, token refresh, permission
@@ -81,8 +82,29 @@ class NottiCore(
    * id already cached. See ADR-001
    * (docs/adr/001-expose-device-id-getter-and-change-event.md).
    */
-  private val onDeviceIdChanged: (String) -> Unit = {}
+  private val onDeviceIdChanged: (String) -> Unit = {},
+  /**
+   * Wall clock, read on the caller's thread at the lifecycle callback (never
+   * later on the executor) so a busy executor cannot stretch a session.
+   * Injected for deterministic tests.
+   */
+  private val clock: () -> Long = { System.currentTimeMillis() },
+  /**
+   * Whether a foreground session is open in THIS process. Production passes
+   * the process-wide [NottiModule.processSessionGate] so a core re-created by
+   * an RN reload (or the cold-start sync racing the lifecycle observer) never
+   * opens a second session for the same foreground; tests get a fresh gate.
+   */
+  private val sessionGate: SessionGate = SessionGate()
 ) {
+
+  /** See [sessionGate]. Thread-safe; flips on the lifecycle callback's thread. */
+  class SessionGate {
+    private val active = AtomicBoolean(false)
+    internal val isActive: Boolean get() = active.get()
+    internal fun tryOpen(): Boolean = active.compareAndSet(false, true)
+    internal fun close() = active.set(false)
+  }
 
   companion object {
     /**
@@ -91,6 +113,30 @@ class NottiCore(
      * that state would grow for the life of the process.
      */
     private const val MAX_PENDING_MUTATIONS = 32
+
+    /**
+     * Upper bound on the time credited to a session orphaned by a kill/crash
+     * (no background transition), applied on top of the heartbeat estimate
+     * (SEGTEL-08). With the foreground heartbeat
+     * ([NottiForegroundObserver], every [HEARTBEAT_INTERVAL_MS]) the estimate
+     * is normally within one interval of the real end; this cap only guards
+     * against a corrupt/clock-jumped heartbeat inflating `session_time`
+     * without limit. 12h: longer than any realistic single foreground stint
+     * of a mobile app, short enough to bound the damage of a bad value.
+     */
+    internal const val MAX_ORPHAN_SESSION_MS = 12L * 60 * 60 * 1000
+
+    /**
+     * Cadence of the foreground heartbeat that persists the "last known
+     * foreground timestamp" used to close orphaned sessions (SEGTEL-08).
+     * One SharedPreferences write per minute while foregrounded; max error of
+     * an orphaned session's estimate is one interval.
+     */
+    internal const val HEARTBEAT_INTERVAL_MS = 60_000L
+
+    private const val KEY_SESSION = "session"
+    private const val KEY_COUNTRY = "country"
+    private const val KEY_APP_VERSION = "appVersion"
 
     /**
      * Single-threaded so blocking HTTP work never piles up more than one
@@ -141,10 +187,23 @@ class NottiCore(
   // registered against now. iOS's equivalent (`NottiCore.swift`'s
   // `PendingMutation`) never captured a client at all; this now reads
   // `apiClient` at run/flush time instead, matching that.
+  //
+  // `coalesceKey` (telemetry only: session / country / appVersion): a queued
+  // telemetry mutation is REPLACED by a newer one with the same key instead of
+  // appended, so telemetry occupies at most one slot per key and never evicts
+  // a queued login/tag/subscription call from the bounded queue. `null` =
+  // ordinary mutation, kept in call order and subject to the cap.
   private class PendingMutation(
     val operation: String,
+    val coalesceKey: String? = null,
     val work: (client: NottiApiClient, deviceId: String, token: String) -> Unit
   )
+
+  /** Guards the session read-modify-write sequence on [deviceStore]. */
+  private val sessionLock = Any()
+
+  /** Dedupes flush scheduling: at most one flush task queued at a time. */
+  private val flushScheduled = AtomicBoolean(false)
 
   fun initialize(appId: String, clientKey: String, baseUrl: String) {
     if (appId.isBlank() || clientKey.isBlank() || baseUrl.isBlank()) {
@@ -211,9 +270,17 @@ class NottiCore(
     // Session start runs first, before any flush/retry logic: an unclean kill
     // (force-quit/crash with no background transition) leaves `session_started_at`
     // set, and this closes the missed session with an estimate before a new one
-    // opens (SEGTEL-08). Store-only bookkeeping + possibly an enqueued session
-    // PATCH; no blocking I/O on the caller's thread.
-    handleSessionStart(System.currentTimeMillis())
+    // opens (SEGTEL-08). The timestamp is captured HERE, on the lifecycle
+    // callback, and the store work is serialized on [executor] together with
+    // session end - so start/end can never interleave or read a late clock.
+    // [sessionGate] makes a duplicate foreground signal for the same process
+    // session (cold-start sync + observer, RN reload) a no-op.
+    if (sessionGate.tryOpen()) {
+      val now = clock()
+      // Executor shut down (module invalidated): no session was started, so
+      // the gate must not stay open and swallow the next real foreground.
+      if (!dispatch("sessionStart") { handleSessionStart(now) }) sessionGate.close()
+    }
 
     // Flush the event queue unconditionally, before the registration-state
     // guard below: queued event reporting is independent of whether
@@ -222,7 +289,8 @@ class NottiCore(
     // in progress). Blocking HTTP, so it is handed to the executor like every
     // other network touch and runs ahead of any registration retry this
     // method goes on to trigger.
-    dispatch("flushEventQueue") { flushEventQueue() }
+    scheduleFlush()
+    retryPendingCountryClear()
 
     val client = apiClient ?: return
     if (registrationState == RegistrationState.REGISTERED ||
@@ -261,7 +329,24 @@ class NottiCore(
    * thread. Mirrors iOS' `NottiCore.onNetworkAvailable`.
    */
   internal fun onNetworkAvailable() {
-    dispatch("flushEventQueue") { flushEventQueue() }
+    scheduleFlush()
+    retryPendingCountryClear()
+  }
+
+  /**
+   * Queues one [flushEventQueue] unless one is already queued and not yet
+   * started: every foreground / reconnect / detection-site enqueue asks for a
+   * flush, and stacking N identical flushes behind a slow one just repeats the
+   * same failing work N times. The flag is reset when the task STARTS, so an
+   * event enqueued mid-flush still gets a follow-up flush.
+   */
+  private fun scheduleFlush() {
+    if (!flushScheduled.compareAndSet(false, true)) return
+    val accepted = dispatch("flushEventQueue") {
+      flushScheduled.set(false)
+      flushEventQueue()
+    }
+    if (!accepted) flushScheduled.set(false)
   }
 
   /**
@@ -272,87 +357,149 @@ class NottiCore(
    * [NottiForegroundObserver.onStop].
    */
   fun onAppBackgrounded() {
-    dispatch("handleSessionEnd") { handleSessionEnd(System.currentTimeMillis()) }
+    sessionGate.close()
+    // Captured on the lifecycle callback, not when the executor gets to it: a
+    // backlog (e.g. a flush in retry backoff) would otherwise add its whole
+    // delay to the session's foreground time.
+    val now = clock()
+    dispatch("handleSessionEnd") { handleSessionEnd(now) }
   }
 
   /**
-   * Session start (SEGTEL-05/08): called at the top of [onAppForegrounded]
-   * before any flush/retry logic. If `session_started_at` is already set, the
+   * Foreground heartbeat (SEGTEL-08 "last known foreground timestamp"):
+   * called periodically by [NottiForegroundObserver] while the process is
+   * started. No-op when no session is open in this process.
+   */
+  fun recordForegroundHeartbeat() {
+    if (!sessionGate.isActive) return
+    val now = clock()
+    dispatch("heartbeat") { recordForegroundHeartbeatAt(now) }
+  }
+
+  internal fun recordForegroundHeartbeatAt(nowMs: Long) {
+    synchronized(sessionLock) {
+      val startedAt = deviceStore.getSessionStartedAtMs() ?: return
+      if (nowMs >= startedAt) deviceStore.setLastForegroundAtMs(nowMs)
+    }
+  }
+
+  /**
+   * Session start (SEGTEL-05/08). If `session_started_at` is already set, the
    * previous session never received a background transition (unclean kill:
-   * force-quit/crash) - close it with an estimate via [handleSessionEnd] using
-   * the stored start and the current time (SEGTEL-08). Then set
-   * `first_session_at` once (never overwritten) and open the new session.
-   * Store-only, plus a possible session PATCH enqueue via [handleSessionEnd].
+   * force-quit/crash) - it is closed at the LAST KNOWN FOREGROUND timestamp
+   * (the heartbeat, see [recordForegroundHeartbeat]), never at "now": the
+   * time the process was dead is not foreground time. Without a heartbeat
+   * the estimate is the session start itself (0s credited - under-count
+   * rather than inflate), and it is always bounded by
+   * [MAX_ORPHAN_SESSION_MS]. Then `first_session_at` is set once and the new
+   * session opens. Runs on [executor] (or directly in tests), under
+   * [sessionLock].
    */
   internal fun handleSessionStart(nowMs: Long) {
-    if (deviceStore.getSessionStartedAtMs() != null) {
-      handleSessionEnd(nowMs)
+    synchronized(sessionLock) {
+      val orphanStartedAt = deviceStore.getSessionStartedAtMs()
+      if (orphanStartedAt != null) {
+        val end = estimateOrphanEnd(orphanStartedAt, deviceStore.getLastForegroundAtMs(), nowMs)
+        closeSession(orphanStartedAt, end)
+      }
+      if (deviceStore.getFirstSessionAtMs() == null) {
+        deviceStore.setFirstSessionAtMs(nowMs)
+      }
+      deviceStore.setSessionStartedAtMs(nowMs)
+      deviceStore.setLastForegroundAtMs(nowMs)
     }
-    if (deviceStore.getFirstSessionAtMs() == null) {
-      deviceStore.setFirstSessionAtMs(nowMs)
-    }
-    deviceStore.setSessionStartedAtMs(nowMs)
     readCountryIfOptedIn()
+  }
+
+  private fun estimateOrphanEnd(startedAt: Long, heartbeat: Long?, nowMs: Long): Long {
+    val lastSeen = heartbeat?.takeIf { it >= startedAt } ?: startedAt
+    return minOf(lastSeen, startedAt + MAX_ORPHAN_SESSION_MS, maxOf(nowMs, startedAt))
   }
 
   /**
    * Best-effort, permission-gated country read at session start (SEGTEL-11):
    * only when the opt-in flag is on AND the host app already holds location
-   * permission. The async [countryProvider] result is re-checked against the
-   * flag at callback time (the toggle may have flipped off mid-read) and a
-   * `null` country (revoked permission/read failure) is silently omitted -
-   * never prompts, never errors (SEGTEL-12/14). Stale cached fixes are
-   * acceptable for country-level granularity.
+   * permission. A `null` country (revoked permission/read failure) is silently
+   * omitted - never prompts, never errors (SEGTEL-12/14). An unchanged
+   * country (same as the last value the backend acknowledged) is not re-sent.
+   *
+   * The opt-in flag is re-checked INSIDE the closure that actually performs
+   * the PATCH, not only when the geocode result arrives: the PATCH may run
+   * much later (queued until registration completes) and the user may have
+   * opted out in between - sending the country after an opt-out is exactly
+   * what SEGTEL-13 forbids. The mutation is keyed `country`, so a later
+   * opt-out clear replaces a still-queued country set.
    */
   private fun readCountryIfOptedIn() {
     if (!deviceStore.getLocationSharingEnabled() || !hasLocationPermission()) return
     countryProvider { country ->
+      if (country == null) return@countryProvider
       dispatch("country") {
-        if (!deviceStore.getLocationSharingEnabled() || country == null) return@dispatch
-        mutate("country") { client, deviceId, token ->
-          val result = client.patchDevice(deviceId, token, mapOf("country" to country))
-          when (result) {
-            is ApiResult.Success -> Unit
-            is ApiResult.Failure -> logger("Notti.country: PATCH failed (${result.message}) - not retried")
+        if (!shouldSendCountry(country) || apiClient == null) return@dispatch
+        // Already on the executor: run/queue directly rather than through
+        // [mutate], which would add a second dispatch hop.
+        runOrQueue(PendingMutation("country", KEY_COUNTRY) { client, deviceId, token ->
+          if (shouldSendCountry(country)) {
+            when (val result = client.patchDevice(deviceId, token, mapOf("country" to country))) {
+              is ApiResult.Success -> deviceStore.setLastSyncedCountry(country)
+              is ApiResult.Failure -> logger("Notti.country: PATCH failed (${result.message}) - retried at the next session start")
+            }
           }
-        }
+        })
       }
     }
   }
 
+  private fun shouldSendCountry(country: String): Boolean =
+    deviceStore.getLocationSharingEnabled() &&
+      !deviceStore.getPendingCountryClear() &&
+      country != deviceStore.getLastSyncedCountry()
+
   /**
    * Session end (SEGTEL-06/07): no-op when no session is active (`session_started_at`
    * null - also excludes widget/extension/background-fetch invocations, which
-   * never set it). Otherwise increments the count, adds the elapsed foreground
-   * time, records `last_session_at`, clears the in-flight session, persists the
-   * aggregate (survives process death, SEGTEL-09), and enqueues a session PATCH
-   * carrying a **snapshot captured at enqueue time** of the four aggregate fields
-   * - so a new session starting mid-flush is never double-counted or lost
-   * (SEGTEL edge case, same capture-at-enqueue shape as `mutateTags`).
+   * never set it). [nowMs] is the timestamp captured on the lifecycle
+   * callback ([onAppBackgrounded]).
    */
   internal fun handleSessionEnd(nowMs: Long) {
-    val startedAt = deviceStore.getSessionStartedAtMs() ?: return
+    synchronized(sessionLock) {
+      val startedAt = deviceStore.getSessionStartedAtMs() ?: return
+      closeSession(startedAt, maxOf(nowMs, startedAt))
+    }
+  }
+
+  /**
+   * Increments the count, adds `endMs - startedAt`, records `last_session_at`,
+   * clears the in-flight session, persists the aggregate (survives process
+   * death, SEGTEL-09), and enqueues a session PATCH carrying a **snapshot
+   * captured at enqueue time** - so a new session starting mid-flush is never
+   * double-counted or lost. Keyed `session`: a newer snapshot replaces a
+   * still-queued older one (it is cumulative, so nothing is lost).
+   * Caller holds [sessionLock].
+   */
+  private fun closeSession(startedAt: Long, endMs: Long) {
     val count = deviceStore.getSessionCount() + 1
-    val timeMs = deviceStore.getSessionTimeMs() + (nowMs - startedAt)
+    val timeMs = deviceStore.getSessionTimeMs() + (endMs - startedAt)
     deviceStore.setSessionCount(count)
     deviceStore.setSessionTimeMs(timeMs)
-    deviceStore.setLastSessionAtMs(nowMs)
+    deviceStore.setLastSessionAtMs(endMs)
     deviceStore.setSessionStartedAtMs(null)
+    deviceStore.setLastForegroundAtMs(null)
 
     val firstAt = deviceStore.getFirstSessionAtMs()
     val snapshot = mutableMapOf<String, Any>(
-      "last_session_at" to formatIsoUtc(nowMs),
+      "last_session_at" to formatIsoUtc(endMs),
       "session_count" to count,
       "session_time_seconds" to timeMs / 1000
     )
     if (firstAt != null) {
       snapshot["first_session_at"] = formatIsoUtc(firstAt)
     }
-    mutate("session") { client, deviceId, token ->
+    mutate("session", KEY_SESSION) { client, deviceId, token ->
       val result = client.patchDevice(deviceId, token, snapshot)
       when (result) {
         is ApiResult.Success -> Unit // backend is sink; aggregate already persisted
-        is ApiResult.Failure -> logger("Notti.session: PATCH failed (${result.message}) - not retried")
+        is ApiResult.Failure -> logger("Notti.session: PATCH failed (${result.message}) - next session end re-sends the cumulative snapshot")
       }
     }
   }
@@ -390,6 +537,11 @@ class NottiCore(
             deviceStore.setLastToken(token)
             deviceStore.setTags(result.response.tags)
             registrationState = RegistrationState.REGISTERED
+            // Privacy obligation first (iOS parity): an opt-out issued before
+            // initialize() / while offline / whose clear failed is still owed
+            // to the server (SEGTEL-13, LGPD) and must not wait behind up to
+            // MAX_PENDING_MUTATIONS queued calls (~62s of backoff each).
+            if (deviceStore.getPendingCountryClear()) runPendingCountryClearNow()
             flushPendingMutations()
             syncAppVersionIfNeeded()
             flushEventQueue()
@@ -490,21 +642,91 @@ class NottiCore(
 
   /**
    * P3 opt-in toggle (SEGTEL-10/13/15): persists the flag locally (survives
-   * restarts) and, when disabled, immediately enqueues an explicit `{country:
-   * null}` clear so a previously-synced value is removed server-side rather
-   * than just no longer updated (SEGTEL-13 AC4). Enabling does not read
-   * immediately - the next session start attempts it (SEGTEL-11 read cadence).
+   * restarts). Enabling does not read immediately - the next session start
+   * attempts it (SEGTEL-11 read cadence).
+   *
+   * Disabling (LGPD-critical, SEGTEL-13 AC4): the server-side `country` must
+   * actually be cleared, not just stop being updated. A durable
+   * `pendingCountryClear` flag is persisted first and dropped ONLY when a
+   * `{country: null}` PATCH returns 2xx; until then the clear is re-sent on
+   * the next registration success, app foreground and network regain - so an
+   * opt-out before `initialize()`, offline, on a 5xx, or killed mid-retry is
+   * never lost. Only armed when a country may exist server-side (sharing was
+   * on, a country was synced, or a clear is already owed) - an integrator who
+   * calls `false` on every launch without ever opting in sends nothing.
    */
   fun setLocationSharingEnabled(enabled: Boolean) {
+    val wasEnabled = deviceStore.getLocationSharingEnabled()
     deviceStore.setLocationSharingEnabled(enabled)
-    if (!enabled) {
-      mutate("setLocationSharingEnabled") { client, deviceId, token ->
-        // JSONObject.NULL is the raw-JSON null sentinel toJsonValue passes
-        // through unchanged - the explicit {country: null} clear (SEGTEL-13).
-        val result = client.patchDevice(deviceId, token, mapOf("country" to org.json.JSONObject.NULL))
-        when (result) {
-          is ApiResult.Success -> Unit
-          is ApiResult.Failure -> logger("Notti.setLocationSharingEnabled: clear PATCH failed (${result.message}) - not retried")
+    if (enabled) {
+      if (!wasEnabled) {
+        // Fresh consent supersedes an unacknowledged clear (a queued clear also
+        // re-checks the flag before running). Forget the synced value too, so
+        // the next read is re-sent even if a clear reached the server but its
+        // ack was lost (iOS parity: NottiCore.swift setLocationSharingEnabled).
+        deviceStore.setPendingCountryClear(false)
+        deviceStore.setLastSyncedCountry(null)
+      }
+      return
+    }
+    val mayExistServerSide = wasEnabled ||
+      deviceStore.getLastSyncedCountry() != null ||
+      deviceStore.getPendingCountryClear()
+    if (!mayExistServerSide) return
+    deviceStore.setPendingCountryClear(true)
+    retryPendingCountryClear()
+  }
+
+  /**
+   * Sends (or queues until registration) the owed `{country: null}` clear.
+   * Without an API client yet, nothing is dispatched - the persisted flag is
+   * picked up by [registerDevice] once `initialize()` registers.
+   */
+  private fun retryPendingCountryClear() {
+    if (!deviceStore.getPendingCountryClear() || apiClient == null) return
+    dispatch("countryClear") { runOrQueue(countryClearMutation()) }
+  }
+
+  /**
+   * Registration-success path of [registerDevice] (caller holds
+   * [mutationLock], device addressable): drops every queued `country` entry -
+   * a queued copy of the clear (would be a duplicate attempt) or a country set
+   * superseded by the opt-out - and runs the clear directly. A throw is
+   * contained so it cannot skip the queued-mutation flush that follows.
+   */
+  private fun runPendingCountryClearNow() {
+    pendingMutations.removeAll { it.coalesceKey == KEY_COUNTRY }
+    try {
+      runOrQueue(countryClearMutation())
+    } catch (t: Throwable) {
+      logger("Notti.setLocationSharingEnabled: clear failed unexpectedly - ${t.message}")
+    }
+  }
+
+  private fun countryClearMutation() = PendingMutation("countryClear", KEY_COUNTRY) { client, deviceId, token ->
+    // Re-checked at execution: re-enabled meanwhile, or already cleared by an
+    // earlier copy of this mutation.
+    if (!deviceStore.getLocationSharingEnabled() && deviceStore.getPendingCountryClear()) {
+      // JSONObject.NULL is the raw-JSON null sentinel toJsonValue passes
+      // through unchanged - the explicit {country: null} clear (SEGTEL-13).
+      when (val result = client.patchDevice(deviceId, token, mapOf("country" to org.json.JSONObject.NULL))) {
+        is ApiResult.Success -> {
+          deviceStore.setPendingCountryClear(false)
+          deviceStore.setLastSyncedCountry(null)
+        }
+        // Permanent 4xx (401/403/404...) gets its own line: it will keep
+        // failing until credentials/device row change, which is a config
+        // problem to diagnose, not a transient one. Message is only "HTTP <code>".
+        is ApiResult.Failure -> if (result.terminal) {
+          logger(
+            "Notti.setLocationSharingEnabled: clear PATCH rejected permanently (${result.message}) - " +
+              "check clientKey/appId/device registration; stays pending, re-sent on the next registration/foreground/network regain"
+          )
+        } else {
+          logger(
+            "Notti.setLocationSharingEnabled: clear PATCH failed (${result.message}) - " +
+              "stays pending, re-sent on the next registration/foreground/network regain"
+          )
         }
       }
     }
@@ -530,13 +752,14 @@ class NottiCore(
    */
   private fun mutate(
     operation: String,
+    coalesceKey: String? = null,
     work: (client: NottiApiClient, deviceId: String, token: String) -> Unit
   ) {
     if (apiClient == null) {
       logger("Notti.$operation: called before initialize - ignored")
       return
     }
-    dispatch(operation) { runOrQueue(PendingMutation(operation, work)) }
+    dispatch(operation) { runOrQueue(PendingMutation(operation, coalesceKey, work)) }
   }
 
   private fun runOrQueue(mutation: PendingMutation) {
@@ -544,8 +767,17 @@ class NottiCore(
       val deviceId = deviceStore.getDeviceId()
       val token = deviceStore.getLastToken()
       if (deviceId == null || token == null) {
-        if (pendingMutations.size >= MAX_PENDING_MUTATIONS) {
-          val dropped = pendingMutations.removeFirst()
+        val key = mutation.coalesceKey
+        if (key != null) {
+          // Telemetry: replace the queued mutation with the same key (the
+          // newer value supersedes it); never counts against the cap below.
+          val existing = pendingMutations.indexOfFirst { it.coalesceKey == key }
+          if (existing >= 0) pendingMutations[existing] = mutation else pendingMutations.addLast(mutation)
+          return
+        }
+        if (pendingMutations.count { it.coalesceKey == null } >= MAX_PENDING_MUTATIONS) {
+          val oldest = pendingMutations.indexOfFirst { it.coalesceKey == null }
+          val dropped = pendingMutations.removeAt(oldest)
           logger("Notti.${dropped.operation}: pending-mutation queue full - dropped the oldest queued call")
         }
         pendingMutations.addLast(mutation)
@@ -569,9 +801,20 @@ class NottiCore(
   private fun syncAppVersionIfNeeded() {
     val current = versionProvider() ?: return
     if (current == deviceStore.getAppVersion()) return
-    mutate("appVersion") { client, deviceId, token ->
+    mutate("appVersion", KEY_APP_VERSION) { client, deviceId, token ->
       val result = client.patchDevice(deviceId, token, mapOf("app_version" to current))
       when (result) {
+        // TODO(segtel-app-version-ack): a 2xx is treated as "synced", but a
+        // backend that predates `device-telemetry-fields` answers 200 and
+        // silently ignores `app_version` (SEGTEL edge case: additive fields are
+        // ignored server-side), so the value is marked synced and not re-sent
+        // until the next version bump. The backend contract (zeep-notti
+        // device-telemetry-fields DEVTEL-01..05) does not define an echo of
+        // `app_version` in the PATCH response, so there is no reliable ack to
+        // check against - deliberately NOT inventing one. Decision pending:
+        // either the backend echoes `app_version` in `deviceResponse` (then
+        // only persist when the echo matches), or the SDK re-sends it on every
+        // registration.
         is ApiResult.Success -> deviceStore.setAppVersion(current)
         is ApiResult.Failure -> logger("Notti.syncAppVersion: PATCH failed (${result.message}) - not retried")
       }
@@ -619,7 +862,7 @@ class NottiCore(
   private fun flushEventQueue() {
     val client = apiClient ?: return
     val token = deviceStore.getLastToken() ?: return
-    eventStore.all().forEach { event ->
+    for (event in eventStore.all()) {
       when (val result = client.reportEvent(event.notificationId, event.deliveryId, event.type, token)) {
         is EventResult.Success -> eventStore.remove(event.id)
         is EventResult.Failure ->
@@ -627,7 +870,12 @@ class NottiCore(
             logger("Notti.flushEventQueue: event report terminally failed (${result.message}) - event dropped")
             eventStore.remove(event.id)
           } else {
-            logger("Notti.flushEventQueue: event report failed (${result.message}) - event stays queued")
+            // Transient (network/5xx/408/429 after the full backoff): the
+            // next event would almost certainly fail the same way, and each
+            // costs ~1 min of backoff on the single shared executor - stop
+            // here and leave the rest for the next flush trigger.
+            logger("Notti.flushEventQueue: event report failed (${result.message}) - flush stopped, events stay queued")
+            break
           }
       }
     }
@@ -639,7 +887,7 @@ class NottiCore(
    * silently (`submit`) or kills the worker thread (`execute`), and either way
    * an SDK must not take the host app down (spec SDK-03/SDK-04 crash safety).
    */
-  private fun dispatch(operation: String, work: () -> Unit) {
+  private fun dispatch(operation: String, work: () -> Unit): Boolean {
     try {
       executor.execute {
         try {
@@ -648,6 +896,7 @@ class NottiCore(
           logger("Notti.$operation: unexpected failure - ${t.message}")
         }
       }
+      return true
     } catch (e: RejectedExecutionException) {
       // The executor is shut down: NottiModule.invalidate() tore the module
       // down (host app dropping the RN context in background, or a dev
@@ -661,6 +910,7 @@ class NottiCore(
       // there is no executor left to run it on, and the next process will
       // re-register from scratch.
       logger("Notti.$operation: SDK is shut down - dropped")
+      return false
     }
   }
 

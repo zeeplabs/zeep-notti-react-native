@@ -44,6 +44,18 @@ class NottiEventStore(private val prefs: SharedPreferences) {
      * record (first in insertion order) is dropped.
      */
     private const val MAX_PENDING_EVENTS = 32
+
+    /**
+     * Process-wide lock around every read-modify-write of the queue. The
+     * detection sites (FCM service thread, main thread for clicks) enqueue
+     * while `notti-io` removes flushed records; each mutation is an
+     * `all()` + `write()` pair, so without a lock two of them interleave and
+     * the later `write()` silently discards the other's change (a lost event
+     * or a resurrected one). Static rather than per-instance because
+     * `NottiModule.getEventStore` can briefly build two instances over the
+     * same `notti_prefs` file on a startup race.
+     */
+    private val LOCK = Any()
   }
 
   /**
@@ -51,7 +63,7 @@ class NottiEventStore(private val prefs: SharedPreferences) {
    * Returns the stored record, whose [PendingEvent.id] is the local UUID to
    * pass to [remove] once the event has been reported.
    */
-  fun enqueue(notificationId: String, deliveryId: String, type: String): PendingEvent {
+  fun enqueue(notificationId: String, deliveryId: String, type: String): PendingEvent = synchronized(LOCK) {
     val event = PendingEvent(
       id = UUID.randomUUID().toString(),
       notificationId = notificationId,
@@ -66,21 +78,36 @@ class NottiEventStore(private val prefs: SharedPreferences) {
       events
     }
     write(trimmed)
-    return event
+    event
   }
 
   /** Every not-yet-removed event, in insertion order. */
-  fun all(): List<PendingEvent> {
+  fun all(): List<PendingEvent> = synchronized(LOCK) {
     val raw = prefs.getString(KEY_PENDING_EVENTS, null) ?: return emptyList()
-    return parse(raw)
+    val parsed = parse(raw)
+    if (parsed == null) {
+      // Corrupted on disk (partial write, manual edit, schema drift): an
+      // exception here would escape into the FCM service / flush path on
+      // every call, forever. Drop the unreadable queue so it self-heals.
+      prefs.edit().remove(KEY_PENDING_EVENTS).apply()
+      return emptyList()
+    }
+    parsed
   }
 
   /** Removes the event with [id], persisting the remaining queue. */
-  fun remove(id: String) {
+  fun remove(id: String) = synchronized(LOCK) {
     write(all().filterNot { it.id == id })
   }
 
-  private fun parse(raw: String): List<PendingEvent> {
+  /** `null` when [raw] is not a well-formed queue (caller clears it). */
+  private fun parse(raw: String): List<PendingEvent>? = try {
+    parseOrThrow(raw)
+  } catch (e: Exception) {
+    null
+  }
+
+  private fun parseOrThrow(raw: String): List<PendingEvent> {
     val array = JSONArray(raw)
     return buildList {
       for (i in 0 until array.length()) {
