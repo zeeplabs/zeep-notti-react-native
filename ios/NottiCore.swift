@@ -193,6 +193,16 @@ public class NottiCore {
   private var lastCountryReadAtMs: Int64?
   static let minCountryReadIntervalMs: Int64 = 60_000
 
+  /// M1 (pre-release review round 3): the cold-start session read can finish
+  /// before `initialize()` ever runs — `appStateProvider` fires from
+  /// `init`, and the JS side usually calls `initialize` from a `useEffect`
+  /// that hasn't run yet — so `apiClient` is still nil and
+  /// `sendCountryIfChanged` drops the result on the floor. The 60s geocode
+  /// throttle then blocks a same-session retry. Remembering the resolved
+  /// value here lets `registerDevice`'s success path retry the send once a
+  /// client actually exists, without triggering a second geocode.
+  private var lastResolvedCountry: String?
+
   public init(
     deviceStore: NottiDeviceStore,
     eventStore: NottiEventStore,
@@ -382,26 +392,34 @@ public class NottiCore {
   /// country was synced, or a clear is already pending) so a host calling
   /// `setLocationSharingEnabled(false)` on every launch sends nothing.
   public func setLocationSharingEnabled(_ enabled: Bool) {
-    workQueue.async { [weak self] in
-      guard let self = self else { return }
-      let wasEnabled = self.deviceStore.getLocationSharingEnabled()
-      self.deviceStore.setLocationSharingEnabled(enabled)
-      if enabled {
-        if !wasEnabled {
-          // Fresh consent supersedes an unacknowledged clear; forget the
-          // synced value too so the next read is re-sent even if a clear
-          // reached the server but its ack was lost.
-          self.deviceStore.setPendingCountryClear(false)
-          self.deviceStore.setLastSyncedCountry(nil)
-        }
-        return
+    // B1 (LGPD, pre-release review round 3): the flag and the pending-clear
+    // obligation must be durable the instant this call returns, not after
+    // `workQueue` drains. `workQueue` can be blocked for minutes by
+    // `NottiApiClient`'s blocking retry backoff (up to 5x15s+backoff); if the
+    // host process is killed while queued, an opt-out issued in that window
+    // would never reach `UserDefaults` and the next launch would resume
+    // sharing against the user's choice. `UserDefaults` is thread-safe, so
+    // these writes happen synchronously on the caller's thread; only the
+    // network side-effect (the PATCH attempt) is deferred to `workQueue`.
+    let wasEnabled = deviceStore.getLocationSharingEnabled()
+    deviceStore.setLocationSharingEnabled(enabled)
+    if enabled {
+      if !wasEnabled {
+        // Fresh consent supersedes an unacknowledged clear; forget the
+        // synced value too so the next read is re-sent even if a clear
+        // reached the server but its ack was lost.
+        deviceStore.setPendingCountryClear(false)
+        deviceStore.setLastSyncedCountry(nil)
       }
-      let mayHaveServerSideCountry = wasEnabled
-        || self.deviceStore.getLastSyncedCountry() != nil
-        || self.deviceStore.getPendingCountryClear()
-      guard mayHaveServerSideCountry else { return }
-      self.deviceStore.setPendingCountryClear(true)
-      self.attemptPendingCountryClear()
+      return
+    }
+    let mayHaveServerSideCountry = wasEnabled
+      || deviceStore.getLastSyncedCountry() != nil
+      || deviceStore.getPendingCountryClear()
+    guard mayHaveServerSideCountry else { return }
+    deviceStore.setPendingCountryClear(true)
+    workQueue.async { [weak self] in
+      self?.attemptPendingCountryClear()
     }
   }
 
@@ -533,6 +551,13 @@ public class NottiCore {
       deviceStore.setTags(response.tags)
       // Privacy obligation first (review item 1), ahead of queued mutations.
       attemptPendingCountryClear()
+      // M1: retry a country resolved before this client existed (cold-start
+      // read racing `initialize`). Reuses the cached value so this does not
+      // re-trigger CLGeocoder; `sendCountryIfChanged` still re-checks the
+      // opt-in flag and dedupes against the last synced value itself.
+      if let country = self.lastResolvedCountry {
+        self.sendCountryIfChanged(country)
+      }
       flushPendingMutations(client, deviceId: response.id, token: token)
       syncAppVersionIfNeeded(client)
       flushEventQueue()
@@ -840,6 +865,7 @@ public class NottiCore {
     countryProvider { [weak self] country in
       self?.onWorkQueue {
         guard let self = self, let country = country else { return }
+        self.lastResolvedCountry = country
         self.sendCountryIfChanged(country)
       }
     }

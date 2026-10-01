@@ -262,11 +262,21 @@ class NottiModule(reactContext: ReactApplicationContext) :
    * app has already been granted the permission. Never prompts - the SDK only
    * reads, it never requests OS location permission.
    */
+  // L3 (pre-release review round 3): a host that declares only
+  // `ACCESS_FINE_LOCATION` (not `ACCESS_COARSE_LOCATION`) in its manifest -
+  // a legitimate, common setup - previously failed this check silently and
+  // never reported country, since `checkSelfPermission` on an undeclared
+  // permission returns `PERMISSION_DENIED` regardless of what the user
+  // granted. Either permission is sufficient for the country-level read.
   private fun hasLocationPermission(): Boolean =
     ContextCompat.checkSelfPermission(
       reactApplicationContext,
       Manifest.permission.ACCESS_COARSE_LOCATION
-    ) == PackageManager.PERMISSION_GRANTED
+    ) == PackageManager.PERMISSION_GRANTED ||
+      ContextCompat.checkSelfPermission(
+        reactApplicationContext,
+        Manifest.permission.ACCESS_FINE_LOCATION
+      ) == PackageManager.PERMISSION_GRANTED
 
   /**
    * Best-effort country resolution (SEGTEL-11): reads the last known location

@@ -53,7 +53,7 @@ sealed class EventResult {
 /**
  * Talks to Notti' `/v1/apps/{app_id}/devices` endpoints (design.md
  * NottiApiClient). Retries a 5xx response or network failure with
- * exponential backoff (2s, 4s, 8s, 16s, 32s), capped at 5 attempts, per
+ * exponential backoff (2s, 4s, 8s, 16s), capped at 5 attempts, per
  * design.md's Tech Decisions. `sleeper` is injectable so tests can skip the
  * real delay; production callers use the default (real `Thread.sleep`).
  */
@@ -79,8 +79,15 @@ class NottiApiClient(
       .toString()
       .toRequestBody(jsonMediaType)
 
+    // L1 (pre-release review round 3): built segment-by-segment, like
+    // `eventsUrl`, rather than interpolated into the URL string. OkHttp
+    // normalizes `..`/`/` when a raw string is parsed, so an `appId`
+    // containing a path separator could rewrite the request path out from
+    // under the `Authorization` header meant for a different route.
+    val registerUrl = devicesUrl()
+      ?: return ApiResult.Failure("invalid devices URL", terminal = true)
     val request = Request.Builder()
-      .url("$baseUrl/v1/apps/$appId/devices")
+      .url(registerUrl)
       .header("Authorization", "Bearer $clientKey")
       .post(body)
       .build()
@@ -98,8 +105,14 @@ class NottiApiClient(
 
     val body = json.toString().toRequestBody(jsonMediaType)
 
+    // L1: `deviceId` is backend-issued, not integrator input, but segment
+    // encoding is applied the same way as the other two endpoints for
+    // consistency and because a malformed/stale id should fail this one
+    // PATCH, not silently rewrite the path.
+    val patchUrl = devicesUrl(deviceId)
+      ?: return ApiResult.Failure("invalid device URL", terminal = true)
     val request = Request.Builder()
-      .url("$baseUrl/v1/apps/$appId/devices/$deviceId")
+      .url(patchUrl)
       .header("Authorization", "Bearer $clientKey")
       .patch(body)
       .build()
@@ -128,7 +141,7 @@ class NottiApiClient(
    * device's `token` (snake_case - the backend contract), authenticated with
    * the client key as `Authorization: Bearer <key>`. Any 2xx acknowledges
    * the event and the response body is ignored. 5xx responses and network
-   * failures are retried with exponential backoff (2s, 4s, 8s, 16s, 32s)
+   * failures are retried with exponential backoff (2s, 4s, 8s, 16s)
    * capped at 5 attempts, matching device registration; 4xx responses are
    * terminal failures and not retried, except 408/429 (transient: retried,
    * and non-terminal if the cap is exhausted).
@@ -167,6 +180,20 @@ class NottiApiClient(
     // returns a non-null dummy value, never hitting the retry-on-2xx path.
     return executeWithRetry(request) { true }
       .toEventResult()
+  }
+
+  /** Shared path builder for `POST .../devices` and `PATCH .../devices/{id}` (L1). */
+  private fun devicesUrl(deviceId: String? = null): HttpUrl? = try {
+    baseUrl.toHttpUrlOrNull()
+      ?.newBuilder()
+      ?.addPathSegment("v1")
+      ?.addPathSegment("apps")
+      ?.addPathSegment(appId)
+      ?.addPathSegment("devices")
+      ?.let { builder -> deviceId?.let { builder.addPathSegment(it) } ?: builder }
+      ?.build()
+  } catch (e: IllegalArgumentException) {
+    null
   }
 
   private fun eventsUrl(notificationId: String): HttpUrl? = try {

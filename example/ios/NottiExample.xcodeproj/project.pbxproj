@@ -262,6 +262,7 @@
 				63BBA1E8910D591CDFB2D191 /* Sources */,
 				16F9072A2BCC999AC6251CCE /* Frameworks */,
 				5AB2577B7AA09A2A37FD590E /* Resources */,
+				373F83E128C4481B9B413746 /* [CP] Copy Pods Resources */,
 			);
 			buildRules = (
 			);
@@ -404,6 +405,23 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-NottiExample/Pods-NottiExample-frameworks.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+		373F83E128C4481B9B413746 /* [CP] Copy Pods Resources */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-NottiExampleNotificationService/Pods-NottiExampleNotificationService-resources-${CONFIGURATION}-input-files.xcfilelist",
+			);
+			name = "[CP] Copy Pods Resources";
+			outputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-NottiExampleNotificationService/Pods-NottiExampleNotificationService-resources-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-NottiExampleNotificationService/Pods-NottiExampleNotificationService-resources.sh\"\n";
 			showEnvVarsInLog = 0;
 		};
 		784FBD1DF3B080368090EAF3 /* [CP] Check Pods Manifest.lock */ = {

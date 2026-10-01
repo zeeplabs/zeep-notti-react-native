@@ -1274,6 +1274,38 @@ class NottiCoreTest {
   }
 
   @Test
+  fun `repeated country-clear retry triggers while one is pending are coalesced into a single attempt`() {
+    // M5 (pre-release review round 3): without a dedup guard on
+    // `retryPendingCountryClear` (unlike `scheduleFlush`'s existing one),
+    // every `onNetworkAvailable()` call queued its own clear-retry task, so a
+    // persistent 4xx or a flapping connection could stack N tasks on the
+    // single-thread executor, each burning up to 5 attempts.
+    val core = newCore()
+    registerOk()
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+    drainRequests()
+
+    // Arm the obligation directly on the store (not via
+    // `setLocationSharingEnabled`, which would dispatch its own immediate
+    // attempt ahead of the blocked-executor setup below).
+    store.setPendingCountryClear(true)
+    repeat(25) { server.enqueue(MockResponse().setResponseCode(503)) }
+
+    val gate = CountDownLatch(1)
+    executor.execute { gate.await(5, TimeUnit.SECONDS) }
+    repeat(5) { core.onNetworkAvailable() }
+    gate.countDown()
+    awaitIdle()
+
+    assertEquals(
+      "1 register + one country-clear attempt (5 retries) despite 5 trigger calls while one was pending",
+      6,
+      server.requestCount
+    )
+  }
+
+  @Test
   fun `telemetry never evicts queued login or tag mutations and is coalesced per key`() {
     var tokenCallback: ((String?) -> Unit)? = null
     val core = newCore(tokenProvider = { cb -> tokenCallback = cb })

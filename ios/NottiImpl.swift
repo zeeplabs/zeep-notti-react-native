@@ -31,6 +31,33 @@ public class NottiImpl: NSObject {
   /// `NottiModule.processSessionGate`.
   static let processSessionGate = NottiCore.SessionGate()
 
+  /// M2 (pre-release review round 3): closes `processSessionGate`
+  /// unconditionally on background, even when no `NottiCore` is alive to
+  /// hear about it. `NottiCore.invalidate()` (called on JS reload) removes
+  /// that core's own `didEnterBackgroundNotification` observer immediately;
+  /// if the app backgrounds in the gap before the reloaded module's core
+  /// exists, nothing closes the gate. The next real foreground then finds it
+  /// already open, treats the new core as "adopting" a live session instead
+  /// of starting one, and counts the entire background interval as session
+  /// time. Mirrors Android's `NottiForegroundObserver.onStop` ->
+  /// `handleProcessBackground`, which closes the gate the same
+  /// unconditional way. Registered once per process; forced into existence
+  /// by the `_ = ...` touch in `init` below (a `static let` only runs its
+  /// initializer on first access).
+  private static let processBackgroundObserver: NSObjectProtocol = {
+    #if canImport(UIKit)
+      return NotificationCenter.default.addObserver(
+        forName: UIApplication.didEnterBackgroundNotification,
+        object: nil,
+        queue: nil
+      ) { _ in
+        NottiImpl.processSessionGate.close()
+      }
+    #else
+      return NSObject()
+    #endif
+  }()
+
   /// Shared offline event store (T8). `NottiPushDelegate`'s `willPresent`/
   /// `didReceive` fire on cold start before `NottiImpl` exists, so the store
   /// the delegate enqueues into and the store `NottiCore.flushEventQueue`
@@ -79,6 +106,7 @@ public class NottiImpl: NSObject {
   let core: NottiCore
 
   @objc public override init() {
+    _ = NottiImpl.processBackgroundObserver
     let defaults = UserDefaults(suiteName: "notti_prefs") ?? .standard
     let box = HandlerBox()
     let locationReader = NottiLocationReader()

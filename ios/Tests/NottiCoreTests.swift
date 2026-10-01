@@ -523,6 +523,46 @@ final class NottiCoreTests: XCTestCase {
     XCTAssertEqual(recorded[0].url?.path, "/v1/apps/app-1/devices")
   }
 
+  // MARK: - B1 (LGPD opt-out must not wait on a busy work queue)
+
+  /// Pre-release review round 3, B1: `setLocationSharingEnabled` used to do
+  /// its `UserDefaults` writes inside `workQueue.async`, which
+  /// `NottiApiClient`'s blocking retry backoff can occupy for minutes. A
+  /// process killed in that window would never have persisted the opt-out.
+  /// This test blocks the queue with a slow, synchronous `tokenProvider`
+  /// (standing in for a live registration retry) and asserts the opt-out and
+  /// its pending-clear obligation are visible on `store` *before* the queue
+  /// is ever released - i.e. they were written on the caller's thread, not
+  /// queued behind the busy work.
+  func test_setLocationSharingEnabledPersistsImmediatelyEvenWhileTheWorkQueueIsBusy() {
+    store.setLocationSharingEnabled(true)
+
+    let tokenProviderEntered = XCTestExpectation(description: "tokenProvider entered (queue now busy)")
+    let releaseQueue = XCTestExpectation(description: "test releases the queue")
+    let core = newCore(tokenProvider: { cb in
+      tokenProviderEntered.fulfill()
+      _ = XCTWaiter.wait(for: [releaseQueue], timeout: 5)
+      cb("apns-token")
+    })
+
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    wait(for: [tokenProviderEntered], timeout: 2)
+
+    core.setLocationSharingEnabled(false)
+
+    XCTAssertFalse(
+      store.getLocationSharingEnabled(),
+      "opt-out must persist before the method returns, not after the busy work queue drains"
+    )
+    XCTAssertTrue(
+      store.getPendingCountryClear(),
+      "the pending country-clear obligation must be armed immediately, surviving a process death before the queue drains"
+    )
+
+    releaseQueue.fulfill()
+    drain(core)
+  }
+
   // MARK: - Mutations issued before registration completes
 
   func test_tagsAddedBeforeTheApnsTokenArrivesAreSentOnceRegistrationCompletes() {

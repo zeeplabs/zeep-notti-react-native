@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>CA92.1</string>
+			</array>
+		</dict>
+	</array>
+	<!--
+	  NSPrivacyCollectedDataTypes left empty deliberately (M6, pre-release
+	  review round 3): the SDK reads the host's existing CoreLocation fix
+	  (check-only, never requests permission) and reverse-geocodes it to a
+	  country code tied to the device id (NottiCore's P3 telemetry). Whether
+	  that qualifies as a declared "Coarse Location" collected-data entry
+	  here - and under what linkage/tracking flags - is a product/legal
+	  call for Starbem/Zeep to make, not one this fix should assert on its
+	  own. Validate with whoever owns the App Store privacy "nutrition
+	  label" before the next release that ships this telemetry.
+	-->
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<key>NSPrivacyTracking</key>
+	<false/>
+</dict>
+</plist>

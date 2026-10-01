@@ -30,6 +30,14 @@ Pod::Spec.new do |s|
     # The SDK never requests location permission itself; it only reads when
     # the host app has already granted it (see spec.md P3 / design.md).
     core.frameworks = "CoreLocation"
+    # M6 (pre-release review round 3): a source pod gets no manifest unless
+    # one ships as its own resource bundle - Xcode's privacy report only
+    # aggregates `PrivacyInfo.xcprivacy` from bundles embedded in the final
+    # product, not stray files pulled in alongside `.swift` sources. Without
+    # this, only the example app declared the SDK's own UserDefaults
+    # required-reason API usage, leaving every real integrator to add it
+    # themselves or risk the ITMS-91053 warning on submission.
+    core.resource_bundles = { "Notti_Privacy" => ["ios/PrivacyInfo.xcprivacy"] }
     install_modules_dependencies(core)
   end
 
@@ -42,6 +50,10 @@ Pod::Spec.new do |s|
     nse.source_files = "ios/NotificationServiceExtension/**/*.swift"
     nse.exclude_files = ["ios/NotificationServiceExtension/Tests/**/*"]
     nse.frameworks = "UserNotifications"
+    # M6: the NSE target is a separate bundle from the app - it needs its own
+    # manifest declaring the `FileManager.attributesOfItem` file-timestamp
+    # read used to enforce the attachment size cap (A2).
+    nse.resource_bundles = { "Notti_NSE_Privacy" => ["ios/NotificationServiceExtension/PrivacyInfo.xcprivacy"] }
 
     # Real, injectable-`URLSession` coverage for the helper (B3, found
     # missing in pre-release review). `StubURLProtocol` is compiled directly

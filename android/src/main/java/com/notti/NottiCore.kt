@@ -205,6 +205,18 @@ class NottiCore(
   /** Dedupes flush scheduling: at most one flush task queued at a time. */
   private val flushScheduled = AtomicBoolean(false)
 
+  /**
+   * Dedupes country-clear retry scheduling (M5, pre-release review round 3):
+   * without this, [onNetworkAvailable] (fired per received push, per
+   * `onAvailable`) and every other [retryPendingCountryClear] caller queued a
+   * brand-new task each time, unlike [scheduleFlush]'s dedup. A persistent
+   * 4xx or a flapping connection stacked tasks on the single-thread
+   * [executor], each retrying up to 5 times, pinning it behind country-clear
+   * attempts instead of real work. Mirrors iOS' `flushScheduled` guard
+   * around `attemptPendingCountryClear`.
+   */
+  private val countryClearScheduled = AtomicBoolean(false)
+
   fun initialize(appId: String, clientKey: String, baseUrl: String) {
     if (appId.isBlank() || clientKey.isBlank() || baseUrl.isBlank()) {
       logger("Notti.initialize: appId, clientKey, or baseUrl is missing/empty - skipping registration")
@@ -234,26 +246,34 @@ class NottiCore(
     this.appId = appId
     this.clientKey = clientKey
     this.baseUrl = normalizedBaseUrl
-    val client = apiClientFactory(appId, clientKey, normalizedBaseUrl)
-    this.apiClient = client
+    this.apiClient = apiClientFactory(appId, clientKey, normalizedBaseUrl)
 
     tokenProvider { token ->
       if (token == null) {
         logger("Notti.initialize: no push token available - skipping registration")
         return@tokenProvider
       }
+      // L2 (pre-release review round 3): `apiClient` is read again here,
+      // not captured into a local before this async hop. `tokenProvider`'s
+      // callback can land well after a *second* `initialize(...)` call (a
+      // different appId mid-flight) has already replaced `this.apiClient` -
+      // capturing the first client would register the old app's device
+      // against the new app's token. Mirrors A9's "read apiClient at
+      // run/flush time" fix for the pending-mutation queue.
+      val client = apiClient ?: return@tokenProvider
       // The token callback itself can be delivered on the main looper (Play
       // Services `Task` default executor), so the registration call is handed
       // off rather than run here.
       registrationState = RegistrationState.IN_FLIGHT
-      dispatch("register") { registerDevice(client, token) }
+      dispatch("register") { registerDevice(apiClient ?: client, token) }
     }
   }
 
   fun onTokenRefreshed(newToken: String) {
     val client = apiClient ?: return
     registrationState = RegistrationState.IN_FLIGHT
-    dispatch("onTokenRefreshed") { registerDevice(client, newToken) }
+    // L2: re-read at run time, same reasoning as `initialize` above.
+    dispatch("onTokenRefreshed") { registerDevice(apiClient ?: client, newToken) }
   }
 
   /**
@@ -314,7 +334,9 @@ class NottiCore(
         return@tokenProvider
       }
       registrationState = RegistrationState.IN_FLIGHT
-      dispatch("onAppForegrounded") { registerDevice(client, token) }
+      // L2: re-read at run time - a concurrent `initialize(...)` could have
+      // replaced `apiClient` during the token fetch.
+      dispatch("onAppForegrounded") { registerDevice(apiClient ?: client, token) }
     }
   }
 
@@ -684,7 +706,12 @@ class NottiCore(
    */
   private fun retryPendingCountryClear() {
     if (!deviceStore.getPendingCountryClear() || apiClient == null) return
-    dispatch("countryClear") { runOrQueue(countryClearMutation()) }
+    if (!countryClearScheduled.compareAndSet(false, true)) return
+    val accepted = dispatch("countryClear") {
+      countryClearScheduled.set(false)
+      runOrQueue(countryClearMutation())
+    }
+    if (!accepted) countryClearScheduled.set(false)
   }
 
   /**

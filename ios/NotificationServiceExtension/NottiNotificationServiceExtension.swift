@@ -71,11 +71,14 @@ public final class NottiNotificationServiceExtension {
   /// reasoning as `NottiApiClient.swift`'s `requestTimeoutSeconds`.
   private static let downloadTimeoutSeconds: TimeInterval = 20
 
-  /// A2 (found in pre-release review): with no cap, a hostile or
-  /// misconfigured URL could burn the whole NSE download budget and the
-  /// extension's disk quota before `UNNotificationAttachment` ever gets a
-  /// chance to reject it. 10 MB comfortably covers a real push image while
-  /// bounding the worst case.
+  /// A2 (found in pre-release review; wording corrected in round 3 - this
+  /// check runs on `attributesOfItem(atPath:)` *after* the download
+  /// finishes, not before, so it does not cap bytes actually transferred or
+  /// written to disk — that's bounded by `downloadTimeoutSeconds` instead.
+  /// What this does bound is the worst case this code lets reach
+  /// `UNNotificationAttachment`/the final move into place: an oversized file
+  /// is rejected and deleted here rather than attached. 10 MB comfortably
+  /// covers a real push image.
   private static let maxAttachmentBytes: Int64 = 10 * 1024 * 1024
 
   private init() {}

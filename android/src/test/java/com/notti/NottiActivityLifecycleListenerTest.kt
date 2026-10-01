@@ -288,6 +288,76 @@ class NottiActivityLifecycleListenerTest {
 
     assertTrue(store.all().isEmpty())
   }
+
+  // MARK: A1 (pre-release review round 3): click replay on Activity recreation
+
+  @Test
+  fun `onActivityCreated with a non-null savedInstanceState does not replay the click as a new event`() {
+    val delivered = mutableListOf<ParsedNotification>()
+    NottiNotificationClickRelay.attach { delivered.add(it) }
+
+    val intent = Intent().apply {
+      putExtra("google.message_id", "msg-1")
+      putExtra("gcm.n.title", "Hello")
+      putExtra("notification_id", "notif-1")
+      putExtra("delivery_id", "delivery-1")
+    }
+    val activity = Robolectric.buildActivity(Activity::class.java, intent).create().get()
+    val listener = NottiActivityLifecycleListener()
+
+    // A process restored from a system-initiated kill (not a real second
+    // tap) redelivers the same launch Intent's extras to a *new* Activity
+    // instance, so the identity-keyed Intent dedup below does not catch it -
+    // `savedInstanceState != null` is the signal that this is a restore, not
+    // a fresh tap.
+    listener.onActivityCreated(activity, android.os.Bundle())
+
+    assertTrue("a restored process must not inflate CTR with a phantom click", delivered.isEmpty())
+    assertTrue("a restored process must not report a duplicate clicked event", store.all().isEmpty())
+  }
+
+  @Test
+  fun `onActivityCreated with FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY does not replay the click as a new event`() {
+    val delivered = mutableListOf<ParsedNotification>()
+    NottiNotificationClickRelay.attach { delivered.add(it) }
+
+    val intent = Intent().apply {
+      putExtra("google.message_id", "msg-1")
+      putExtra("gcm.n.title", "Hello")
+      putExtra("notification_id", "notif-1")
+      putExtra("delivery_id", "delivery-1")
+      addFlags(Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY)
+    }
+    val activity = Robolectric.buildActivity(Activity::class.java, intent).create().get()
+    val listener = NottiActivityLifecycleListener()
+
+    // Reopening the host app from Android's Recents redelivers the same
+    // launch Intent object/extras with this flag set, not a new user tap.
+    listener.onActivityCreated(activity, null)
+
+    assertTrue("reopening from Recents must not inflate CTR with a phantom click", delivered.isEmpty())
+    assertTrue("reopening from Recents must not report a duplicate clicked event", store.all().isEmpty())
+  }
+
+  @Test
+  fun `a real cold-start tap with no saved state and no history flag is still delivered via onActivityCreated`() {
+    val delivered = mutableListOf<ParsedNotification>()
+    NottiNotificationClickRelay.attach { delivered.add(it) }
+
+    val intent = Intent().apply {
+      putExtra("google.message_id", "msg-1")
+      putExtra("gcm.n.title", "Hello")
+      putExtra("notification_id", "notif-1")
+      putExtra("delivery_id", "delivery-1")
+    }
+    val activity = Robolectric.buildActivity(Activity::class.java, intent).create().get()
+    val listener = NottiActivityLifecycleListener()
+
+    listener.onActivityCreated(activity, null)
+
+    assertEquals(1, delivered.size)
+    assertEquals(1, store.all().size)
+  }
 }
 
 /**

@@ -90,7 +90,21 @@ class NottiActivityLifecycleListener : Application.ActivityLifecycleCallbacks {
     internal fun resetRegistrationForTest() = registered.set(false)
   }
 
-  override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = handle(activity)
+  override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
+    // A1 (CTR, pre-release review round 3): a cold-start Intent instance can
+    // be redelivered by the OS without a new user tap - reopening from
+    // Recents (`FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY`) or restoring a
+    // process killed by the system (`savedInstanceState != null`). The
+    // identity-keyed dedup below only protects against the *same* Intent
+    // object being handled twice within a live process; it does nothing for
+    // a fresh Intent object carrying the old extras after restart. Treating
+    // either case as a replay avoids inflating CTR and re-firing the deep
+    // link into `getInitialNotificationClick()`.
+    if (savedInstanceState != null) return
+    val intent = activity.intent
+    if (intent != null && (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0) return
+    handle(activity)
+  }
   override fun onActivityStarted(activity: Activity) = Unit
   override fun onActivityResumed(activity: Activity) = handle(activity)
   override fun onActivityPaused(activity: Activity) = Unit

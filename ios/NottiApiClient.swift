@@ -33,7 +33,7 @@ private struct NottiApiClientTimeoutError: Error, LocalizedError {
 
 /// Talks to Notti' `/v1/apps/{app_id}/devices` endpoints (design.md
 /// NottiApiClient). Retries a 5xx response or network failure with
-/// exponential backoff (2s, 4s, 8s, 16s, 32s), capped at 5 attempts, per
+/// exponential backoff (2s, 4s, 8s, 16s), capped at 5 attempts, per
 /// design.md's Tech Decisions — mirrors `NottiApiClient.kt` exactly.
 /// `sleeper` is injectable so tests can skip the real delay; production
 /// callers use the default (real thread sleep via `Thread.sleep`).
@@ -190,7 +190,7 @@ public class NottiApiClient {
   /// REST backend is free to acknowledge the event with `204 No Content`, an
   /// empty `200` or a bare `{"ok":true}`, so any 2xx is a success and the
   /// body is ignored. Shares `executeWithRetry`'s policy — 4xx terminal
-  /// (except 408/429), network error/5xx/408/429 retried, 5-attempt cap with 2s/4s/8s/16s/32s backoff.
+  /// (except 408/429), network error/5xx/408/429 retried, 5-attempt cap with 2s/4s/8s/16s backoff.
   public func reportEvent(notificationId: String, deliveryId: String, type: String, token: String) -> EventResult {
     let body: [String: Any] = ["delivery_id": deliveryId, "type": type, "token": token]
     guard
