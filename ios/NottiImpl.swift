@@ -24,6 +24,13 @@ public class NottiImpl: NSObject {
   @objc public static weak var activeInstance: NottiImpl?
   static var activeCore: NottiCore?
 
+  /// Process-wide "a session is open" flag (final review A), shared by every
+  /// `NottiCore` this process builds - a JS reload creates a new module/core
+  /// while the foreground session is still open, and the new core must adopt
+  /// it rather than close it as an orphan. Mirrors Android's
+  /// `NottiModule.processSessionGate`.
+  static let processSessionGate = NottiCore.SessionGate()
+
   /// Shared offline event store (T8). `NottiPushDelegate`'s `willPresent`/
   /// `didReceive` fire on cold start before `NottiImpl` exists, so the store
   /// the delegate enqueues into and the store `NottiCore.flushEventQueue`
@@ -74,6 +81,7 @@ public class NottiImpl: NSObject {
   @objc public override init() {
     let defaults = UserDefaults(suiteName: "notti_prefs") ?? .standard
     let box = HandlerBox()
+    let locationReader = NottiLocationReader()
     core = NottiCore(
       deviceStore: NottiDeviceStore(defaults: defaults),
       // `NottiCore` holds the store strongly, so the shared static here is
@@ -117,36 +125,33 @@ public class NottiImpl: NSObject {
       // the SDK never calls `requestWhenInUseAuthorization` (SEGTEL-14); it
       // only reports country when the host app has already granted permission
       // for its own purposes.
-      hasLocationPermission: {
-        switch CLLocationManager.authorizationStatus() {
-        case .authorizedWhenInUse, .authorizedAlways:
-          return true
-        default:
-          return false
-        }
-      },
+      hasLocationPermission: { locationReader.hasPermission() },
       // Segment telemetry P3 (T9): best-effort, async country resolution from
-      // the last cached fix (`CLLocationManager().location`) reverse-geocoded
-      // to its ISO 3166-1 alpha-2 code. A stale fix is acceptable at
-      // country-level granularity (SEGTEL edge case); nil on any failure
-      // (services disabled, no fix, geocode error) → the field is omitted.
-      countryProvider: { callback in
-        let manager = CLLocationManager()
-        guard let location = manager.location else {
-          callback(nil)
-          return
-        }
-        CLGeocoder().reverseGeocodeLocation(location) { placemarks, _ in
-          callback(placemarks?.first?.isoCountryCode)
+      // the last cached fix reverse-geocoded to its ISO 3166-1 alpha-2 code.
+      // A stale fix is acceptable at country-level granularity (SEGTEL edge
+      // case); nil on any failure (services disabled, no fix, geocode error,
+      // a geocode already in flight) → the field is omitted.
+      countryProvider: { callback in locationReader.readCountry(callback) },
+      // Review item 2: the cold-start `didBecomeActive` usually fired before
+      // this module was constructed; report whether the app is already active
+      // (read on the main thread, asynchronously - never `main.sync`, which
+      // could deadlock a module constructed while main waits on it).
+      appStateProvider: { callback in
+        DispatchQueue.main.async {
+          callback(UIApplication.shared.applicationState == .active)
         }
       },
+      // Review item 3: keep the process alive while the session-end
+      // bookkeeping + PATCH queued at `didEnterBackground` run.
+      beginBackgroundTask: { NottiImpl.beginBackgroundTask() },
       // B1 (found in pre-release review): `NottiCore`'s `logger` parameter
       // defaults to a no-op, so every diagnostic it logs - including the A4
       // fix (mutation-failure logging) - was silently discarded in production
       // on iOS, exercised only by tests that inject their own logger. `NSLog`
       // mirrors Android's `Log.w("Notti", ...)` production wiring.
       logger: { message in NSLog("Notti: %@", message) },
-      onDeviceIdChanged: { deviceId in box.value?(deviceId) }
+      onDeviceIdChanged: { deviceId in box.value?(deviceId) },
+      sessionGate: NottiImpl.processSessionGate
     )
     // The closure passed to `NottiCore` above cannot capture `self` (or any
     // of its properties) this early - a class's stored properties, and
@@ -193,6 +198,39 @@ public class NottiImpl: NSObject {
     emitReceivedHandler = nil
     emitClickedHandler = nil
     emitDeviceIdChangedHandler = nil
+    // Final review A: stop this core observing lifecycle, so it cannot end
+    // the session the reloaded core adopts (double `session_count`).
+    core.invalidate()
+  }
+
+  /// Begins a UIKit background task and returns an idempotent closure that
+  /// ends it; the expiration handler ends it too, so the OS never kills the
+  /// app for overrunning the task.
+  private static func beginBackgroundTask() -> () -> Void {
+    final class TaskBox {
+      let lock = NSLock()
+      var id: UIBackgroundTaskIdentifier = .invalid
+      var ended = false
+      func end() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !ended else { return }
+        ended = true
+        if id != .invalid {
+          UIApplication.shared.endBackgroundTask(id)
+        }
+      }
+    }
+    let box = TaskBox()
+    let id = UIApplication.shared.beginBackgroundTask(withName: "app.notti.session-end") { box.end() }
+    box.lock.lock()
+    box.id = id
+    let alreadyEnded = box.ended
+    box.lock.unlock()
+    if alreadyEnded && id != .invalid {
+      UIApplication.shared.endBackgroundTask(id)
+    }
+    return { box.end() }
   }
 
   @objc(initialize:clientKey:baseUrl:)
@@ -259,5 +297,80 @@ public class NottiImpl: NSObject {
   /// exist) and consumes it, or nil when the app was not launched by a tap.
   @objc public func takeInitialNotificationClick() -> [String: Any]? {
     NottiEventBuffer.shared.takeInitialClick()
+  }
+}
+
+/// Location reads for segment telemetry P3.
+///
+/// Threading (final review E): `CLLocationManager` must be created on a
+/// thread with a live run loop - it delivers its delegate callbacks on the
+/// creating thread's run loop - and the old lazy creation happened on
+/// `NottiCore`'s work queue (a GCD thread without one). The manager is now
+/// created on the main thread (inline if `init` already runs there, else via
+/// `main.async`, never `main.sync`: no deadlock with a main thread that waits
+/// on module construction), and every touch of it stays on main:
+/// - `hasPermission()` (synchronous, called from the work queue) reads a
+///   lock-guarded cache, seeded on main right after creation and refreshed by
+///   `locationManagerDidChangeAuthorization` (e.g. permission changed in
+///   Settings while backgrounded). `NottiImpl.init` creates this reader
+///   before `NottiCore` enqueues its `appStateProvider` main block, so the
+///   seed lands before the cold-start session reads it (main is FIFO).
+/// - `readCountry` hops to main to read `location` and start the geocode;
+///   `NottiCore` hops the callback back onto its work queue.
+/// One shared `CLGeocoder`, never asked to geocode in parallel (Apple
+/// rate-limits reverse geocoding; `NottiCore` additionally throttles reads).
+/// The SDK never requests permission (SEGTEL-14), only reads it.
+private final class NottiLocationReader: NSObject, CLLocationManagerDelegate {
+  private let lock = NSLock()
+  private var cachedPermission = false
+  /// Main-thread-only.
+  private var manager: CLLocationManager?
+  /// Main-thread-only.
+  private let geocoder = CLGeocoder()
+
+  override init() {
+    super.init()
+    if Thread.isMainThread {
+      setUpManager()
+    } else {
+      DispatchQueue.main.async { self.setUpManager() }
+    }
+  }
+
+  /// Main thread only.
+  private func setUpManager() {
+    let manager = CLLocationManager()
+    manager.delegate = self
+    self.manager = manager
+    updatePermission(manager.authorizationStatus)
+  }
+
+  private func updatePermission(_ status: CLAuthorizationStatus) {
+    let granted = status == .authorizedWhenInUse || status == .authorizedAlways
+    lock.lock()
+    cachedPermission = granted
+    lock.unlock()
+  }
+
+  func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+    updatePermission(manager.authorizationStatus)
+  }
+
+  func hasPermission() -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return cachedPermission
+  }
+
+  func readCountry(_ callback: @escaping (String?) -> Void) {
+    DispatchQueue.main.async {
+      guard let location = self.manager?.location, !self.geocoder.isGeocoding else {
+        callback(nil)
+        return
+      }
+      self.geocoder.reverseGeocodeLocation(location) { placemarks, _ in
+        callback(placemarks?.first?.isoCountryCode)
+      }
+    }
   }
 }

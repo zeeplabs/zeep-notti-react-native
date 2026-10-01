@@ -312,6 +312,26 @@ final class NottiApiClientTests: XCTestCase {
     XCTAssertEqual(sleeps, [2000, 4000, 8000, 16000])
   }
 
+  func test_aPermanent4xxPatchFailureIsRecognizableAndTransientOnesAreNot() {
+    for status in [401, 403, 404] {
+      StubURLProtocol.reset()
+      StubURLProtocol.enqueue(.status(status))
+      guard case .failure(let message) = client.patchDevice(deviceId: "device-1", token: "t", fields: [:]) else {
+        return XCTFail("HTTP \(status) must fail")
+      }
+      XCTAssertEqual(NottiApiClient.permanentClientErrorStatus(message), status)
+    }
+    for status in [400, 429, 503] {
+      StubURLProtocol.reset()
+      for _ in 0..<5 { StubURLProtocol.enqueue(.status(status)) }
+      guard case .failure(let message) = client.patchDevice(deviceId: "device-1", token: "t", fields: [:]) else {
+        return XCTFail("HTTP \(status) must fail")
+      }
+      XCTAssertNil(NottiApiClient.permanentClientErrorStatus(message), "HTTP \(status) is not a permanent auth/not-found")
+    }
+    XCTAssertNil(NottiApiClient.permanentClientErrorStatus("The Internet connection appears to be offline."))
+  }
+
   func test_anUnparseable2xxThatLaterTurnsIntoAValidBodySucceeds() {
     StubURLProtocol.enqueue(.status(200, body: "<html>captive portal</html>"))
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{"plan":"vip"}}"#))
@@ -379,6 +399,36 @@ final class NottiApiClientTests: XCTestCase {
     // stays queued for the next flush (SDKCTR-11).
     guard case .failure(_, let terminal) = result else { return XCTFail("expected failure") }
     XCTAssertFalse(terminal)
+  }
+
+  func test_reportEvent408And429AreTransientRetriedAndNonTerminal() {
+    // Pre-release review (aligned with Android): 408 Request Timeout and 429
+    // Too Many Requests describe a temporary condition, so - unlike every
+    // other 4xx (SDKCTR-11) - they are retried with backoff and never make
+    // the event terminal (it stays in the offline queue).
+    for status in [408, 429] {
+      StubURLProtocol.reset()
+      sleeps = []
+      for _ in 0..<5 { StubURLProtocol.enqueue(.status(status)) }
+
+      let result = client.reportEvent(notificationId: "notif-1", deliveryId: "delivery-1", type: "clicked", token: "t")
+
+      guard case .failure(_, let terminal) = result else { return XCTFail("a \(status) must be a failure") }
+      XCTAssertEqual(StubURLProtocol.recordedRequests().count, 5, "a \(status) must be retried up to the cap")
+      XCTAssertEqual(sleeps, [2000, 4000, 8000, 16000])
+      XCTAssertFalse(terminal, "a \(status) must not drop the event")
+    }
+  }
+
+  func test_patch429ThenSuccessIsRetriedAndSucceeds() {
+    StubURLProtocol.enqueue(.status(429))
+    StubURLProtocol.enqueue(.status(200))
+
+    let result = client.patchDevice(deviceId: "device-1", token: "t", fields: ["subscribed": true])
+
+    guard case .success = result else { return XCTFail("a 429 followed by a 2xx must succeed") }
+    XCTAssertEqual(StubURLProtocol.recordedRequests().count, 2)
+    XCTAssertEqual(sleeps, [2000])
   }
 
   func test_reportEventAcceptsAny2xxRegardlessOfBody() {

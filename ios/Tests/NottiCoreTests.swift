@@ -63,10 +63,14 @@ final class NottiCoreTests: XCTestCase {
     versionProvider: @escaping () -> String? = { nil },
     hasLocationPermission: @escaping () -> Bool = { false },
     countryProvider: @escaping (@escaping (String?) -> Void) -> Void = { $0(nil) },
+    appStateProvider: @escaping (@escaping (Bool) -> Void) -> Void = { $0(false) },
+    beginBackgroundTask: @escaping () -> (() -> Void) = { {} },
+    heartbeatInterval: TimeInterval = 60,
     apiClient: NottiApiClient? = nil,
     logs: LogSink? = nil,
     onDeviceIdChanged: @escaping (String) -> Void = { _ in },
-    eventStore: NottiEventStore? = nil
+    eventStore: NottiEventStore? = nil,
+    sessionGate: NottiCore.SessionGate = NottiCore.SessionGate()
   ) -> NottiCore {
     let session = stubSession()
     let core = NottiCore(
@@ -81,8 +85,12 @@ final class NottiCoreTests: XCTestCase {
       versionProvider: versionProvider,
       hasLocationPermission: hasLocationPermission,
       countryProvider: countryProvider,
+      appStateProvider: appStateProvider,
+      beginBackgroundTask: beginBackgroundTask,
+      heartbeatInterval: heartbeatInterval,
       logger: { message in logs?.append(message) },
-      onDeviceIdChanged: onDeviceIdChanged
+      onDeviceIdChanged: onDeviceIdChanged,
+      sessionGate: sessionGate
     )
     cores.append(core)
     return core
@@ -1152,7 +1160,10 @@ final class NottiCoreTests: XCTestCase {
     XCTAssertEqual(snapshot["last_session_at"] as? String, "1970-01-01T00:00:31.000Z")
   }
 
-  func test_uncleanKillIsEstimatedAtTheNextSessionStart() {
+  func test_uncleanKillIsClosedAtTheLastKnownForegroundTimestampAtTheNextSessionStart() {
+    // Review item 4 / SEGTEL-08: the missed session ends at its last
+    // heartbeat (last time the app was *known* foreground), not at the next
+    // launch - the old `now - startedAt` counted all the dead time as usage.
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // missed-session PATCH
     let core = newCore()
@@ -1160,22 +1171,60 @@ final class NottiCoreTests: XCTestCase {
     drain(core)
 
     core.handleSessionStart(nowMs: 1_000)
+    core.recordHeartbeat(nowMs: 31_000)
     drain(core)
-    // Process killed while foreground: no background transition. Next launch:
-    core.handleSessionStart(nowMs: 61_000)
+    // Process killed while foreground: no background transition. Next launch,
+    // hours later:
+    core.handleSessionStart(nowMs: 7_200_000)
     drain(core)
 
-    // The missed session is closed once: 60s of foreground, count 1.
+    // The missed session is closed once: 30s of known foreground, count 1.
     XCTAssertEqual(store.getSessionCount(), 1)
-    XCTAssertEqual(store.getSessionTimeMs(), 60_000)
-    XCTAssertEqual(store.getLastSessionAtMs(), 61_000)
+    XCTAssertEqual(store.getSessionTimeMs(), 30_000)
+    XCTAssertEqual(store.getLastSessionAtMs(), 31_000)
     // ... and a fresh session is now open.
-    XCTAssertEqual(store.getSessionStartedAtMs(), 61_000)
+    XCTAssertEqual(store.getSessionStartedAtMs(), 7_200_000)
 
     let bodies = patchBodies(StubURLProtocol.recordedRequests())
     XCTAssertEqual(bodies.count, 1)
     XCTAssertEqual(bodies[0]["session_count"] as? Int, 1)
-    XCTAssertEqual(bodies[0]["session_time_seconds"] as? Int, 60)
+    XCTAssertEqual(bodies[0]["session_time_seconds"] as? Int, 30)
+  }
+
+  func test_anOrphanedSessionWithoutAHeartbeatIsCountedWithZeroDurationNotInflated() {
+    // State persisted by an SDK version that had no heartbeat: never guess
+    // `now - startedAt` (could be days).
+    store.setSessionStartedAtMs(1_000)
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // missed-session PATCH
+    let core = newCore()
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    core.handleSessionStart(nowMs: 5 * 24 * 3_600_000)
+    drain(core)
+
+    XCTAssertEqual(store.getSessionCount(), 1)
+    XCTAssertEqual(store.getSessionTimeMs(), 0)
+  }
+
+  func test_theHeartbeatTimerPersistsTheLastForegroundTimestampAndStopsOnBackground() {
+    let core = newCore(heartbeatInterval: 0.05)
+    NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+    drain(core)
+    let startedAt = store.getSessionStartedAtMs()
+    XCTAssertNotNil(startedAt)
+
+    Thread.sleep(forTimeInterval: 0.4)
+    drain(core)
+    XCTAssertGreaterThan(store.getSessionLastSeenAtMs() ?? 0, startedAt ?? .max, "heartbeat must advance while foreground")
+
+    NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
+    drain(core)
+    Thread.sleep(forTimeInterval: 0.2)
+    drain(core)
+    XCTAssertNil(store.getSessionStartedAtMs())
+    XCTAssertNil(store.getSessionLastSeenAtMs(), "no heartbeat may be written after the session ended")
   }
 
   func test_sessionEndWithNoActiveSessionIsANoOp() {
@@ -1325,6 +1374,438 @@ final class NottiCoreTests: XCTestCase {
     let bodies = patchBodies(StubURLProtocol.recordedRequests())
     XCTAssertTrue(bodies.allSatisfy { $0["country"] == nil }, "a nil read must omit country entirely")
   }
+
+  // MARK: - Pre-release review fixes (iOS)
+
+  private func registeredCore(
+    hasLocationPermission: @escaping () -> Bool = { false },
+    countryProvider: @escaping (@escaping (String?) -> Void) -> Void = { $0(nil) },
+    eventStore: NottiEventStore? = nil,
+    logs: LogSink? = nil
+  ) -> NottiCore {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    let core = newCore(
+      hasLocationPermission: hasLocationPermission,
+      countryProvider: countryProvider,
+      logs: logs,
+      eventStore: eventStore
+    )
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+    XCTAssertEqual(store.getDeviceId(), "device-1")
+    return core
+  }
+
+  private func countryBodies() -> [[String: Any]] {
+    patchBodies(StubURLProtocol.recordedRequests()).filter { $0.keys.contains("country") }
+  }
+
+  // Item 1 (LGPD): the opt-out clear is a persisted obligation.
+
+  func test_optOutBeforeInitializeStillClearsCountryOnceRegistrationCompletes() {
+    // Previous launch had opted in and synced "BR".
+    store.setLocationSharingEnabled(true)
+    store.setLastSyncedCountry("BR")
+    let core = newCore()
+
+    core.setLocationSharingEnabled(false)
+    drain(core)
+    XCTAssertTrue(StubURLProtocol.recordedRequests().isEmpty)
+    XCTAssertTrue(store.getPendingCountryClear(), "the clear must be persisted, not discarded")
+
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    StubURLProtocol.enqueue(.status(200)) // country clear
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    let bodies = countryBodies()
+    XCTAssertEqual(bodies.count, 1)
+    XCTAssertTrue(bodies[0]["country"] is NSNull)
+    XCTAssertFalse(store.getPendingCountryClear(), "lowered only after the 2xx")
+    XCTAssertNil(store.getLastSyncedCountry())
+  }
+
+  func test_aCountryClearThatFailsOfflineOr5xxStaysPendingUntilA2xx() {
+    let core = registeredCore()
+    core.setLocationSharingEnabled(true)
+    drain(core)
+
+    for _ in 0..<5 { StubURLProtocol.enqueue(.networkError()) } // offline
+    core.setLocationSharingEnabled(false)
+    drain(core)
+    XCTAssertEqual(countryBodies().count, 5)
+    XCTAssertTrue(store.getPendingCountryClear(), "offline: clear stays pending")
+
+    for _ in 0..<5 { StubURLProtocol.enqueue(.status(503)) } // backend down
+    NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+    drain(core)
+    XCTAssertEqual(countryBodies().count, 10, "foreground re-sends the pending clear")
+    XCTAssertTrue(store.getPendingCountryClear(), "5xx: clear stays pending")
+
+    StubURLProtocol.enqueue(.status(200))
+    core.onNetworkAvailable()
+    drain(core)
+    let bodies = countryBodies()
+    XCTAssertEqual(bodies.count, 11, "network regain re-sends the pending clear")
+    XCTAssertTrue(bodies.allSatisfy { $0["country"] is NSNull })
+    XCTAssertFalse(store.getPendingCountryClear())
+
+    // Nothing left to do: later triggers send nothing more.
+    core.onNetworkAvailable()
+    drain(core)
+    XCTAssertEqual(countryBodies().count, 11)
+  }
+
+  // Final review C: consent coming back after a clear whose ack was lost.
+
+  func test_reOptInAfterAFailedClearForgetsTheSyncedCountryAndResendsIt() {
+    let core = registeredCore(hasLocationPermission: { true }, countryProvider: { cb in cb("BR") })
+    core.setLocationSharingEnabled(true)
+    drain(core)
+    StubURLProtocol.enqueue(.status(200)) // country BR
+    core.handleSessionStart(nowMs: 1_000)
+    drain(core)
+    XCTAssertEqual(store.getLastSyncedCountry(), "BR")
+
+    // Opt-out whose clear never gets acknowledged (it may or may not have
+    // reached the server - the ack is what is lost).
+    for _ in 0..<5 { StubURLProtocol.enqueue(.networkError()) }
+    core.setLocationSharingEnabled(false)
+    drain(core)
+    XCTAssertTrue(store.getPendingCountryClear())
+    XCTAssertEqual(store.getLastSyncedCountry(), "BR", "nothing acknowledged yet")
+
+    // Consent comes back: the pending clear is superseded and the synced
+    // value forgotten, so the same country is sent again.
+    core.setLocationSharingEnabled(true)
+    drain(core)
+    XCTAssertFalse(store.getPendingCountryClear())
+    XCTAssertNil(store.getLastSyncedCountry(), "the server may have dropped BR - never assume it is still there")
+
+    StubURLProtocol.enqueue(.status(200)) // orphan close of the session open since 1_000
+    StubURLProtocol.enqueue(.status(200)) // country BR again
+    core.handleSessionStart(nowMs: 1_000 + NottiCore.minCountryReadIntervalMs)
+    drain(core)
+    let countries = countryBodies().compactMap { $0["country"] as? String }
+    XCTAssertEqual(countries, ["BR", "BR"], "the unchanged country is re-sent after re-consent")
+    XCTAssertEqual(store.getLastSyncedCountry(), "BR")
+  }
+
+  // Final review D: a permanently rejected clear gets its own log line.
+
+  func test_aCountryClearRejectedWithAPermanent4xxLogsDistinctlyAndStaysPending() {
+    for status in [401, 403, 404] {
+      StubURLProtocol.reset()
+      let logs = LogSink()
+      store.setPendingCountryClear(false)
+      store.setLocationSharingEnabled(false)
+      let core = registeredCore(logs: logs)
+      core.setLocationSharingEnabled(true)
+      drain(core)
+
+      StubURLProtocol.enqueue(.status(status))
+      core.setLocationSharingEnabled(false)
+      drain(core)
+
+      XCTAssertEqual(countryBodies().count, 1, "a 4xx is not retried inline (HTTP \(status))")
+      XCTAssertTrue(store.getPendingCountryClear(), "still pending, re-sent on the next trigger (HTTP \(status))")
+      let rejected = logs.messages.filter { $0.contains("country clear rejected permanently") }
+      XCTAssertEqual(rejected.count, 1, "distinct log for HTTP \(status): \(logs.messages)")
+      XCTAssertTrue(rejected.first?.contains("HTTP \(status)") ?? false)
+      XCTAssertFalse(rejected.first?.contains("device-1") ?? true, "no identifiers in the log")
+      XCTAssertFalse(logs.messages.contains { $0.contains("country clear failed") }, "not the generic line")
+
+      // Trigger-based resend is unchanged.
+      StubURLProtocol.enqueue(.status(200))
+      core.onNetworkAvailable()
+      drain(core)
+      XCTAssertEqual(countryBodies().count, 2)
+      XCTAssertFalse(store.getPendingCountryClear())
+    }
+  }
+
+  func test_aTransientClearFailureKeepsTheGenericLog() {
+    let logs = LogSink()
+    let core = registeredCore(logs: logs)
+    core.setLocationSharingEnabled(true)
+    drain(core)
+    for _ in 0..<5 { StubURLProtocol.enqueue(.status(429)) }
+    core.setLocationSharingEnabled(false)
+    drain(core)
+    XCTAssertTrue(logs.messages.contains { $0.contains("country clear failed") })
+    XCTAssertFalse(logs.messages.contains { $0.contains("rejected permanently") })
+  }
+
+  func test_optOutWithoutAPriorOptInOrSyncedCountrySendsNothing() {
+    let core = registeredCore()
+
+    core.setLocationSharingEnabled(false)
+    drain(core)
+
+    XCTAssertEqual(StubURLProtocol.recordedRequests().count, 1, "registration only")
+    XCTAssertFalse(store.getPendingCountryClear())
+  }
+
+  // Item 9: a country in flight / queued never lands after an opt-out.
+
+  func test_aCountryQueuedBeforeRegistrationIsNeverSentAfterAnOptOut() {
+    var deliverToken: ((String?) -> Void)?
+    let core = newCore(
+      tokenProvider: { cb in deliverToken = cb },
+      hasLocationPermission: { true },
+      countryProvider: { cb in cb("BR") }
+    )
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    core.setLocationSharingEnabled(true)
+    core.handleSessionStart(nowMs: 1_000) // country "BR" read -> queued (not registered yet)
+    core.setLocationSharingEnabled(false)
+    drain(core)
+    XCTAssertTrue(StubURLProtocol.recordedRequests().isEmpty)
+
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    StubURLProtocol.enqueue(.status(200)) // country clear
+    deliverToken?("apns-token")
+    drain(core)
+
+    let bodies = countryBodies()
+    XCTAssertEqual(bodies.count, 1, "only the clear; the queued BR must be dropped at execution time")
+    XCTAssertTrue(bodies[0]["country"] is NSNull)
+    XCTAssertFalse(store.getPendingCountryClear())
+  }
+
+  func test_aCountryReadResolvingAfterAnOptOutIsNotWritten() {
+    var resolveCountry: ((String?) -> Void)?
+    let core = registeredCore(hasLocationPermission: { true }, countryProvider: { cb in resolveCountry = cb })
+    core.setLocationSharingEnabled(true)
+    core.handleSessionStart(nowMs: 1_000)
+    drain(core)
+    XCTAssertNotNil(resolveCountry)
+
+    StubURLProtocol.enqueue(.status(200)) // country clear
+    core.setLocationSharingEnabled(false)
+    drain(core)
+    resolveCountry?("BR")
+    drain(core)
+
+    let bodies = countryBodies()
+    XCTAssertEqual(bodies.count, 1)
+    XCTAssertTrue(bodies[0]["country"] is NSNull)
+  }
+
+  // Minor: country diff + geocoder throttling.
+
+  func test_anUnchangedCountryIsNotPatchedAgainAndReadsAreThrottled() {
+    var reads = 0
+    let core = registeredCore(hasLocationPermission: { true }, countryProvider: { cb in reads += 1; cb("BR") })
+    core.setLocationSharingEnabled(true)
+    drain(core)
+
+    StubURLProtocol.enqueue(.status(200)) // country BR
+    StubURLProtocol.enqueue(.status(200)) // session 1 PATCH
+    StubURLProtocol.enqueue(.status(200)) // session 2 PATCH
+    core.handleSessionStart(nowMs: 1_000)
+    core.handleSessionEnd(nowMs: 2_000)
+    core.handleSessionStart(nowMs: 3_000) // within the throttle window: no read
+    core.handleSessionEnd(nowMs: 4_000)
+    core.handleSessionStart(nowMs: 1_000 + NottiCore.minCountryReadIntervalMs) // read, same country
+    drain(core)
+
+    XCTAssertEqual(reads, 2, "one geocode per throttle window")
+    XCTAssertEqual(countryBodies().count, 1, "an unchanged country is not re-sent")
+    XCTAssertEqual(store.getLastSyncedCountry(), "BR")
+  }
+
+  // Item 2: the cold-start session.
+
+  func test_aCoreCreatedWhileTheAppIsAlreadyActiveOpensTheColdStartSession() {
+    let core = newCore(appStateProvider: { $0(true) })
+    drain(core)
+    let startedAt = store.getSessionStartedAtMs()
+    XCTAssertNotNil(startedAt, "the launch didBecomeActive fired before the core existed")
+    XCTAssertNotNil(store.getFirstSessionAtMs())
+
+    // The (late or real) notification must not restart the open session.
+    NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+    drain(core)
+    XCTAssertEqual(store.getSessionStartedAtMs(), startedAt)
+    XCTAssertEqual(store.getSessionCount(), 0)
+  }
+
+  // Final review A: a JS reload while foreground re-creates the core in the
+  // same process; the new core must adopt the open session, not close it as
+  // an orphan of a killed process.
+
+  func test_aCoreRecreatedByAJsReloadWhileForegroundAdoptsTheOpenSessionInsteadOfClosingIt() {
+    let gate = NottiCore.SessionGate()
+    var first: NottiCore? = newCore(appStateProvider: { $0(true) }, sessionGate: gate)
+    drain(first!)
+    let startedAt = store.getSessionStartedAtMs()
+    XCTAssertNotNil(startedAt)
+    // RN bridge torn down (invalidate) and the old core released, as on reload.
+    cores.removeAll { $0 === first }
+    weak var releasedFirst = first
+    first = nil
+    XCTAssertNil(releasedFirst, "the old core must be gone so only the new one observes lifecycle")
+
+    // Same process, app still active: the new core sees `.active` at birth.
+    let second = newCore(appStateProvider: { $0(true) }, sessionGate: gate)
+    drain(second)
+    XCTAssertEqual(store.getSessionCount(), 0, "a reload must not close the open session as an orphan")
+    XCTAssertEqual(store.getSessionStartedAtMs(), startedAt, "the open session is adopted, not reopened")
+
+    // The real background ends that one session exactly once ...
+    NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
+    drain(second)
+    XCTAssertEqual(store.getSessionCount(), 1, "two cores in one process => session_count +1 only")
+    XCTAssertNil(store.getSessionStartedAtMs())
+
+    // ... and the next foreground is a genuinely new session again.
+    NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+    drain(second)
+    XCTAssertNotNil(store.getSessionStartedAtMs())
+    XCTAssertEqual(store.getSessionCount(), 1, "a fresh start after background closes nothing")
+  }
+
+  func test_anInvalidatedCoreThatIsStillAliveNoLongerReactsToLifecycle() {
+    // The torn-down module may outlive the reload for a while; it must not
+    // also end the session (two work queues racing on the same counters).
+    // Deterministic form: with only the invalidated core alive, a background
+    // must leave the session untouched for the next core to adopt/end.
+    let core = newCore(appStateProvider: { $0(true) })
+    drain(core)
+    let startedAt = store.getSessionStartedAtMs()
+    XCTAssertNotNil(startedAt)
+
+    core.invalidate()
+    NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
+    drain(core)
+    XCTAssertEqual(store.getSessionCount(), 0, "an invalidated core must not end the session")
+    XCTAssertEqual(store.getSessionStartedAtMs(), startedAt)
+  }
+
+  func test_anOpenSessionLeftByAKilledProcessIsStillClosedAsAnOrphanOnColdStart() {
+    // A fresh gate = a new process: the persisted session really is an orphan.
+    store.setSessionStartedAtMs(1_000)
+    store.setSessionLastSeenAtMs(31_000)
+    let core = newCore(appStateProvider: { $0(true) }, sessionGate: NottiCore.SessionGate())
+    drain(core)
+    XCTAssertEqual(store.getSessionCount(), 1)
+    XCTAssertEqual(store.getSessionTimeMs(), 30_000)
+    XCTAssertNotEqual(store.getSessionStartedAtMs(), 1_000, "a new session is open")
+  }
+
+  func test_aCoreCreatedInBackgroundDoesNotOpenASession() {
+    let core = newCore(appStateProvider: { $0(false) })
+    drain(core)
+    XCTAssertNil(store.getSessionStartedAtMs())
+  }
+
+  // Item 3: lifecycle timestamps come from the callback, not the queue.
+
+  func test_sessionEndUsesTheBackgroundTimestampEvenWhenTheWorkQueueIsBusy() {
+    var begun = 0
+    var ended = 0
+    let probe = ThreadProbeApiClient(blockForSeconds: 1.5)
+    let core = newCore(
+      beginBackgroundTask: { begun += 1; return { ended += 1 } },
+      apiClient: probe
+    )
+    NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+    drain(core)
+    XCTAssertNotNil(store.getSessionStartedAtMs())
+
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl) // blocks the queue 1.5s
+    let deadline = Date().addingTimeInterval(10)
+    while probe.callCount == 0 && Date() < deadline { Thread.sleep(forTimeInterval: 0.01) }
+    NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
+    drain(core)
+
+    XCTAssertEqual(store.getSessionCount(), 1)
+    XCTAssertLessThan(store.getSessionTimeMs(), 1_000, "queue wait time must not be counted as foreground")
+    XCTAssertEqual(begun, 1, "session end must run under an OS background task")
+    XCTAssertEqual(ended, 1, "the background task must be ended once the work ran")
+  }
+
+  // Item 6: flush stops at the first transient failure, and is de-duplicated.
+
+  func test_flushStopsAtTheFirstTransientFailureInsteadOfRetryingEveryEvent() {
+    let eventStore = NottiEventStore(defaults: defaults)
+    for index in 0..<3 {
+      _ = eventStore.enqueue(notificationId: "n-\(index)", deliveryId: "d-\(index)", type: "received")
+    }
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    for _ in 0..<5 { StubURLProtocol.enqueue(.status(503)) } // first event: 5 attempts
+    let core = newCore(eventStore: eventStore)
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    XCTAssertEqual(StubURLProtocol.recordedRequests().count, 6, "register + 5 attempts for the FIRST event only")
+    XCTAssertEqual(eventStore.all().count, 3, "every event stays queued")
+  }
+
+  func test_aBurstOfFlushTriggersSchedulesASingleFlush() {
+    let client = SlowEventApiClient()
+    let eventStore = NottiEventStore(defaults: defaults)
+    let core = newCore(apiClient: client, eventStore: eventStore)
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    _ = eventStore.enqueue(notificationId: "n-1", deliveryId: "d-1", type: "received")
+    for _ in 0..<10 { core.onNetworkAvailable() }
+    drain(core)
+
+    XCTAssertLessThanOrEqual(client.reportCallCount, 2, "a burst of triggers must not queue one flush each")
+    XCTAssertGreaterThanOrEqual(client.reportCallCount, 1)
+  }
+
+  // Item 8: telemetry never evicts user mutations and is coalesced per key.
+
+  func test_queuedTelemetryIsCoalescedToTheLatestSnapshotPerKey() {
+    var deliverToken: ((String?) -> Void)?
+    let core = newCore(tokenProvider: { cb in deliverToken = cb })
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    core.handleSessionStart(nowMs: 1_000)
+    core.handleSessionEnd(nowMs: 2_000)
+    core.handleSessionStart(nowMs: 3_000)
+    core.handleSessionEnd(nowMs: 5_000)
+    drain(core)
+
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    StubURLProtocol.enqueue(.status(200)) // ONE session PATCH
+    deliverToken?("apns-token")
+    drain(core)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertEqual(bodies.count, 1)
+    XCTAssertEqual(bodies[0]["session_count"] as? Int, 2, "the latest cumulative snapshot wins")
+    XCTAssertEqual(bodies[0]["session_time_seconds"] as? Int, 3)
+  }
+
+  func test_telemetryNeverEvictsAQueuedLoginOrTagMutation() {
+    var deliverToken: ((String?) -> Void)?
+    let core = newCore(tokenProvider: { cb in deliverToken = cb })
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    core.login("user-42")
+    for index in 0..<30 { core.mutateTags(add: ["k\(index)": "v"], remove: nil) }
+    core.handleSessionStart(nowMs: 1_000)
+    core.handleSessionEnd(nowMs: 2_000) // 32nd entry: telemetry
+    core.mutateTags(add: ["last": "v"], remove: nil) // full: must evict the telemetry, not the login
+    core.handleSessionStart(nowMs: 3_000)
+    core.handleSessionEnd(nowMs: 4_000) // full of user mutations: telemetry dropped
+    drain(core)
+
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    for _ in 0..<32 { StubURLProtocol.enqueue(.status(200)) }
+    deliverToken?("apns-token")
+    drain(core)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertEqual(bodies.count, 32, "all 32 user mutations, no telemetry")
+    XCTAssertEqual(bodies[0]["external_user_id"] as? String, "user-42", "login must never be evicted by telemetry")
+    XCTAssertTrue(bodies.allSatisfy { $0["session_count"] == nil })
+    XCTAssertEqual((bodies.last?["tags"] as? [String: String])?["last"], "v")
+    XCTAssertEqual(store.getSessionCount(), 2, "the aggregate itself is still persisted locally")
+  }
 }
 
 /// An API client that records which thread it was called on and blocks there
@@ -1398,5 +1879,31 @@ final class LogSink {
   var messages: [String] {
     lock.lock(); defer { lock.unlock() }
     return storage
+  }
+}
+
+/// Registers successfully and answers every event report with a slow
+/// transient failure, counting calls - used to prove flush de-duplication.
+final class SlowEventApiClient: NottiApiClient {
+  private let lock = NSLock()
+  private var reports = 0
+
+  init() {
+    super.init(baseUrl: "https://notti.example.com", appId: "app-1", clientKey: "key", sleeper: { _ in })
+  }
+
+  var reportCallCount: Int {
+    lock.lock(); defer { lock.unlock() }
+    return reports
+  }
+
+  override func createOrUpdateDevice(token: String, platform: String) -> ApiResult {
+    .success(DeviceResponse(id: "device-1", tags: [:]))
+  }
+
+  override func reportEvent(notificationId: String, deliveryId: String, type: String, token: String) -> EventResult {
+    lock.lock(); reports += 1; lock.unlock()
+    Thread.sleep(forTimeInterval: 0.3)
+    return .failure("HTTP 503", terminal: false)
   }
 }

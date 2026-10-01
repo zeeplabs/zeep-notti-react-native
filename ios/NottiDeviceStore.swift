@@ -63,6 +63,9 @@ public class NottiDeviceStore {
   private static let keySessionTimeMs = "notti_session_time_ms"
   private static let keySessionStartedAtMs = "notti_session_started_at_ms"
   private static let keyLocationSharingEnabled = "notti_location_sharing_enabled"
+  private static let keySessionLastSeenAtMs = "notti_session_last_seen_at_ms"
+  private static let keyPendingCountryClear = "notti_pending_country_clear"
+  private static let keyLastSyncedCountry = "notti_last_synced_country"
 
   private let defaults: UserDefaults
 
@@ -189,6 +192,41 @@ public class NottiDeviceStore {
 
   public func setLocationSharingEnabled(_ enabled: Bool) {
     defaults.set(enabled, forKey: Self.keyLocationSharingEnabled)
+  }
+
+  /// Last known foreground timestamp of the open session (heartbeat). Used
+  /// to close an orphaned session (unclean kill) at its real end instead of
+  /// `now - startedAt`, which counted all the time the app was dead as
+  /// foreground (SEGTEL-08 "last known foreground timestamp").
+  public func getSessionLastSeenAtMs() -> Int64? {
+    (defaults.object(forKey: Self.keySessionLastSeenAtMs) as? NSNumber)?.int64Value
+  }
+
+  public func setSessionLastSeenAtMs(_ ms: Int64?) {
+    defaults.set(ms.map(NSNumber.init(value:)), forKey: Self.keySessionLastSeenAtMs)
+  }
+
+  /// LGPD: set on location opt-out, cleared ONLY when the backend
+  /// acknowledged the `{country: null}` PATCH with a 2xx. Persisted so a
+  /// clear issued before `initialize`, offline, or against a 5xx survives a
+  /// process death and is re-sent on the next registration/foreground/flush.
+  public func getPendingCountryClear() -> Bool {
+    defaults.bool(forKey: Self.keyPendingCountryClear)
+  }
+
+  public func setPendingCountryClear(_ pending: Bool) {
+    defaults.set(pending, forKey: Self.keyPendingCountryClear)
+  }
+
+  /// The last country value the backend acknowledged (2xx). Drives the
+  /// diff (no PATCH when unchanged) and tells the opt-out path whether there
+  /// is anything server-side to clear.
+  public func getLastSyncedCountry() -> String? {
+    defaults.string(forKey: Self.keyLastSyncedCountry)
+  }
+
+  public func setLastSyncedCountry(_ country: String?) {
+    defaults.set(country, forKey: Self.keyLastSyncedCountry)
   }
 
   public func getState() -> DeviceState {

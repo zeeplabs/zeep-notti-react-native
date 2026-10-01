@@ -13,15 +13,33 @@ import UserNotifications
 /// imported, since it lives in the `Core` subspec's separate module.
 final class NottiNotificationServiceExtensionTests: XCTestCase {
 
+  /// Generous on purpose: the handler fires after a real (stubbed) URLSession
+  /// download task plus a file move, which on a loaded simulator/CI runner
+  /// occasionally took longer than the old 2s and failed spuriously. A
+  /// healthy run still completes in milliseconds.
+  private static let handlerTimeout: TimeInterval = 10
+
+  /// Invalidated in `tearDown` so no session (and its delegate queue/worker
+  /// threads) outlives the test that created it.
+  private var sessions: [URLSession] = []
+
   override func setUp() {
     super.setUp()
     StubURLProtocol.reset()
   }
 
+  override func tearDown() {
+    for session in sessions { session.invalidateAndCancel() }
+    sessions.removeAll()
+    super.tearDown()
+  }
+
   private func stubSession() -> URLSession {
     let config = URLSessionConfiguration.ephemeral
     config.protocolClasses = [StubURLProtocol.self]
-    return URLSession(configuration: config)
+    let session = URLSession(configuration: config)
+    sessions.append(session)
+    return session
   }
 
   private func request(userInfo: [AnyHashable: Any]) -> UNNotificationRequest {
@@ -40,7 +58,7 @@ final class NottiNotificationServiceExtensionTests: XCTestCase {
       },
       session: stubSession()
     )
-    wait(for: [expectation], timeout: 2)
+    wait(for: [expectation], timeout: Self.handlerTimeout)
     XCTAssertEqual(StubURLProtocol.recordedRequests().count, 0)
   }
 
@@ -57,7 +75,7 @@ final class NottiNotificationServiceExtensionTests: XCTestCase {
       },
       session: stubSession()
     )
-    wait(for: [expectation], timeout: 2)
+    wait(for: [expectation], timeout: Self.handlerTimeout)
     XCTAssertEqual(StubURLProtocol.recordedRequests().count, 0)
   }
 
@@ -71,7 +89,7 @@ final class NottiNotificationServiceExtensionTests: XCTestCase {
       },
       session: stubSession()
     )
-    wait(for: [expectation], timeout: 2)
+    wait(for: [expectation], timeout: Self.handlerTimeout)
     XCTAssertEqual(StubURLProtocol.recordedRequests().count, 0)
   }
 
@@ -88,7 +106,7 @@ final class NottiNotificationServiceExtensionTests: XCTestCase {
       },
       session: stubSession()
     )
-    wait(for: [expectation], timeout: 2)
+    wait(for: [expectation], timeout: Self.handlerTimeout)
   }
 
   func test_successfulDownloadAttachesTheImage() {
@@ -102,7 +120,7 @@ final class NottiNotificationServiceExtensionTests: XCTestCase {
       },
       session: stubSession()
     )
-    wait(for: [expectation], timeout: 2)
+    wait(for: [expectation], timeout: Self.handlerTimeout)
   }
 
   func test_serviceExtensionTimeWillExpireFallsBackToGivenContent() {

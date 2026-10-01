@@ -14,7 +14,7 @@ public enum EventResult {
   case success
   /// `terminal` is true only for a 4xx the backend will never accept (the
   /// offline queue discards the event), false when the retry cap was
-  /// exhausted on transient network/5xx errors (the event stays queued).
+  /// exhausted on transient network/5xx/408/429 errors (the event stays queued).
   case failure(String, terminal: Bool)
 }
 
@@ -189,8 +189,8 @@ public class NottiApiClient {
   /// device that received/clicked). Fire-and-forget like `patchDevice`: a
   /// REST backend is free to acknowledge the event with `204 No Content`, an
   /// empty `200` or a bare `{"ok":true}`, so any 2xx is a success and the
-  /// body is ignored. Shares `executeWithRetry`'s policy — 4xx terminal,
-  /// network error/5xx retried, 5-attempt cap with 2s/4s/8s/16s/32s backoff.
+  /// body is ignored. Shares `executeWithRetry`'s policy — 4xx terminal
+  /// (except 408/429), network error/5xx/408/429 retried, 5-attempt cap with 2s/4s/8s/16s/32s backoff.
   public func reportEvent(notificationId: String, deliveryId: String, type: String, token: String) -> EventResult {
     let body: [String: Any] = ["delivery_id": deliveryId, "type": type, "token": token]
     guard
@@ -258,12 +258,14 @@ public class NottiApiClient {
             return .success(value)
           }
           lastError = "HTTP \(http.statusCode) with an unparseable response body"
-        } else if http.statusCode < 500 {
+        } else if http.statusCode < 500 && !Self.isTransientClientError(http.statusCode) {
           // 4xx: not retried, terminal failure. Marked terminal so the
           // offline queue can discard the event - the backend will never
           // accept it, so keeping it would re-fail forever on every flush.
           return .failure("HTTP \(http.statusCode)", terminal: true)
         } else {
+          // 5xx, 408 Request Timeout and 429 Too Many Requests: transient,
+          // retried with the same backoff and non-terminal once the cap is hit.
           lastError = "HTTP \(http.statusCode)"
         }
       }
@@ -274,9 +276,36 @@ public class NottiApiClient {
       }
     }
 
-    // Retry cap exhausted on transient (network/5xx) failures only - a 4xx
+    // Retry cap exhausted on transient (network/5xx/408/429) failures only - any other 4xx
     // would have returned above. Not terminal: the event stays queued.
     return .failure(lastError, terminal: false)
+  }
+
+  /// 408/429 are 4xx codes that describe a *temporary* condition (the
+  /// request may succeed later, unchanged), so they are retried and never
+  /// make an offline event terminal. Every other 4xx stays terminal. Aligned
+  /// with Android (pre-release review): refines SDKCTR-11, which previously
+  /// treated every 4xx as terminal.
+  /// Status codes a device PATCH can fail with that retrying the same
+  /// request will never fix (401/403: credentials; 404: device gone).
+  static let permanentClientErrorStatuses: Set<Int> = [401, 403, 404]
+
+  /// Recovers a permanent 4xx from an `ApiResult.failure` message. Coupled to
+  /// the `"HTTP \(code)"` string `executeWithRetry` returns for a terminal 4xx
+  /// (this file) - `ApiResult` is public and carries no status, so changing
+  /// its shape would be a source-breaking change for this one diagnostic.
+  /// 408/429 never match (retried, and not in the set).
+  static func permanentClientErrorStatus(_ failureMessage: String) -> Int? {
+    let prefix = "HTTP "
+    guard failureMessage.hasPrefix(prefix),
+      let status = Int(failureMessage.dropFirst(prefix.count)),
+      permanentClientErrorStatuses.contains(status)
+    else { return nil }
+    return status
+  }
+
+  static func isTransientClientError(_ statusCode: Int) -> Bool {
+    statusCode == 408 || statusCode == 429
   }
 
   private func syncDataTask(_ request: URLRequest) -> (Data?, URLResponse?, Error?) {

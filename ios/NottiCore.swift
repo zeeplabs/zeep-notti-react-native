@@ -38,8 +38,61 @@ public class NottiCore {
   private let versionProvider: () -> String?
   private let hasLocationPermission: () -> Bool
   private let countryProvider: (@escaping (String?) -> Void) -> Void
+  /// Cold-start session (review item 2): reports, asynchronously, whether the
+  /// app is already `.active` at construction time. The TurboModule (and so
+  /// this core) is typically built *after* the launch's `didBecomeActive`
+  /// already fired, so without this the cold-start session was never opened.
+  /// `NottiImpl` wires the real `UIApplication.shared.applicationState` read
+  /// (on the main thread); the default (`false`) keeps hostless tests inert.
+  private let appStateProvider: (@escaping (_ isActive: Bool) -> Void) -> Void
+  /// Begins an OS background task and returns the closure that ends it
+  /// (review item 3): keeps the process alive long enough for the session-end
+  /// bookkeeping + PATCH queued at `didEnterBackground` to run. Default no-op
+  /// for tests; `NottiImpl` wires `UIApplication.beginBackgroundTask`.
+  private let beginBackgroundTask: () -> (() -> Void)
+  /// Session heartbeat period (review item 4). `<= 0` disables the timer.
+  private let heartbeatInterval: TimeInterval
   private let platform: String
   private let logger: (String) -> Void
+  /// "A session is open in this process" (mirrors Android's `SessionGate` /
+  /// `NottiModule.processSessionGate`). A JS reload while foreground
+  /// (expo-updates `reloadAsync`, CodePush, dev reload) builds a brand-new
+  /// `NottiCore` whose own `hasStartedSession` is false; without a
+  /// process-level flag it treated the still-open session as an orphan of a
+  /// killed process, closing it (`session_count` +1, up to one heartbeat of
+  /// time lost) and opening another. `NottiImpl` injects one process-wide
+  /// instance; the default is a fresh gate so every test core is isolated.
+  private let sessionGate: SessionGate
+
+  /// Thread-safe process-level session flag. Opened by the first core that
+  /// starts a session in this process, closed on `didEnterBackground`.
+  public final class SessionGate {
+    private let lock = NSLock()
+    private var open = false
+
+    public init() {}
+
+    var isOpen: Bool {
+      lock.lock()
+      defer { lock.unlock() }
+      return open
+    }
+
+    /// `true` only for the caller that flipped it closed -> open.
+    func tryOpen() -> Bool {
+      lock.lock()
+      defer { lock.unlock() }
+      if open { return false }
+      open = true
+      return true
+    }
+
+    func close() {
+      lock.lock()
+      open = false
+      lock.unlock()
+    }
+  }
 
   private let workQueue = DispatchQueue(label: "app.notti.sdk.core", qos: .utility)
   private static let workQueueKey = DispatchSpecificKey<UInt8>()
@@ -52,9 +105,22 @@ public class NottiCore {
   /// Mutations issued before device registration finished, replayed in order
   /// once it does. Bounded so a never-registering device cannot grow it
   /// without limit.
+  ///
+  /// `coalesceKey` (review item 8) is non-nil only for telemetry (session,
+  /// country, app version): a newer telemetry mutation with the same key
+  /// *replaces* the queued one (each carries a full snapshot, so only the
+  /// latest matters), and telemetry is always what gets evicted when the
+  /// queue is full - a user-initiated mutation (login, tags, subscription)
+  /// is never dropped to make room for telemetry.
   private struct PendingMutation {
     let description: String
+    let coalesceKey: String?
     let work: (_ client: NottiApiClient, _ deviceId: String, _ token: String) -> Void
+  }
+  private enum TelemetryKey {
+    static let session = "telemetry.session"
+    static let country = "telemetry.country"
+    static let appVersion = "telemetry.appVersion"
   }
   private static let maxPendingMutations = 32
   private var pendingMutations: [PendingMutation] = []
@@ -90,6 +156,11 @@ public class NottiCore {
   /// its own lock rather than the work queue.
   private let foregroundLock = NSLock()
   private var foregroundRetryQueued = false
+  /// Lifecycle truth as seen by the notification callbacks themselves
+  /// (guarded by `foregroundLock`), not by the possibly-lagging work queue.
+  /// The heartbeat timer only records while this is true, so time spent in
+  /// background is never written as "last seen foreground".
+  private var appIsForeground = false
   private var foregroundObserver: NSObjectProtocol?
   private var backgroundObserver: NSObjectProtocol?
 
@@ -104,6 +175,24 @@ public class NottiCore {
   private var appIsInBackground = false
   private var hasStartedSession = false
 
+  /// Heartbeat timer (workQueue-targeted) that periodically persists the
+  /// last known foreground timestamp of the open session (review item 4).
+  private var heartbeatTimer: DispatchSourceTimer?
+  /// Upper bound on what an orphaned (unclean-kill) session may contribute,
+  /// even with a heartbeat: defense against a corrupted persisted value.
+  static let maxOrphanSessionMs: Int64 = 24 * 60 * 60 * 1000
+
+  /// Flush de-duplication (review item 6): the push delegate and the network
+  /// observer may call `onNetworkAvailable` many times in a burst; only one
+  /// flush may be queued at a time. Touched off-queue, hence its own lock.
+  private let flushLock = NSLock()
+  private var flushScheduled = false
+
+  /// Geocoding throttle (workQueue-only): CLGeocoder is rate-limited, so at
+  /// most one country read per `minCountryReadIntervalMs`, never in parallel.
+  private var lastCountryReadAtMs: Int64?
+  static let minCountryReadIntervalMs: Int64 = 60_000
+
   public init(
     deviceStore: NottiDeviceStore,
     eventStore: NottiEventStore,
@@ -113,9 +202,13 @@ public class NottiCore {
     versionProvider: @escaping () -> String? = { nil },
     hasLocationPermission: @escaping () -> Bool = { false },
     countryProvider: @escaping (@escaping (String?) -> Void) -> Void = { $0(nil) },
+    appStateProvider: @escaping (@escaping (_ isActive: Bool) -> Void) -> Void = { $0(false) },
+    beginBackgroundTask: @escaping () -> (() -> Void) = { {} },
+    heartbeatInterval: TimeInterval = 60,
     platform: String = "ios",
     logger: @escaping (String) -> Void = { _ in },
-    onDeviceIdChanged: @escaping (String) -> Void = { _ in }
+    onDeviceIdChanged: @escaping (String) -> Void = { _ in },
+    sessionGate: SessionGate = SessionGate()
   ) {
     self.deviceStore = deviceStore
     self.eventStore = eventStore
@@ -125,15 +218,50 @@ public class NottiCore {
     self.versionProvider = versionProvider
     self.hasLocationPermission = hasLocationPermission
     self.countryProvider = countryProvider
+    self.appStateProvider = appStateProvider
+    self.beginBackgroundTask = beginBackgroundTask
+    self.heartbeatInterval = heartbeatInterval
     self.platform = platform
     self.logger = logger
     self.onDeviceIdChanged = onDeviceIdChanged
+    self.sessionGate = sessionGate
     workQueue.setSpecific(key: Self.workQueueKey, value: 1)
     observeAppForeground()
     observeAppBackground()
+    // Review item 2: the launch's `didBecomeActive` usually fired before this
+    // core existed. If the app is already active, treat it as that missed
+    // activation (idempotent with a later real notification: a repeat
+    // activation never restarts an open session). Timestamp captured at the
+    // moment the state was observed, not when the work queue gets to it.
+    appStateProvider { [weak self] isActive in
+      guard isActive, let self = self else { return }
+      self.handleAppDidBecomeActive(atMs: self.nowMs())
+    }
+  }
+
+  /// Called by `NottiImpl.invalidate()` when the RN bridge tears the module
+  /// down (JS reload). The old core can outlive that for a while (in-flight
+  /// blocks, delayed dealloc); without this it kept observing lifecycle, so
+  /// on the next background both it and the reloaded core ended the same
+  /// session from two different work queues (double `session_count`). Stops
+  /// the observers and the heartbeat; leaves the persisted open session and
+  /// the process `sessionGate` alone for the new core to adopt.
+  public func invalidate() {
+    foregroundLock.lock()
+    let observers = [foregroundObserver, backgroundObserver]
+    foregroundObserver = nil
+    backgroundObserver = nil
+    foregroundLock.unlock()
+    for case let observer? in observers {
+      NotificationCenter.default.removeObserver(observer)
+    }
+    workQueue.async { [weak self] in
+      self?.stopHeartbeatTimer()
+    }
   }
 
   deinit {
+    heartbeatTimer?.cancel()
     if let observer = foregroundObserver {
       NotificationCenter.default.removeObserver(observer)
     }
@@ -240,17 +368,40 @@ public class NottiCore {
   }
 
   /// P3 opt-in toggle (SEGTEL-10, the single deliberate AD-001 JS-visible API):
-  /// persists the flag, and on opt-out immediately enqueues a `{country: null}`
-  /// clear — never just stops sending (SEGTEL-13). On opt-in it sends nothing
-  /// itself; the next session start attempts the best-effort read.
+  /// persists the flag. On opt-in it sends nothing itself; the next session
+  /// start attempts the best-effort read.
+  ///
+  /// On opt-out (SEGTEL-13, LGPD - review item 1) the server-side `country`
+  /// MUST end up cleared, not merely stop being sent. The clear is therefore
+  /// a persisted obligation (`pendingCountryClear`), not a fire-and-forget
+  /// PATCH: it is set here, survives process death, and is only lowered on a
+  /// 2xx. It is (re)attempted right away when possible and again on every
+  /// registration success, app foreground and network regain - so an opt-out
+  /// issued before `initialize`, offline, or against a 5xx still converges.
+  /// Only raised when there may be something to clear (sharing was on, a
+  /// country was synced, or a clear is already pending) so a host calling
+  /// `setLocationSharingEnabled(false)` on every launch sends nothing.
   public func setLocationSharingEnabled(_ enabled: Bool) {
     workQueue.async { [weak self] in
       guard let self = self else { return }
+      let wasEnabled = self.deviceStore.getLocationSharingEnabled()
       self.deviceStore.setLocationSharingEnabled(enabled)
-      guard !enabled, let client = self.apiClient else { return }
-      self.performOrQueue(client, description: "location sharing opt-out") { client, deviceId, token in
-        _ = client.patchDevice(deviceId: deviceId, token: token, fields: ["country": NSNull()])
+      if enabled {
+        if !wasEnabled {
+          // Fresh consent supersedes an unacknowledged clear; forget the
+          // synced value too so the next read is re-sent even if a clear
+          // reached the server but its ack was lost.
+          self.deviceStore.setPendingCountryClear(false)
+          self.deviceStore.setLastSyncedCountry(nil)
+        }
+        return
       }
+      let mayHaveServerSideCountry = wasEnabled
+        || self.deviceStore.getLastSyncedCountry() != nil
+        || self.deviceStore.getPendingCountryClear()
+      guard mayHaveServerSideCountry else { return }
+      self.deviceStore.setPendingCountryClear(true)
+      self.attemptPendingCountryClear()
     }
   }
 
@@ -296,8 +447,31 @@ public class NottiCore {
   /// `flushEventQueue` guards on `apiClient`/token — and the event stays queued
   /// for the next registration success or app foreground.
   internal func onNetworkAvailable() {
+    flushLock.lock()
+    if flushScheduled {
+      flushLock.unlock()
+      return
+    }
+    flushScheduled = true
+    flushLock.unlock()
+
     workQueue.async { [weak self] in
-      self?.flushEventQueue()
+      guard let self = self else { return }
+      // Cleared before draining, so an event enqueued while this flush runs
+      // still gets a flush of its own.
+      self.flushLock.lock()
+      self.flushScheduled = false
+      self.flushLock.unlock()
+      self.attemptPendingCountryClear()
+      self.flushEventQueue()
+    }
+  }
+
+  /// Test hook (review item 4): persists a heartbeat as if the periodic timer
+  /// had fired at `nowMs` while foregrounded.
+  internal func recordHeartbeat(nowMs: Int64) {
+    workQueue.async { [weak self] in
+      self?.recordHeartbeatOnQueue(nowMs: nowMs, requireForeground: false)
     }
   }
 
@@ -357,6 +531,8 @@ public class NottiCore {
       }
       deviceStore.setLastToken(token)
       deviceStore.setTags(response.tags)
+      // Privacy obligation first (review item 1), ahead of queued mutations.
+      attemptPendingCountryClear()
       flushPendingMutations(client, deviceId: response.id, token: token)
       syncAppVersionIfNeeded(client)
       flushEventQueue()
@@ -374,10 +550,22 @@ public class NottiCore {
   /// the mutation queue, persisting the new value on Success. A nil read
   /// (no `CFBundleShortVersionString` in the host bundle) skips entirely —
   /// no crash, no registration block (SEGTEL edge case).
+  ///
+  /// TODO(review item 7, decision pending): a 2xx is taken as "synced", but
+  /// the current backend answers 200 and silently ignores `app_version`
+  /// (DEVTEL-01 still Pending in zeep-notti's device-telemetry-fields spec;
+  /// `deviceResponse` has no `app_version` field). The contract defines no
+  /// echo of the field in the PATCH response, so the SDK cannot tell
+  /// "persisted" from "ignored" and does not invent one. Consequence: a device
+  /// that syncs before the backend ships DEVTEL-01 will not resend until its
+  /// next version bump. Resolve by either (a) backend echoing `app_version`
+  /// in `deviceResponse` and persisting here only on echo, or (b) shipping
+  /// the backend first.
   private func syncAppVersionIfNeeded(_ client: NottiApiClient) {
     guard let current = versionProvider() else { return }
     guard current != deviceStore.getAppVersion() else { return }
-    performOrQueue(client, description: "app version") { [weak self] client, deviceId, token in
+    performOrQueue(client, description: "app version", coalesceKey: TelemetryKey.appVersion) {
+      [weak self] client, deviceId, token in
       let result = client.patchDevice(deviceId: deviceId, token: token, fields: ["app_version": current])
       switch result {
       case .success:
@@ -399,7 +587,10 @@ public class NottiCore {
         object: nil,
         queue: nil
       ) { [weak self] _ in
-        self?.handleAppDidBecomeActive()
+        guard let self = self else { return }
+        // Review item 3: timestamp captured in the callback, not when the
+        // (possibly busy) work queue eventually runs the block.
+        self.handleAppDidBecomeActive(atMs: self.nowMs())
       }
     #endif
   }
@@ -415,13 +606,15 @@ public class NottiCore {
         object: nil,
         queue: nil
       ) { [weak self] _ in
-        self?.handleAppDidEnterBackground()
+        guard let self = self else { return }
+        self.handleAppDidEnterBackground(atMs: self.nowMs())
       }
     #endif
   }
 
-  private func handleAppDidBecomeActive() {
+  private func handleAppDidBecomeActive(atMs activatedAtMs: Int64) {
     foregroundLock.lock()
+    appIsForeground = true
     if foregroundRetryQueued {
       foregroundLock.unlock()
       return
@@ -441,8 +634,19 @@ public class NottiCore {
       if self.appIsInBackground || !self.hasStartedSession {
         self.hasStartedSession = true
         self.appIsInBackground = false
-        self.handleSessionStartOnQueue(nowMs: self.nowMs())
+        if self.sessionGate.tryOpen() {
+          self.handleSessionStartOnQueue(nowMs: activatedAtMs)
+        } else {
+          // Another core of this same process (pre-reload) already opened
+          // the foreground session: adopt it instead of closing it as an
+          // orphan of a killed process.
+          self.adoptOpenSessionOnQueue(nowMs: activatedAtMs)
+        }
+      } else {
+        // Repeat activation of the same session: still proof of foreground.
+        self.recordHeartbeatOnQueue(nowMs: activatedAtMs, requireForeground: false)
       }
+      self.attemptPendingCountryClear()
       // Unconditional: a device that is already registered skips the retry
       // below but must still get its offline event queue flushed.
       self.flushEventQueue()
@@ -450,12 +654,28 @@ public class NottiCore {
     }
   }
 
-  /// workQueue-only. Session end on the `didEnterBackgroundNotification` path.
-  private func handleAppDidEnterBackground() {
+  /// Session end on the `didEnterBackgroundNotification` path. The end
+  /// timestamp is the moment the app actually backgrounded (review item 3),
+  /// and an OS background task keeps the process alive while the queued
+  /// bookkeeping + PATCH run. Resetting `foregroundRetryQueued` lets the next
+  /// activation enqueue its own session start even if an earlier activation
+  /// block is still waiting on a busy queue (it would otherwise be dropped).
+  private func handleAppDidEnterBackground(atMs backgroundedAtMs: Int64) {
+    foregroundLock.lock()
+    appIsForeground = false
+    foregroundRetryQueued = false
+    foregroundLock.unlock()
+
+    let endBackgroundTask = beginBackgroundTask()
     workQueue.async { [weak self] in
+      defer { endBackgroundTask() }
       guard let self = self else { return }
       self.appIsInBackground = true
-      self.handleSessionEndOnQueue(nowMs: self.nowMs())
+      // Closed on the work queue so it is serialized with this core's own
+      // `tryOpen` in `handleAppDidBecomeActive` (a background block queued
+      // behind a still-pending activation must not leave the gate open).
+      self.sessionGate.close()
+      self.handleSessionEndOnQueue(nowMs: backgroundedAtMs)
     }
   }
 
@@ -516,18 +736,89 @@ public class NottiCore {
   /// workQueue-only. Session-start bookkeeping:
   /// 1. A stale `sessionStartedAtMs` means the previous process was killed
   ///    while foreground (no clean background transition) — close the missed
-  ///    session with an estimate (SEGTEL-08) before opening the new one.
+  ///    session at its last known foreground timestamp (SEGTEL-08, see
+  ///    `closeOrphanedSessionOnQueue`) before opening the new one.
   /// 2. `firstSessionAtMs` is set once, never overwritten (SEGTEL-05 AC1).
-  /// 3. Open the new session at `nowMs`.
+  /// 3. Open the new session at `nowMs` and start its heartbeat.
   private func handleSessionStartOnQueue(nowMs: Int64) {
     if deviceStore.getSessionStartedAtMs() != nil {
-      handleSessionEndOnQueue(nowMs: nowMs)
+      closeOrphanedSessionOnQueue(nowMs: nowMs)
     }
     if deviceStore.getFirstSessionAtMs() == nil {
       deviceStore.setFirstSessionAtMs(nowMs)
     }
     deviceStore.setSessionStartedAtMs(nowMs)
-    readCountryIfEnabled()
+    deviceStore.setSessionLastSeenAtMs(nowMs)
+    startHeartbeatTimer()
+    readCountryIfEnabled(nowMs: nowMs)
+  }
+
+  /// workQueue-only (final review A). Takes over the session a previous core
+  /// of this process opened (JS reload while foreground): no orphan close, no
+  /// `session_count` change, no new `first_session_at`/country read - only
+  /// this core's heartbeat, so the adopted session keeps its last-seen fresh.
+  /// If nothing is persisted (the open session was already ended, e.g. a
+  /// background block that ran before a stale activation), a normal start is
+  /// the only correct thing left to do.
+  private func adoptOpenSessionOnQueue(nowMs: Int64) {
+    guard deviceStore.getSessionStartedAtMs() != nil else {
+      handleSessionStartOnQueue(nowMs: nowMs)
+      return
+    }
+    recordHeartbeatOnQueue(nowMs: nowMs, requireForeground: false)
+    startHeartbeatTimer()
+  }
+
+  /// workQueue-only (review item 4). Closes a session the previous process
+  /// never ended. End = last persisted heartbeat (the last moment the app was
+  /// *known* to be foreground), clamped to `[startedAt, nowMs]` and to
+  /// `maxOrphanSessionMs`. Using `nowMs` (the old behavior) counted all the
+  /// time the app was dead as foreground. A session persisted by an older
+  /// SDK version has no heartbeat: it is counted with zero duration rather
+  /// than guessed (under-count by one session's length beats unbounded
+  /// inflation).
+  private func closeOrphanedSessionOnQueue(nowMs: Int64) {
+    guard let startedAt = deviceStore.getSessionStartedAtMs() else { return }
+    let lastSeen = deviceStore.getSessionLastSeenAtMs() ?? startedAt
+    var end = max(startedAt, min(lastSeen, nowMs))
+    end = min(end, startedAt + Self.maxOrphanSessionMs)
+    handleSessionEndOnQueue(nowMs: end)
+  }
+
+  private func startHeartbeatTimer() {
+    stopHeartbeatTimer()
+    guard heartbeatInterval > 0 else { return }
+    let timer = DispatchSource.makeTimerSource(queue: workQueue)
+    let leewayMs = max(1, Int(heartbeatInterval * 100))  // 10% of the period
+    timer.schedule(
+      deadline: .now() + heartbeatInterval,
+      repeating: heartbeatInterval,
+      leeway: .milliseconds(leewayMs)
+    )
+    timer.setEventHandler { [weak self] in
+      guard let self = self else { return }
+      self.recordHeartbeatOnQueue(nowMs: self.nowMs(), requireForeground: true)
+    }
+    timer.resume()
+    heartbeatTimer = timer
+  }
+
+  private func stopHeartbeatTimer() {
+    heartbeatTimer?.cancel()
+    heartbeatTimer = nil
+  }
+
+  /// workQueue-only. Monotonic: never moves the heartbeat backwards.
+  private func recordHeartbeatOnQueue(nowMs: Int64, requireForeground: Bool) {
+    guard let startedAt = deviceStore.getSessionStartedAtMs() else { return }
+    if requireForeground {
+      foregroundLock.lock()
+      let foreground = appIsForeground
+      foregroundLock.unlock()
+      guard foreground else { return }
+    }
+    let previous = deviceStore.getSessionLastSeenAtMs() ?? startedAt
+    deviceStore.setSessionLastSeenAtMs(max(previous, nowMs))
   }
 
   /// workQueue-only. P3 session-start country read (SEGTEL-11): only when the
@@ -536,16 +827,74 @@ public class NottiCore {
   /// re-gated on the flag at callback time — a toggle flipped off mid-read
   /// omits the field (SEGTEL-12), and a nil read (permission revoked, no fix,
   /// geocode failure) omits it silently with no crash or error (SEGTEL-14).
-  private func readCountryIfEnabled() {
+  ///
+  /// Throttled to one read per `minCountryReadIntervalMs` (CLGeocoder is
+  /// rate-limited and must not be called in parallel), and a PATCH is only
+  /// sent when the resolved country differs from the last acknowledged one.
+  private func readCountryIfEnabled(nowMs: Int64) {
     guard deviceStore.getLocationSharingEnabled(), hasLocationPermission() else { return }
+    if let last = lastCountryReadAtMs, nowMs >= last, nowMs - last < Self.minCountryReadIntervalMs {
+      return
+    }
+    lastCountryReadAtMs = nowMs
     countryProvider { [weak self] country in
       self?.onWorkQueue {
-        guard let self = self else { return }
-        guard self.deviceStore.getLocationSharingEnabled() else { return }
-        guard let country = country, let client = self.apiClient else { return }
-        self.performOrQueue(client, description: "country") { client, deviceId, token in
-          _ = client.patchDevice(deviceId: deviceId, token: token, fields: ["country": country])
-        }
+        guard let self = self, let country = country else { return }
+        self.sendCountryIfChanged(country)
+      }
+    }
+  }
+
+  /// workQueue-only. `isCountrySharingAllowed` is checked both here and again
+  /// at execution time (review item 9): a country queued before registration
+  /// (or racing an opt-out) must never be written after the user opted out.
+  private func sendCountryIfChanged(_ country: String) {
+    guard isCountrySharingAllowed() else { return }
+    guard country != deviceStore.getLastSyncedCountry() else { return }
+    guard let client = apiClient else { return }
+    performOrQueue(client, description: "country", coalesceKey: TelemetryKey.country) {
+      [weak self] client, deviceId, token in
+      guard let self = self else { return }
+      guard self.isCountrySharingAllowed() else {
+        self.logger("Notti: location sharing disabled before the queued country was sent - dropped")
+        return
+      }
+      switch client.patchDevice(deviceId: deviceId, token: token, fields: ["country": country]) {
+      case .success:
+        self.deviceStore.setLastSyncedCountry(country)
+      case .failure(let message):
+        self.logger("Notti.country: PATCH failed (\(message)) - retried on a later session")
+      }
+    }
+  }
+
+  private func isCountrySharingAllowed() -> Bool {
+    deviceStore.getLocationSharingEnabled() && !deviceStore.getPendingCountryClear()
+  }
+
+  /// workQueue-only (review item 1). Sends the persisted `{country: null}`
+  /// clear when one is pending and the device is addressable; lowers the
+  /// flag only on a 2xx. Any failure (offline, 5xx after retries, 4xx) keeps
+  /// it pending for the next registration success / foreground / flush.
+  private func attemptPendingCountryClear() {
+    guard deviceStore.getPendingCountryClear(), let client = apiClient,
+      let deviceId = deviceStore.getDeviceId(), let token = deviceStore.getLastToken()
+    else { return }
+    switch client.patchDevice(deviceId: deviceId, token: token, fields: ["country": NSNull()]) {
+    case .success:
+      deviceStore.setPendingCountryClear(false)
+      deviceStore.setLastSyncedCountry(nil)
+    case .failure(let message):
+      if let status = NottiApiClient.permanentClientErrorStatus(message) {
+        // Final review D: 401/403/404 will not heal by retrying the same
+        // request (bad credentials, or the device is gone server-side). Kept
+        // pending and re-sent by trigger like any failure, but logged
+        // distinctly so it is diagnosable. No identifiers in the line.
+        logger(
+          "Notti.setLocationSharingEnabled: country clear rejected permanently (HTTP \(status)) - "
+            + "stays pending and is re-sent on the next trigger; check the client key / device registration")
+      } else {
+        logger("Notti.setLocationSharingEnabled: country clear failed (\(message)) - stays pending")
       }
     }
   }
@@ -560,12 +909,14 @@ public class NottiCore {
   ///    `mutateTags`).
   private func handleSessionEndOnQueue(nowMs: Int64) {
     guard let startedAt = deviceStore.getSessionStartedAtMs() else { return }
+    stopHeartbeatTimer()
     let sessionCount = deviceStore.getSessionCount() + 1
-    let sessionTimeMs = deviceStore.getSessionTimeMs() + (nowMs - startedAt)
+    let sessionTimeMs = deviceStore.getSessionTimeMs() + max(0, nowMs - startedAt)
     deviceStore.setSessionCount(sessionCount)
     deviceStore.setSessionTimeMs(sessionTimeMs)
     deviceStore.setLastSessionAtMs(nowMs)
     deviceStore.setSessionStartedAtMs(nil)
+    deviceStore.setSessionLastSeenAtMs(nil)
 
     var snapshot: [String: Any] = [:]
     if let firstSessionAt = deviceStore.getFirstSessionAtMs() {
@@ -576,7 +927,8 @@ public class NottiCore {
     snapshot["session_time_seconds"] = sessionTimeMs / 1000
 
     guard let client = apiClient else { return }
-    performOrQueue(client, description: "session telemetry") { client, deviceId, token in
+    performOrQueue(client, description: "session telemetry", coalesceKey: TelemetryKey.session) {
+      client, deviceId, token in
       _ = client.patchDevice(deviceId: deviceId, token: token, fields: snapshot)
     }
   }
@@ -603,14 +955,29 @@ public class NottiCore {
   private func performOrQueue(
     _ client: NottiApiClient,
     description: String,
+    coalesceKey: String? = nil,
     _ work: @escaping (_ client: NottiApiClient, _ deviceId: String, _ token: String) -> Void
   ) {
     guard let deviceId = deviceStore.getDeviceId(), let token = deviceStore.getLastToken() else {
-      if pendingMutations.count >= Self.maxPendingMutations {
-        let dropped = pendingMutations.removeFirst()
-        logger("Notti: pending-mutation queue full - dropping the oldest queued mutation (\(dropped.description))")
+      let mutation = PendingMutation(description: description, coalesceKey: coalesceKey, work: work)
+      if let key = coalesceKey, let index = pendingMutations.firstIndex(where: { $0.coalesceKey == key }) {
+        pendingMutations[index] = mutation
+        logger("Notti: device not registered yet - replaced the queued \(description) with the latest value")
+        return
       }
-      pendingMutations.append(PendingMutation(description: description, work: work))
+      if pendingMutations.count >= Self.maxPendingMutations {
+        if let telemetryIndex = pendingMutations.firstIndex(where: { $0.coalesceKey != nil }) {
+          let dropped = pendingMutations.remove(at: telemetryIndex)
+          logger("Notti: pending-mutation queue full - dropping queued telemetry (\(dropped.description))")
+        } else if coalesceKey != nil {
+          logger("Notti: pending-mutation queue full of user mutations - dropping telemetry (\(description))")
+          return
+        } else {
+          let dropped = pendingMutations.removeFirst()
+          logger("Notti: pending-mutation queue full - dropping the oldest queued mutation (\(dropped.description))")
+        }
+      }
+      pendingMutations.append(mutation)
       logger("Notti: device not registered yet - queued \(description) until registration completes")
       return
     }
@@ -640,12 +1007,15 @@ public class NottiCore {
   /// prove the event belongs to the receiving device.
   ///
   /// On a terminal `.failure` (`terminal == true`, a 4xx the backend will
-  /// never accept - e.g. a stale token 403 per spec SDKCTR-11) the event is
-  /// removed too: re-attempting it on every future flush would fail
-  /// identically forever. On a transient `.failure` (`terminal == false`,
-  /// retry cap exhausted on network/5xx) the event STAYS queued and the next
-  /// registration success, app foreground, or network regain tries again.
-  /// Mirrors `NottiCore.kt`'s `flushEventQueue` exactly.
+  /// never accept - e.g. a stale token 403 per spec SDKCTR-11; 408/429 are
+  /// NOT terminal) the event is removed too: re-attempting it on every future
+  /// flush would fail identically forever. On a transient `.failure`
+  /// (`terminal == false`, retry cap exhausted on network/5xx/408/429) the
+  /// event STAYS queued and the flush STOPS (review item 6): the backend or
+  /// network is down, so trying the remaining events would only pin the
+  /// serial work queue for 5 attempts x 15s timeout + backoff *per event*
+  /// (tens of minutes for a full queue) while login/tags wait behind it. The
+  /// next registration success, app foreground, or network regain resumes.
   private func flushEventQueue() {
     guard let client = apiClient, let token = deviceStore.getLastToken() else { return }
     for event in eventStore.all() {
@@ -662,7 +1032,8 @@ public class NottiCore {
           logger("Notti.flushEventQueue: event report terminally failed (\(message)) - event dropped")
           eventStore.remove(id: event.id)
         } else {
-          logger("Notti.flushEventQueue: event report failed (\(message)) - event stays queued")
+          logger("Notti.flushEventQueue: event report failed (\(message)) - event stays queued, flush stopped")
+          return
         }
       }
     }

@@ -66,4 +66,43 @@ final class NottiEventStoreTests: XCTestCase {
     XCTAssertEqual(all.first?.notificationId, "notif-1")
     XCTAssertEqual(all.last?.notificationId, "notif-2")
   }
+
+  func test_corruptedPersistedDataReadsAsAnEmptyQueueAndIsRecoverable() {
+    defaults.set(Data("not json".utf8), forKey: "notti_pending_events")
+
+    XCTAssertEqual(store.all().count, 0, "an undecodable queue must read as [] instead of crashing")
+
+    _ = store.enqueue(notificationId: "notif-1", deliveryId: "delivery-1", type: "received")
+    XCTAssertEqual(store.all().count, 1, "the store must recover by overwriting the corrupted value")
+  }
+
+  func test_concurrentEnqueueRemoveAndReadNeverLoseOrCorruptRecords() {
+    // Detection sites (main thread / notification delegate) enqueue while the
+    // core's work queue reads and removes: every mutation is a
+    // read-modify-write of one UserDefaults key, so without the lock records
+    // would be lost. 4 writers x 8 enqueues stays at the 32-record cap.
+    let writers = 4
+    let perWriter = 8
+    DispatchQueue.concurrentPerform(iterations: writers * 2) { index in
+      if index < writers {
+        for item in 0..<perWriter {
+          _ = self.store.enqueue(notificationId: "n-\(index)-\(item)", deliveryId: "d", type: "received")
+        }
+      } else {
+        for _ in 0..<perWriter {
+          _ = self.store.all()
+          self.store.remove(id: "does-not-exist")
+        }
+      }
+    }
+
+    let all = store.all()
+    XCTAssertEqual(all.count, writers * perWriter, "no enqueue may be lost under concurrency")
+    XCTAssertEqual(Set(all.map(\.id)).count, all.count)
+
+    DispatchQueue.concurrentPerform(iterations: all.count) { index in
+      self.store.remove(id: all[index].id)
+    }
+    XCTAssertTrue(store.all().isEmpty, "no remove may be lost under concurrency")
+  }
 }
