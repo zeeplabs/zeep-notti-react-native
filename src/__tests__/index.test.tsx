@@ -37,7 +37,7 @@ jest.mock('../NativeNotti', () => ({
   },
 }));
 
-import { Notti } from '../index';
+import { Notti, type NotificationPayload } from '../index';
 
 describe('Notti facade', () => {
   beforeEach(() => {
@@ -151,6 +151,52 @@ describe('Notti facade', () => {
     mockGetInitialNotificationClick.mockReturnValueOnce(Promise.resolve(null));
     const result = await Notti.getInitialNotificationClick();
     expect(result).toBeNull();
+  });
+
+  // A1 contract: both platforms deliver JS `null` (never `undefined`) for a
+  // missing title/body. The facade must pass it through untouched - no
+  // coercion to `undefined`/'' that would break a consumer's `=== null` check.
+  it('getInitialNotificationClick passes a null title/body through unchanged', async () => {
+    const payload: NotificationPayload = {
+      title: null,
+      body: null,
+      data: { notification_id: 'n-1' },
+    };
+    mockGetInitialNotificationClick.mockReturnValueOnce(
+      Promise.resolve(payload)
+    );
+    const result = await Notti.getInitialNotificationClick();
+    expect(result).toBe(payload);
+    expect(result?.title).toBeNull();
+    expect(result?.body).toBeNull();
+  });
+
+  it('notificationReceived/notificationClicked callbacks receive a null title/body unchanged', () => {
+    const received = jest.fn();
+    const clicked = jest.fn();
+    Notti.addEventListener('notificationReceived', received);
+    Notti.addEventListener('notificationClicked', clicked);
+
+    const nativeReceived = mockOnNotificationReceived.mock.calls[0]?.[0] as (
+      p: NotificationPayload
+    ) => void;
+    const nativeClicked = mockOnNotificationClicked.mock.calls[0]?.[0] as (
+      p: NotificationPayload
+    ) => void;
+    const payload: NotificationPayload = { title: null, body: null, data: {} };
+    nativeReceived(payload);
+    nativeClicked(payload);
+
+    expect(received).toHaveBeenCalledWith({
+      title: null,
+      body: null,
+      data: {},
+    });
+    expect(clicked).toHaveBeenCalledWith({ title: null, body: null, data: {} });
+  });
+
+  it('exposes setLocationSharingEnabled on the public facade', () => {
+    expect(typeof Notti.setLocationSharingEnabled).toBe('function');
   });
 
   it("addEventListener('notificationReceived', cb) subscribes via NativeNotti.onNotificationReceived", () => {

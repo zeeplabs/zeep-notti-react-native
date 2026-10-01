@@ -37,9 +37,35 @@ export type NottiPluginProps = {
    * stopped working with no build error at all. Builds run outside EAS (a
    * local/manual `expo prebuild` + Xcode archive) have no such signal, so
    * pass this explicitly for those release builds.
+   *
+   * Caveat (pre-release review, not yet verified on a real EAS build): EAS's
+   * default `preview` profile uses `distribution: "internal"`, i.e. an ad hoc
+   * provisioning profile, and ad hoc/App Store-signed apps talk to the
+   * production APNs gateway. Xcode's archive export is expected to rewrite
+   * `aps-environment` from the distribution profile, so the value written
+   * here may not be what ends up in the signed binary. The README's "Expo
+   * setup" section documents how to check (`codesign -d --entitlements`) and
+   * how to pin this prop per profile; behavior is deliberately unchanged.
    */
   apsEnvironment?: 'development' | 'production';
 };
+
+/**
+ * Resolves the `aps-environment` value written by the plugin. Pure (env is
+ * passed in) so the exact rule is unit-testable: an explicit
+ * `props.apsEnvironment` always wins; otherwise only the literal EAS profile
+ * name `production` maps to `production`, everything else (including unset)
+ * maps to `development`.
+ */
+export function resolveApsEnvironment(
+  props: NottiPluginProps | undefined,
+  easBuildProfile: string | undefined
+): 'development' | 'production' {
+  return (
+    props?.apsEnvironment ??
+    (easBuildProfile === 'production' ? 'production' : 'development')
+  );
+}
 
 /**
  * iOS side of the plugin (T17): adds the `aps-environment` entitlement so
@@ -51,11 +77,10 @@ const withNottiIOS: ConfigPlugin<NottiPluginProps | undefined> = (
   config,
   props
 ) => {
-  const apsEnvironment =
-    props?.apsEnvironment ??
-    (process.env.EAS_BUILD_PROFILE === 'production'
-      ? 'production'
-      : 'development');
+  const apsEnvironment = resolveApsEnvironment(
+    props,
+    process.env.EAS_BUILD_PROFILE
+  );
 
   return withEntitlementsPlist(config, (entitlementsConfig) => {
     entitlementsConfig.modResults['aps-environment'] = apsEnvironment;
