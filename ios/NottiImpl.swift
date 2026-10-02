@@ -350,6 +350,24 @@ public class NottiImpl: NSObject {
     core.setSubscription(enabled)
   }
 
+  @objc(setEmail:)
+  public func setEmail(_ email: String) {
+    core.setEmail(email)
+  }
+
+  @objc public func clearEmail() {
+    core.clearEmail()
+  }
+
+  @objc(setPhone:)
+  public func setPhone(_ phone: String) {
+    core.setPhone(phone)
+  }
+
+  @objc public func clearPhone() {
+    core.clearPhone()
+  }
+
   @objc(setLocationSharingEnabled:)
   public func setLocationSharingEnabled(_ enabled: Bool) {
     core.setLocationSharingEnabled(enabled)

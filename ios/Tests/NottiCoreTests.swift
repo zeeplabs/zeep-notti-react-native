@@ -1415,6 +1415,103 @@ final class NottiCoreTests: XCTestCase {
     XCTAssertNil(store.getLastSyncedPermissionStatus())
   }
 
+  // MARK: - First-class email/phone (T9, DPF-17..21)
+
+  func test_setEmailEnqueuesAPatchWithEmailAndNeverTouchesTags() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // email PATCH
+    let core = newCore()
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    core.setEmail("user@example.com")
+    drain(core)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertEqual(bodies.count, 1)
+    XCTAssertEqual(bodies[0]["email"] as? String, "user@example.com")
+    XCTAssertNil(bodies[0]["tags"], "email must travel as its own field, never merged into tags (DPF-21)")
+    XCTAssertEqual(store.getEmail(), "user@example.com")
+  }
+
+  func test_clearEmailEnqueuesAnExplicitEmailNullClear() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // email clear PATCH
+    let core = newCore()
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    core.clearEmail()
+    drain(core)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertEqual(bodies.count, 1)
+    XCTAssertTrue(bodies[0]["email"] is NSNull, "clear must send an explicit email null")
+    XCTAssertNil(store.getEmail())
+  }
+
+  func test_setEmailTwiceWithTheSameValueEnqueuesASingleMutation() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // email PATCH
+    let core = newCore()
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    core.setEmail("user@example.com")
+    drain(core)
+    XCTAssertEqual(store.getEmail(), "user@example.com")
+
+    core.setEmail("user@example.com")
+    drain(core)
+
+    // register POST + exactly one email PATCH - the duplicate set is a no-op
+    // (DPF-20 idempotence, matching addTag).
+    XCTAssertEqual(StubURLProtocol.recordedRequests().count, 2)
+    XCTAssertEqual(store.getEmail(), "user@example.com")
+  }
+
+  func test_setPhoneEnqueuesAPatchWithPhone() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // phone PATCH
+    let core = newCore()
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    core.setPhone("+5511999999999")
+    drain(core)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertEqual(bodies.count, 1)
+    XCTAssertEqual(bodies[0]["phone"] as? String, "+5511999999999")
+    XCTAssertEqual(store.getPhone(), "+5511999999999")
+  }
+
+  func test_registrationSuccessResendsAHeldEmailAndPhone() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // email PATCH
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // phone PATCH
+    store.setEmail("held@example.com")
+    store.setPhone("+10000000000")
+    let core = newCore()
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertEqual(bodies.count, 2)
+    XCTAssertTrue(bodies.contains { $0["email"] as? String == "held@example.com" })
+    XCTAssertTrue(bodies.contains { $0["phone"] as? String == "+10000000000" })
+  }
+
+  func test_registrationSuccessWithNoHeldEmailOrPhoneSendsNothingForThem() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration only
+    let core = newCore()
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertTrue(bodies.isEmpty, "null held values are never sent (DPF-19)")
+  }
+
   // MARK: - Session lifecycle (T8, SEGTEL-05/06/07/08/09)
 
   func test_sessionStartThenEndIncrementsCountAddsElapsedTimeAndPatchesTheSnapshot() {
