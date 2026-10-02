@@ -19,6 +19,16 @@ public struct DeviceState {
   public let sessionTimeMs: Int64
   public let sessionStartedAtMs: Int64?
   public let locationSharingEnabled: Bool
+  // --- Device profile fields (device-profile-fields) ---
+  public let lastSyncedDeviceOs: String?
+  public let lastSyncedDeviceModel: String?
+  public let lastSyncedSdkVersion: String?
+  public let lastSyncedTimezoneId: String?
+  public let lastSyncedLanguage: String?
+  public let lastSyncedPermissionStatus: String?
+  public let lastUnsubscribedAtMs: Int64?
+  public let email: String?
+  public let phone: String?
 
   public init(
     deviceId: String?,
@@ -32,7 +42,16 @@ public struct DeviceState {
     sessionCount: Int = 0,
     sessionTimeMs: Int64 = 0,
     sessionStartedAtMs: Int64? = nil,
-    locationSharingEnabled: Bool = false
+    locationSharingEnabled: Bool = false,
+    lastSyncedDeviceOs: String? = nil,
+    lastSyncedDeviceModel: String? = nil,
+    lastSyncedSdkVersion: String? = nil,
+    lastSyncedTimezoneId: String? = nil,
+    lastSyncedLanguage: String? = nil,
+    lastSyncedPermissionStatus: String? = nil,
+    lastUnsubscribedAtMs: Int64? = nil,
+    email: String? = nil,
+    phone: String? = nil
   ) {
     self.deviceId = deviceId
     self.lastToken = lastToken
@@ -46,6 +65,15 @@ public struct DeviceState {
     self.sessionTimeMs = sessionTimeMs
     self.sessionStartedAtMs = sessionStartedAtMs
     self.locationSharingEnabled = locationSharingEnabled
+    self.lastSyncedDeviceOs = lastSyncedDeviceOs
+    self.lastSyncedDeviceModel = lastSyncedDeviceModel
+    self.lastSyncedSdkVersion = lastSyncedSdkVersion
+    self.lastSyncedTimezoneId = lastSyncedTimezoneId
+    self.lastSyncedLanguage = lastSyncedLanguage
+    self.lastSyncedPermissionStatus = lastSyncedPermissionStatus
+    self.lastUnsubscribedAtMs = lastUnsubscribedAtMs
+    self.email = email
+    self.phone = phone
   }
 }
 
@@ -66,6 +94,16 @@ public class NottiDeviceStore {
   private static let keySessionLastSeenAtMs = "notti_session_last_seen_at_ms"
   private static let keyPendingCountryClear = "notti_pending_country_clear"
   private static let keyLastSyncedCountry = "notti_last_synced_country"
+  // --- Device profile field keys (device-profile-fields) ---
+  private static let keyLastSyncedDeviceOs = "notti_last_synced_device_os"
+  private static let keyLastSyncedDeviceModel = "notti_last_synced_device_model"
+  private static let keyLastSyncedSdkVersion = "notti_last_synced_sdk_version"
+  private static let keyLastSyncedTimezoneId = "notti_last_synced_timezone_id"
+  private static let keyLastSyncedLanguage = "notti_last_synced_language"
+  private static let keyLastSyncedPermissionStatus = "notti_last_synced_permission_status"
+  private static let keyLastUnsubscribedAtMs = "notti_last_unsubscribed_at_ms"
+  private static let keyEmail = "notti_email"
+  private static let keyPhone = "notti_phone"
 
   private let defaults: UserDefaults
 
@@ -242,7 +280,90 @@ public class NottiDeviceStore {
       sessionCount: getSessionCount(),
       sessionTimeMs: getSessionTimeMs(),
       sessionStartedAtMs: getSessionStartedAtMs(),
-      locationSharingEnabled: getLocationSharingEnabled()
+      locationSharingEnabled: getLocationSharingEnabled(),
+      lastSyncedDeviceOs: getLastSyncedDeviceOs(),
+      lastSyncedDeviceModel: getLastSyncedDeviceModel(),
+      lastSyncedSdkVersion: getLastSyncedSdkVersion(),
+      lastSyncedTimezoneId: getLastSyncedTimezoneId(),
+      lastSyncedLanguage: getLastSyncedLanguage(),
+      lastSyncedPermissionStatus: getLastSyncedPermissionStatus(),
+      lastUnsubscribedAtMs: getLastUnsubscribedAtMs(),
+      email: getEmail(),
+      phone: getPhone()
     )
+  }
+
+  // MARK: - Device profile field accessors (device-profile-fields)
+
+  public func getLastSyncedDeviceOs() -> String? {
+    defaults.string(forKey: Self.keyLastSyncedDeviceOs)
+  }
+
+  public func setLastSyncedDeviceOs(_ value: String?) {
+    defaults.set(value, forKey: Self.keyLastSyncedDeviceOs)
+  }
+
+  public func getLastSyncedDeviceModel() -> String? {
+    defaults.string(forKey: Self.keyLastSyncedDeviceModel)
+  }
+
+  public func setLastSyncedDeviceModel(_ value: String?) {
+    defaults.set(value, forKey: Self.keyLastSyncedDeviceModel)
+  }
+
+  public func getLastSyncedSdkVersion() -> String? {
+    defaults.string(forKey: Self.keyLastSyncedSdkVersion)
+  }
+
+  public func setLastSyncedSdkVersion(_ value: String?) {
+    defaults.set(value, forKey: Self.keyLastSyncedSdkVersion)
+  }
+
+  public func getLastSyncedTimezoneId() -> String? {
+    defaults.string(forKey: Self.keyLastSyncedTimezoneId)
+  }
+
+  public func setLastSyncedTimezoneId(_ value: String?) {
+    defaults.set(value, forKey: Self.keyLastSyncedTimezoneId)
+  }
+
+  public func getLastSyncedLanguage() -> String? {
+    defaults.string(forKey: Self.keyLastSyncedLanguage)
+  }
+
+  public func setLastSyncedLanguage(_ value: String?) {
+    defaults.set(value, forKey: Self.keyLastSyncedLanguage)
+  }
+
+  public func getLastSyncedPermissionStatus() -> String? {
+    defaults.string(forKey: Self.keyLastSyncedPermissionStatus)
+  }
+
+  public func setLastSyncedPermissionStatus(_ value: String?) {
+    defaults.set(value, forKey: Self.keyLastSyncedPermissionStatus)
+  }
+
+  public func getLastUnsubscribedAtMs() -> Int64? {
+    (defaults.object(forKey: Self.keyLastUnsubscribedAtMs) as? NSNumber)?.int64Value
+  }
+
+  public func setLastUnsubscribedAtMs(_ ms: Int64?) {
+    defaults.set(ms.map(NSNumber.init(value:)), forKey: Self.keyLastUnsubscribedAtMs)
+  }
+
+  public func getEmail() -> String? {
+    defaults.string(forKey: Self.keyEmail)
+  }
+
+  public func setEmail(_ value: String?) {
+    defaults.set(value, forKey: Self.keyEmail)
+  }
+
+  public func getPhone() -> String? {
+    defaults.string(forKey: Self.keyPhone)
+  }
+
+  public func setPhone(_ value: String?) {
+    defaults.set(value, forKey: Self.keyPhone)
   }
 }

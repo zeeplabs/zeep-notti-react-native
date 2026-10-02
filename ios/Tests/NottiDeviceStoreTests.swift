@@ -142,4 +142,86 @@ final class NottiDeviceStoreTests: XCTestCase {
     XCTAssertEqual(state.sessionStartedAtMs, 5_000)
     XCTAssertTrue(state.locationSharingEnabled)
   }
+
+  // MARK: - Device profile fields (T6)
+
+  func test_deviceProfileFieldsRoundTripThroughUserDefaults() {
+    store.setLastSyncedDeviceOs("15.0")
+    store.setLastSyncedDeviceModel("iPhone15,2")
+    store.setLastSyncedSdkVersion("0.5.0")
+    store.setLastSyncedTimezoneId("America/Sao_Paulo")
+    store.setLastSyncedLanguage("pt")
+    store.setLastSyncedPermissionStatus("granted")
+    store.setLastUnsubscribedAtMs(1_700_000_000_000)
+    store.setEmail("user@example.com")
+    store.setPhone("+5511999999999")
+
+    XCTAssertEqual(store.getLastSyncedDeviceOs(), "15.0")
+    XCTAssertEqual(store.getLastSyncedDeviceModel(), "iPhone15,2")
+    XCTAssertEqual(store.getLastSyncedSdkVersion(), "0.5.0")
+    XCTAssertEqual(store.getLastSyncedTimezoneId(), "America/Sao_Paulo")
+    XCTAssertEqual(store.getLastSyncedLanguage(), "pt")
+    XCTAssertEqual(store.getLastSyncedPermissionStatus(), "granted")
+    XCTAssertEqual(store.getLastUnsubscribedAtMs(), 1_700_000_000_000)
+    XCTAssertEqual(store.getEmail(), "user@example.com")
+    XCTAssertEqual(store.getPhone(), "+5511999999999")
+  }
+
+  func test_deviceProfileFieldsPersistAcrossANewStoreInstanceOverTheSameDefaults() {
+    store.setLastSyncedDeviceOs("14.0")
+    store.setLastSyncedDeviceModel("iPhone14,2")
+    store.setLastSyncedSdkVersion("0.4.0")
+    store.setLastSyncedTimezoneId("America/New_York")
+    store.setLastSyncedLanguage("en")
+    store.setLastSyncedPermissionStatus("denied")
+    store.setLastUnsubscribedAtMs(1_700_000_000_001)
+    store.setEmail("a@b.com")
+    store.setPhone("+10000000000")
+
+    let fresh = NottiDeviceStore(defaults: defaults)
+    XCTAssertEqual(fresh.getLastSyncedDeviceOs(), "14.0")
+    XCTAssertEqual(fresh.getLastSyncedDeviceModel(), "iPhone14,2")
+    XCTAssertEqual(fresh.getLastSyncedSdkVersion(), "0.4.0")
+    XCTAssertEqual(fresh.getLastSyncedTimezoneId(), "America/New_York")
+    XCTAssertEqual(fresh.getLastSyncedLanguage(), "en")
+    XCTAssertEqual(fresh.getLastSyncedPermissionStatus(), "denied")
+    XCTAssertEqual(fresh.getLastUnsubscribedAtMs(), 1_700_000_000_001)
+    XCTAssertEqual(fresh.getEmail(), "a@b.com")
+    XCTAssertEqual(fresh.getPhone(), "+10000000000")
+  }
+
+  func test_deviceProfileFieldsDefaultToNilForANeverInitializedStore() {
+    XCTAssertNil(store.getLastSyncedDeviceOs())
+    XCTAssertNil(store.getLastSyncedDeviceModel())
+    XCTAssertNil(store.getLastSyncedSdkVersion())
+    XCTAssertNil(store.getLastSyncedTimezoneId())
+    XCTAssertNil(store.getLastSyncedLanguage())
+    XCTAssertNil(store.getLastSyncedPermissionStatus())
+    XCTAssertNil(store.getLastUnsubscribedAtMs())
+    XCTAssertNil(store.getEmail())
+    XCTAssertNil(store.getPhone())
+  }
+
+  func test_getStateIncludesTheNewDeviceProfileFields() {
+    store.setLastSyncedDeviceOs("15.0")
+    store.setLastSyncedDeviceModel("iPhone15,2")
+    store.setLastSyncedSdkVersion("0.5.0")
+    store.setLastSyncedTimezoneId("America/Sao_Paulo")
+    store.setLastSyncedLanguage("pt")
+    store.setLastSyncedPermissionStatus("granted")
+    store.setLastUnsubscribedAtMs(1_700_000_000_000)
+    store.setEmail("user@example.com")
+    store.setPhone("+5511999999999")
+
+    let state = store.getState()
+    XCTAssertEqual(state.lastSyncedDeviceOs, "15.0")
+    XCTAssertEqual(state.lastSyncedDeviceModel, "iPhone15,2")
+    XCTAssertEqual(state.lastSyncedSdkVersion, "0.5.0")
+    XCTAssertEqual(state.lastSyncedTimezoneId, "America/Sao_Paulo")
+    XCTAssertEqual(state.lastSyncedLanguage, "pt")
+    XCTAssertEqual(state.lastSyncedPermissionStatus, "granted")
+    XCTAssertEqual(state.lastUnsubscribedAtMs, 1_700_000_000_000)
+    XCTAssertEqual(state.email, "user@example.com")
+    XCTAssertEqual(state.phone, "+5511999999999")
+  }
 }
