@@ -31,7 +31,7 @@ Status: implementado nas duas plataformas (Android + iOS), com testes unitários
 
 ## Known limitations (abertas)
 
-- **Backend ainda não aceita os campos** (DEVTEL-01..13 Pending em `saas/zeep-notti`): `app_version`, sessão e `country` são ignorados pelo servidor com HTTP 200; o SDK marca `app_version`/`country` como sincronizados e não reenvia até o valor mudar. TODO `segtel-app-version-ack` (Android `NottiCore`; no iOS a mesma nota é `TODO(review item 7)`). Decisão pendente: backend ecoar `app_version` no response ou SDK reenviar a cada registro.
+- **Backend aceita os campos desde `zeep-notti` v0.9.0** (DEVTEL-01..13 implementados e verificados 2026-09-30, na main). Limitação restante: o response do `PATCH /devices` não ecoa `app_version`, então o SDK não tem ack confiável e marca `app_version` como sincronizado a qualquer 2xx, não reenviando até o valor mudar. TODO `segtel-app-version-ack` (Android `NottiCore`; no iOS a mesma nota é `TODO(review item 7)`). Decisão pendente: backend ecoar `app_version` no response ou SDK reenviar a cada registro.
 - **Fila de eventos CTR com head-of-line blocking:** flush em ordem para no primeiro erro não terminal; evento com `5xx`/`429` determinístico bloqueia a fila até ser expulso por 32 eventos novos. Sem TTL por evento, sem honrar `Retry-After`.
 - **Clear de country com 4xx permanente** (401/403/404) fica pendente e é reenviado a cada gatilho (registro, foreground, rede); agora gera log distinto, sem dado pessoal, nas duas plataformas.
 - **Validações pendentes em device real:** fechamento de sessão em cold start/kill nas duas plataformas; background task do iOS com rede lenta; `CLLocationManager` sem warning de runtime; valor de `aps-environment` em build EAS `preview`.

@@ -71,7 +71,7 @@ entries once released.
 * **Expo plugin:** without an explicit `apsEnvironment` prop, only the EAS profile named exactly `production` gets `aps-environment=production`; every other profile (including `preview`) and non-EAS prebuilds get `development`. Ad hoc/internal builds should pin the prop per profile — see README "Expo setup".
 * **Automatic telemetry:** this release starts sending notification events, app version and session aggregates to your Notti instance with no opt-out toggle. Review your privacy labels / LGPD documentation before shipping (README "Privacy, App Store labels and LGPD").
 * **Retry policy:** HTTP `408` and `429` are now treated as transient instead of terminal in the shared retry loop (`executeWithRetry`), which applies to device registration, every device `PATCH` and CTR events alike: up to 5 attempts with exponential backoff (2s, 4s, 8s, 16s between attempts); a CTR event that exhausts them stays queued. Other `4xx` remain terminal. `Retry-After` is not honored.
-* **Telemetry not yet accepted by the backend:** until the Notti backend ships the device telemetry fields, it ignores `app_version`, session fields and `country` with HTTP 200; the SDK marks `app_version`/`country` as synced and does not re-send them until they change. See README "Known limitations".
+* **No reliable acknowledgement for `app_version`:** the backend accepts the telemetry fields since `zeep-notti` v0.9.0 (DEVTEL-01..13), but the device PATCH response does not echo `app_version` back, so the SDK marks it as synced on any 2xx and does not re-send it until the value changes. See README "Known limitations".
 
 ### Features
 
