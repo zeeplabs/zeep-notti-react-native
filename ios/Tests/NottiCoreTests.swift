@@ -1415,6 +1415,43 @@ final class NottiCoreTests: XCTestCase {
     XCTAssertNil(store.getLastSyncedPermissionStatus())
   }
 
+  func test_aPermissionStatusReadThatResolvesAfterAReinitializePatchesTheCurrentApiClient() {
+    // L2-class guard (final review finding): the OS permission read is async
+    // and can outlive a second `initialize()` with a different appId/baseUrl
+    // that replaced `apiClient`. The PATCH must go to the NEW backend, never
+    // the stale one - same rule Android's `runOrQueue` and iOS's
+    // `sendCountryIfChanged` enforce.
+    var permissionCallbacks: [(String?) -> Void] = []
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration (app-1)
+    let core = newCore(
+      permissionStatusProvider: { cb in permissionCallbacks.append(cb) },
+      heartbeatInterval: 0
+    )
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+    XCTAssertEqual(permissionCallbacks.count, 1)
+
+    // A second initialize with a different app/baseUrl swaps apiClient while
+    // the first permission read is still pending.
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-2","tags":{}}"#)) // re-registration (app-2)
+    let secondBaseUrl = "https://notti-other.example.com"
+    core.initialize(appId: "app-2", clientKey: "key", baseUrl: secondBaseUrl)
+    drain(core)
+
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-2","tags":{}}"#)) // permission PATCH
+    // Fire the FIRST registration's pending read, long after apiClient moved on.
+    permissionCallbacks[0]("granted")
+    drain(core)
+
+    let requests = StubURLProtocol.recordedRequests()
+    let permissionPatch = requests.last!
+    XCTAssertEqual(permissionPatch.httpMethod, "PATCH")
+    XCTAssertEqual(
+      permissionPatch.url?.host, "notti-other.example.com",
+      "the async permission read must resolve against the current apiClient, not the stale one"
+    )
+  }
+
   // MARK: - First-class email/phone (T9, DPF-17..21)
 
   func test_setEmailEnqueuesAPatchWithEmailAndNeverTouchesTags() {
