@@ -138,33 +138,33 @@ This spec defines the SDK-side producer half: what the SDK captures automaticall
 
 | Requirement ID | Story | Phase | Status |
 | --- | --- | --- | --- |
-| DPF-01 | P1: OS/device/SDK version (native capture at init) | Specify | Pending |
-| DPF-02 | P1: OS/device/SDK version (registration payload) | Specify | Pending |
-| DPF-03 | P1: OS/device/SDK version (diff-and-enqueue on change) | Specify | Pending |
-| DPF-04 | P1: OS/device/SDK version (read failure is non-fatal) | Specify | Pending |
-| DPF-05 | P1: OS/device/SDK version (app_version unchanged) | Specify | Pending |
-| DPF-06 | P2: Timezone/language (native capture at init) | Specify | Pending |
-| DPF-07 | P2: Timezone/language (registration payload) | Specify | Pending |
-| DPF-08 | P2: Timezone/language (diff-and-enqueue on change) | Specify | Pending |
-| DPF-09 | P2: Timezone/language (read failure is non-fatal) | Specify | Pending |
-| DPF-10 | P3: Permission status (native read at init/session-start) | Specify | Pending |
-| DPF-11 | P3: Permission status (registration payload) | Specify | Pending |
-| DPF-12 | P3: Permission status (requestPermission result sync) | Specify | Pending |
-| DPF-13 | P3: Permission status (OS-settings change detected at session start) | Specify | Pending |
-| DPF-14 | P3: last_unsubscribed_at (set on true→false / granted→denied) | Specify | Pending |
-| DPF-15 | P3: last_unsubscribed_at (not cleared on re-subscribe) | Specify | Pending |
-| DPF-16 | P3: Two-axis independence (subscribed vs permission_status) | Specify | Pending |
-| DPF-17 | P4: Email/phone (JS set + enqueue) | Specify | Pending |
-| DPF-18 | P4: Email/phone (explicit clear) | Specify | Pending |
-| DPF-19 | P4: Email/phone (registration payload) | Specify | Pending |
-| DPF-20 | P4: Email/phone (no-op on unchanged value) | Specify | Pending |
-| DPF-21 | P4: Email/phone (never merged into tags) | Specify | Pending |
+| DPF-01 | P1: OS/device/SDK version (native capture at init) | Implemented | Implemented |
+| DPF-02 | P1: OS/device/SDK version (registration payload) | Implemented | Implemented |
+| DPF-03 | P1: OS/device/SDK version (diff-and-enqueue on change) | Implemented | Implemented |
+| DPF-04 | P1: OS/device/SDK version (read failure is non-fatal) | Implemented | Implemented |
+| DPF-05 | P1: OS/device/SDK version (app_version unchanged) | Implemented | Implemented |
+| DPF-06 | P2: Timezone/language (native capture at init) | Implemented | Implemented |
+| DPF-07 | P2: Timezone/language (registration payload) | Implemented | Implemented |
+| DPF-08 | P2: Timezone/language (diff-and-enqueue on change) | Implemented | Implemented |
+| DPF-09 | P2: Timezone/language (read failure is non-fatal) | Implemented | Implemented |
+| DPF-10 | P3: Permission status (native read at init/session-start) | Implemented | Implemented |
+| DPF-11 | P3: Permission status (registration payload) | Implemented | Implemented |
+| DPF-12 | P3: Permission status (requestPermission result sync) | Implemented | Implemented |
+| DPF-13 | P3: Permission status (OS-settings change detected at session start) | Implemented | Implemented |
+| DPF-14 | P3: last_unsubscribed_at (set on true→false / granted→denied) | Implemented | Implemented |
+| DPF-15 | P3: last_unsubscribed_at (not cleared on re-subscribe) | Implemented | Implemented |
+| DPF-16 | P3: Two-axis independence (subscribed vs permission_status) | Implemented | Implemented |
+| DPF-17 | P4: Email/phone (JS set + enqueue) | Implemented | Implemented |
+| DPF-18 | P4: Email/phone (explicit clear) | Implemented | Implemented |
+| DPF-19 | P4: Email/phone (registration payload) | Implemented | Implemented |
+| DPF-20 | P4: Email/phone (no-op on unchanged value) | Implemented | Implemented |
+| DPF-21 | P4: Email/phone (never merged into tags) | Implemented | Implemented |
 
 **ID format:** `DPF-NN`
 
 **Status values:** Pending -> In Design -> In Tasks -> Implemented -> Verified
 
-**Coverage:** 21 total, 0 mapped to tasks, 21 unmapped ⚠️ (expected — Design/Tasks not started yet)
+**Coverage:** 21 total, 21 mapped to tasks, 0 unmapped
 
 ---
 
