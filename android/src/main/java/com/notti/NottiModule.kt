@@ -106,6 +106,10 @@ class NottiModule(reactContext: ReactApplicationContext) :
       logger = { message -> Log.e(NAME, message) },
       executor = ioExecutor,
       versionProvider = { readAppVersion() },
+      deviceOsProvider = { readDeviceOs() },
+      deviceModelProvider = { readDeviceModel() },
+      timezoneProvider = { readTimezoneId() },
+      languageProvider = { readLanguage() },
       hasLocationPermission = { hasLocationPermission() },
       countryProvider = { callback -> resolveCountry(callback) },
       // Routed through `activeInstance` (companion object, nulled out by
@@ -270,6 +274,42 @@ class NottiModule(reactContext: ReactApplicationContext) :
       .versionName
   } catch (t: Throwable) {
     Log.e(NAME, "Notti: failed to read app version - ${t.message}")
+    null
+  }
+
+  /**
+   * Reads the OS version string (device-profile-fields DPF-01). `Build` reads
+   * are plain static field accesses that cannot throw in practice, but the
+   * wrap keeps the "never crash on a read failure" contract (DPF-04) uniform.
+   */
+  private fun readDeviceOs(): String? = try {
+    Build.VERSION.RELEASE
+  } catch (t: Throwable) {
+    Log.e(NAME, "Notti: failed to read OS version - ${t.message}")
+    null
+  }
+
+  /** Reads the device model (DPF-01); see [readDeviceOs] for the failure contract. */
+  private fun readDeviceModel(): String? = try {
+    Build.MODEL
+  } catch (t: Throwable) {
+    Log.e(NAME, "Notti: failed to read device model - ${t.message}")
+    null
+  }
+
+  /** Reads the IANA timezone id (DPF-06); failure resolves `null` (DPF-09). */
+  private fun readTimezoneId(): String? = try {
+    java.util.TimeZone.getDefault().id
+  } catch (t: Throwable) {
+    Log.e(NAME, "Notti: failed to read timezone - ${t.message}")
+    null
+  }
+
+  /** Reads the OS language ISO 639-1 code (DPF-06); failure resolves `null` (DPF-09). */
+  private fun readLanguage(): String? = try {
+    Locale.getDefault().language
+  } catch (t: Throwable) {
+    Log.e(NAME, "Notti: failed to read language - ${t.message}")
     null
   }
 

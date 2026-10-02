@@ -60,6 +60,28 @@ class NottiCore(
    */
   private val versionProvider: () -> String? = { null },
   /**
+   * Reads the device's OS version (Android `Build.VERSION.RELEASE`, iOS
+   * `UIDevice.current.systemVersion`), or `null` on failure (DPF-01/04).
+   * Injected so [NottiCore] stays `Context`-free; the default `{ null }`
+   * makes that field's sync a no-op.
+   */
+  private val deviceOsProvider: () -> String? = { null },
+  /**
+   * Reads the device model (Android `Build.MODEL`, iOS `utsname.machine`),
+   * or `null` on failure (DPF-01/04). See [deviceOsProvider].
+   */
+  private val deviceModelProvider: () -> String? = { null },
+  /**
+   * Reads the IANA timezone id (Android `TimeZone.getDefault().id`, iOS
+   * `TimeZone.current.identifier`), or `null` on failure (DPF-06/09).
+   */
+  private val timezoneProvider: () -> String? = { null },
+  /**
+   * Reads the OS language (Android `Locale.getDefault().language`, iOS
+   * `Locale.current.languageCode`), or `null` on failure (DPF-06/09).
+   */
+  private val languageProvider: () -> String? = { null },
+  /**
    * Check-only OS location permission gate (SEGTEL-12/14): true only when the
    * host app has already been granted location permission. Never prompts - the
    * SDK only reads, it never requests (SEGTEL-14). Injected so [NottiCore]
@@ -137,6 +159,11 @@ class NottiCore(
     private const val KEY_SESSION = "session"
     private const val KEY_COUNTRY = "country"
     private const val KEY_APP_VERSION = "appVersion"
+    private const val KEY_DEVICE_OS = "deviceOs"
+    private const val KEY_DEVICE_MODEL = "deviceModel"
+    private const val KEY_SDK_VERSION = "sdkVersion"
+    private const val KEY_TIMEZONE_ID = "timezoneId"
+    private const val KEY_LANGUAGE = "language"
 
     /**
      * Single-threaded so blocking HTTP work never piles up more than one
@@ -158,11 +185,21 @@ class NottiCore(
   /**
    * The SDK package version, passed from JS at `initialize` (the package
    * manifest is the single source of truth). Holds `null` when not provided
-   * or empty - the field is then omitted from the payload. Consumed by the
-   * `sdkVersionProvider` wired in `NottiModule` (DPF-01..04).
+   * or empty - the field is then omitted from the payload. Consumed by
+   * `sdkVersionProvider` (DPF-01..04).
    */
   @Volatile
   private var sdkVersion: String? = null
+
+  /**
+   * Feeds the `sdk_version` profile field. Not a constructor-injected
+   * platform read (unlike `deviceOsProvider` etc.): `sdk_version` is core
+   * state set by `initialize`, so this property reads the stored value -
+   * "native stores it and treats it as a normal diffed profile field"
+   * (design.md P1). Reading the field at call time (not capturing the value)
+   * means a second `initialize` with a different version is picked up.
+   */
+  private val sdkVersionProvider: () -> String? = { sdkVersion }
 
   /**
    * Where the device's registration stands right now. Drives both the
@@ -579,7 +616,7 @@ class NottiCore(
             // MAX_PENDING_MUTATIONS queued calls (~62s of backoff each).
             if (deviceStore.getPendingCountryClear()) runPendingCountryClearNow()
             flushPendingMutations()
-            syncAppVersionIfNeeded()
+            syncProfileFieldsIfNeeded()
             flushEventQueue()
           }
           is ApiResult.Failure -> {
@@ -863,28 +900,36 @@ class NottiCore(
    * failure) skips entirely - no crash, no registration block (SEGTEL edge
    * case). Called from [registerDevice]'s success branch right after
    * [flushPendingMutations].
+   *
+   * Generalization (device-profile-fields, DPF-01..09): every read-once
+   * profile field - `app_version`, `device_os`, `device_model`,
+   * `sdk_version`, `timezone_id`, `language` - is diffed against its own
+   * last-synced store value and enqueued independently on change. Opaque
+   * strings, no parsing; a `null` provider skips only that field (DPF-04/09).
    */
-  private fun syncAppVersionIfNeeded() {
-    val current = versionProvider() ?: return
-    if (current == deviceStore.getAppVersion()) return
-    mutate("appVersion", KEY_APP_VERSION) { client, deviceId, token ->
-      val result = client.patchDevice(deviceId, token, mapOf("app_version" to current))
-      when (result) {
-        // TODO(segtel-app-version-ack): a 2xx is treated as "synced", but a
-        // backend that predates `device-telemetry-fields` answers 200 and
-        // silently ignores `app_version` (SEGTEL edge case: additive fields are
-        // ignored server-side), so the value is marked synced and not re-sent
-        // until the next version bump. The backend contract (zeep-notti
-        // device-telemetry-fields DEVTEL-01..05) does not define an echo of
-        // `app_version` in the PATCH response, so there is no reliable ack to
-        // check against - deliberately NOT inventing one. Decision pending:
-        // either the backend echoes `app_version` in `deviceResponse` (then
-        // only persist when the echo matches), or the SDK re-sends it on every
-        // registration.
-        is ApiResult.Success -> deviceStore.setAppVersion(current)
-        is ApiResult.Failure -> logger("Notti.syncAppVersion: PATCH failed (${result.message}) - not retried")
+  private fun syncProfileFieldsIfNeeded() {
+    fun sync(name: String, coalesceKey: String, provider: () -> String?, synced: () -> String?, setSynced: (String) -> Unit) {
+      val current = provider() ?: return
+      if (current == synced()) return
+      mutate(name, coalesceKey) { client, deviceId, token ->
+        val result = client.patchDevice(deviceId, token, mapOf(name to current))
+        when (result) {
+          // Same ack caveat as the pre-generalization app_version sync: a 2xx
+          // is treated as "synced", but a backend that predates the companion
+          // spec answers 200 and silently ignores the field (additive fields
+          // are ignored server-side) - the value is then marked synced and not
+          // re-sent until the next real change.
+          is ApiResult.Success -> setSynced(current)
+          is ApiResult.Failure -> logger("Notti.$name: PATCH failed (${result.message}) - not retried")
+        }
       }
     }
+    sync("app_version", KEY_APP_VERSION, versionProvider, deviceStore::getAppVersion, deviceStore::setAppVersion)
+    sync("device_os", KEY_DEVICE_OS, deviceOsProvider, deviceStore::getLastSyncedDeviceOs, deviceStore::setLastSyncedDeviceOs)
+    sync("device_model", KEY_DEVICE_MODEL, deviceModelProvider, deviceStore::getLastSyncedDeviceModel, deviceStore::setLastSyncedDeviceModel)
+    sync("sdk_version", KEY_SDK_VERSION, sdkVersionProvider, deviceStore::getLastSyncedSdkVersion, deviceStore::setLastSyncedSdkVersion)
+    sync("timezone_id", KEY_TIMEZONE_ID, timezoneProvider, deviceStore::getLastSyncedTimezoneId, deviceStore::setLastSyncedTimezoneId)
+    sync("language", KEY_LANGUAGE, languageProvider, deviceStore::getLastSyncedLanguage, deviceStore::setLastSyncedLanguage)
   }
 
   /** Called from [registerDevice] while [mutationLock] is held. */
