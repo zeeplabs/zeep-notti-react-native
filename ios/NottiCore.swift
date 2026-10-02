@@ -48,6 +48,13 @@ public class NottiCore {
   /// Reads the OS language (`Locale.current.languageCode`), or nil on failure
   /// (DPF-06/09).
   private let languageProvider: () -> String?
+  /// Best-effort, async OS push-permission state read (DPF-10): resolves with
+  /// `granted`/`denied`/`notDetermined`/`provisional` (provisional auth) or
+  /// nil on unknown/transitional state or read failure - nil omits the field,
+  /// never fabricates (DPF edge case). Follows the async `countryProvider`
+  /// callback shape (the real read, iOS
+  /// `UNUserNotificationCenter.getNotificationSettings`, is callback-based).
+  private let permissionStatusProvider: (@escaping (String?) -> Void) -> Void
   private let hasLocationPermission: () -> Bool
   private let countryProvider: (@escaping (String?) -> Void) -> Void
   /// Cold-start session (review item 2): reports, asynchronously, whether the
@@ -146,6 +153,8 @@ public class NottiCore {
     static let sdkVersion = "telemetry.sdkVersion"
     static let timezoneId = "telemetry.timezoneId"
     static let language = "telemetry.language"
+    static let permissionStatus = "telemetry.permissionStatus"
+    static let lastUnsubscribed = "telemetry.lastUnsubscribed"
   }
   private static let maxPendingMutations = 32
   private var pendingMutations: [PendingMutation] = []
@@ -241,6 +250,7 @@ public class NottiCore {
     deviceModelProvider: @escaping () -> String? = { nil },
     timezoneProvider: @escaping () -> String? = { nil },
     languageProvider: @escaping () -> String? = { nil },
+    permissionStatusProvider: @escaping (@escaping (String?) -> Void) -> Void = { $0(nil) },
     appStateProvider: @escaping (@escaping (_ isActive: Bool) -> Void) -> Void = { $0(false) },
     beginBackgroundTask: @escaping () -> (() -> Void) = { {} },
     heartbeatInterval: TimeInterval = 60,
@@ -261,6 +271,7 @@ public class NottiCore {
     self.deviceModelProvider = deviceModelProvider
     self.timezoneProvider = timezoneProvider
     self.languageProvider = languageProvider
+    self.permissionStatusProvider = permissionStatusProvider
     self.appStateProvider = appStateProvider
     self.beginBackgroundTask = beginBackgroundTask
     self.heartbeatInterval = heartbeatInterval
@@ -369,6 +380,9 @@ public class NottiCore {
           self.performOrQueue(client, description: "permission-result subscription update") { [weak self] client, deviceId, token in
             self?.patchSubscribed(client, deviceId: deviceId, token: token, granted, logContext: "requestPermission")
           }
+          // DPF-12: the OS permission status is re-read from the OS state (not
+          // inferred from the dialog bool) and diff-and-enqueued.
+          self.syncPermissionStatusIfNeeded(client)
         }
       }
     }
@@ -405,7 +419,26 @@ public class NottiCore {
     workQueue.async { [weak self] in
       guard let self = self, let client = self.apiClient else { return }
       self.performOrQueue(client, description: "setSubscription") { [weak self] client, deviceId, token in
-        self?.patchSubscribed(client, deviceId: deviceId, token: token, enabled, logContext: "setSubscription")
+        guard let self = self else { return }
+        let wasSubscribed = self.deviceStore.getSubscribed()
+        self.patchSubscribed(client, deviceId: deviceId, token: token, enabled, logContext: "setSubscription")
+        // DPF-14 app-driven path: a real true->false transition records the
+        // most-recent unsubscribe timestamp locally and enqueues it (coalesced
+        // so a queued permission-driven write and this collapse to the latest).
+        if !enabled && wasSubscribed && !self.deviceStore.getSubscribed() {
+          let now = self.nowMs()
+          self.deviceStore.setLastUnsubscribedAtMs(now)
+          self.performOrQueue(client, description: "last unsubscribed", coalesceKey: TelemetryKey.lastUnsubscribed) {
+            [weak self] client, deviceId, token in
+            let result = client.patchDevice(deviceId: deviceId, token: token, fields: ["last_unsubscribed_at": Self.formatIsoUtc(now)])
+            switch result {
+            case .success:
+              break // timestamp already persisted locally
+            case .failure(let message):
+              self?.logger("Notti.lastUnsubscribed: PATCH failed (\(message)) - not retried")
+            }
+          }
+        }
       }
     }
   }
@@ -596,6 +629,7 @@ public class NottiCore {
       }
       flushPendingMutations(client, deviceId: response.id, token: token)
       syncProfileFieldsIfNeeded(client)
+      syncPermissionStatusIfNeeded(client)
       flushEventQueue()
     case .failure(let message):
       registrationState = .failed
@@ -645,6 +679,44 @@ public class NottiCore {
       synced: { self.deviceStore.getLastSyncedTimezoneId() }, setSynced: { self.deviceStore.setLastSyncedTimezoneId($0) })
     sync("language", coalesceKey: TelemetryKey.language, provider: languageProvider,
       synced: { self.deviceStore.getLastSyncedLanguage() }, setSynced: { self.deviceStore.setLastSyncedLanguage($0) })
+  }
+
+  /// workQueue-only. Syncs the OS push-permission state (DPF-10..13, DPF-14
+  /// permission-driven unsubscribe): fires the async `permissionStatusProvider`;
+  /// only when the freshly-read status differs from the last synced one is a
+  /// coalesced PATCH enqueued (diff-and-enqueue, DPF-11/13). A nil/unknown
+  /// status omits the field - never fabricated (DPF edge case). A granted ->
+  /// denied transition additionally persists `last_unsubscribed_at` and carries
+  /// it in the same atomic request (DPF-14).
+  ///
+  /// Called from three triggers: `registerDevice` success, the
+  /// `requestPermission` result, and each session start (catches permission
+  /// changed in OS Settings while the app wasn't running, DPF-13).
+  private func syncPermissionStatusIfNeeded(_ client: NottiApiClient) {
+    permissionStatusProvider { [weak self] status in
+      guard let self = self, let status = status else { return }
+      self.onWorkQueue {
+        guard self.apiClient != nil else { return }
+        let previous = self.deviceStore.getLastSyncedPermissionStatus()
+        guard status != previous else { return }
+        var fields: [String: Any] = ["permission_status": status]
+        if status == "denied" && previous == "granted" {
+          let now = self.nowMs()
+          self.deviceStore.setLastUnsubscribedAtMs(now)
+          fields["last_unsubscribed_at"] = Self.formatIsoUtc(now)
+        }
+        self.performOrQueue(client, description: "permission status", coalesceKey: TelemetryKey.permissionStatus) {
+          [weak self] client, deviceId, token in
+          let result = client.patchDevice(deviceId: deviceId, token: token, fields: fields)
+          switch result {
+          case .success:
+            self?.deviceStore.setLastSyncedPermissionStatus(status)
+          case .failure(let message):
+            self?.logger("Notti.permissionStatus: PATCH failed (\(message)) - not retried")
+          }
+        }
+      }
+    }
   }
 
   /// Subscribes to `UIApplication.didBecomeActiveNotification` directly - a
@@ -822,6 +894,9 @@ public class NottiCore {
     deviceStore.setSessionLastSeenAtMs(nowMs)
     startHeartbeatTimer()
     readCountryIfEnabled(nowMs: nowMs)
+    if let client = apiClient {
+      syncPermissionStatusIfNeeded(client)
+    }
   }
 
   /// workQueue-only (final review A). Takes over the session a previous core
