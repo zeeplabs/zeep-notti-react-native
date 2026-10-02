@@ -154,12 +154,34 @@ public class NottiImpl: NSObject {
       // only reports country when the host app has already granted permission
       // for its own purposes.
       hasLocationPermission: { locationReader.hasPermission() },
+      // Device profile fields P1 (T7, DPF-01): OS version / model / timezone /
+      // language reads. Each fails to nil - never a crash (DPF-04/09).
       // Segment telemetry P3 (T9): best-effort, async country resolution from
       // the last cached fix reverse-geocoded to its ISO 3166-1 alpha-2 code.
       // A stale fix is acceptable at country-level granularity (SEGTEL edge
       // case); nil on any failure (services disabled, no fix, geocode error,
       // a geocode already in flight) → the field is omitted.
       countryProvider: { callback in locationReader.readCountry(callback) },
+      // Device profile fields P1 (T7, DPF-01): OS version / model / timezone /
+      // language reads. Each fails to nil - never a crash (DPF-04/09).
+      deviceOsProvider: {
+        UIDevice.current.systemVersion
+      },
+      deviceModelProvider: {
+        var systemInfo = utsname()
+        uname(&systemInfo)
+        let mirror = Mirror(reflecting: systemInfo.machine)
+        let bytes = mirror.children.map { $0.value as? Int8 ?? 0 }
+        let model = String(bytes: bytes.map { UInt8(bitPattern: $0) }, encoding: .ascii)?
+          .trimmingCharacters(in: .controlCharacters)
+        return model?.isEmpty == false ? model : nil
+      },
+      timezoneProvider: {
+        TimeZone.current.identifier
+      },
+      languageProvider: {
+        Locale.current.languageCode
+      },
       // Review item 2: the cold-start `didBecomeActive` usually fired before
       // this module was constructed; report whether the app is already active
       // (read on the main thread, asynchronously - never `main.sync`, which
@@ -261,9 +283,9 @@ public class NottiImpl: NSObject {
     return { box.end() }
   }
 
-  @objc(initialize:clientKey:baseUrl:)
-  public func initialize(_ appId: String, clientKey: String, baseUrl: String) {
-    core.initialize(appId: appId, clientKey: clientKey, baseUrl: baseUrl)
+  @objc(initialize:clientKey:baseUrl:sdkVersion:)
+  public func initialize(_ appId: String, clientKey: String, baseUrl: String, sdkVersion: String) {
+    core.initialize(appId: appId, clientKey: clientKey, baseUrl: baseUrl, sdkVersion: sdkVersion)
   }
 
   @objc(requestPermission:)

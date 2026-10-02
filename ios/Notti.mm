@@ -32,8 +32,9 @@
 - (void)initialize:(NSString *)appId
          clientKey:(NSString *)clientKey
            baseUrl:(NSString *)baseUrl
+        sdkVersion:(NSString *)sdkVersion
 {
-    [_impl initialize:appId clientKey:clientKey baseUrl:baseUrl];
+    [_impl initialize:appId clientKey:clientKey baseUrl:baseUrl sdkVersion:sdkVersion];
 }
 
 - (void)requestPermission:(RCTPromiseResolveBlock)resolve

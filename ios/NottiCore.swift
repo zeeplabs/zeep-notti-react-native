@@ -36,6 +36,18 @@ public class NottiCore {
   private let tokenProvider: (_ callback: @escaping (String?) -> Void) -> Void
   private let permissionRequester: (_ callback: @escaping (Bool) -> Void) -> Void
   private let versionProvider: () -> String?
+  /// Reads the device OS version (`UIDevice.current.systemVersion`), or nil on
+  /// failure (DPF-01/04). Injected so `NottiCore` stays host-free; default
+  /// `{ nil }` makes that field's sync a no-op.
+  private let deviceOsProvider: () -> String?
+  /// Reads the device model (`utsname.machine`), or nil on failure (DPF-01/04).
+  private let deviceModelProvider: () -> String?
+  /// Reads the IANA timezone id (`TimeZone.current.identifier`), or nil on
+  /// failure (DPF-06/09).
+  private let timezoneProvider: () -> String?
+  /// Reads the OS language (`Locale.current.languageCode`), or nil on failure
+  /// (DPF-06/09).
+  private let languageProvider: () -> String?
   private let hasLocationPermission: () -> Bool
   private let countryProvider: (@escaping (String?) -> Void) -> Void
   /// Cold-start session (review item 2): reports, asynchronously, whether the
@@ -101,6 +113,14 @@ public class NottiCore {
   private var clientKey: String?
   private var baseUrl: String?
   private var apiClient: NottiApiClient?
+  /// The SDK package version, passed from JS at `initialize` (the package
+  /// manifest is the single source of truth); nil when not provided or empty.
+  /// Consumed by `sdkVersionProvider` (DPF-01..04).
+  private var sdkVersion: String?
+  /// Feeds the `sdk_version` profile field. Not a constructor-injected platform
+  /// read (unlike `deviceOsProvider` etc.): `sdk_version` is core state set by
+  /// `initialize`, so this reads the stored value at call time (design.md P1).
+  private var sdkVersionProvider: () -> String? { { self.sdkVersion } }
 
   /// Mutations issued before device registration finished, replayed in order
   /// once it does. Bounded so a never-registering device cannot grow it
@@ -121,6 +141,11 @@ public class NottiCore {
     static let session = "telemetry.session"
     static let country = "telemetry.country"
     static let appVersion = "telemetry.appVersion"
+    static let deviceOs = "telemetry.deviceOs"
+    static let deviceModel = "telemetry.deviceModel"
+    static let sdkVersion = "telemetry.sdkVersion"
+    static let timezoneId = "telemetry.timezoneId"
+    static let language = "telemetry.language"
   }
   private static let maxPendingMutations = 32
   private var pendingMutations: [PendingMutation] = []
@@ -212,6 +237,10 @@ public class NottiCore {
     versionProvider: @escaping () -> String? = { nil },
     hasLocationPermission: @escaping () -> Bool = { false },
     countryProvider: @escaping (@escaping (String?) -> Void) -> Void = { $0(nil) },
+    deviceOsProvider: @escaping () -> String? = { nil },
+    deviceModelProvider: @escaping () -> String? = { nil },
+    timezoneProvider: @escaping () -> String? = { nil },
+    languageProvider: @escaping () -> String? = { nil },
     appStateProvider: @escaping (@escaping (_ isActive: Bool) -> Void) -> Void = { $0(false) },
     beginBackgroundTask: @escaping () -> (() -> Void) = { {} },
     heartbeatInterval: TimeInterval = 60,
@@ -228,6 +257,10 @@ public class NottiCore {
     self.versionProvider = versionProvider
     self.hasLocationPermission = hasLocationPermission
     self.countryProvider = countryProvider
+    self.deviceOsProvider = deviceOsProvider
+    self.deviceModelProvider = deviceModelProvider
+    self.timezoneProvider = timezoneProvider
+    self.languageProvider = languageProvider
     self.appStateProvider = appStateProvider
     self.beginBackgroundTask = beginBackgroundTask
     self.heartbeatInterval = heartbeatInterval
@@ -294,9 +327,9 @@ public class NottiCore {
     }
   }
 
-  public func initialize(appId: String, clientKey: String, baseUrl: String) {
+  public func initialize(appId: String, clientKey: String, baseUrl: String, sdkVersion: String = "") {
     workQueue.async { [weak self] in
-      self?.initializeOnQueue(appId: appId, clientKey: clientKey, baseUrl: baseUrl)
+      self?.initializeOnQueue(appId: appId, clientKey: clientKey, baseUrl: baseUrl, sdkVersion: sdkVersion)
     }
   }
 
@@ -495,11 +528,14 @@ public class NottiCore {
 
   // MARK: - workQueue-only internals
 
-  private func initializeOnQueue(appId: String, clientKey: String, baseUrl: String) {
+  private func initializeOnQueue(appId: String, clientKey: String, baseUrl: String, sdkVersion: String) {
     if appId.isEmpty || clientKey.isEmpty || baseUrl.isEmpty {
       logger("Notti.initialize: appId, clientKey, or baseUrl is missing/empty - skipping registration")
       return
     }
+    // Empty sdkVersion (JS resolution failure) is stored as nil so the
+    // `sdk_version` field is omitted, never sent as an empty string.
+    self.sdkVersion = sdkVersion.isEmpty ? nil : sdkVersion
 
     // A malformed-but-non-empty baseUrl (e.g. "my host.example.com", or a
     // scheme-less host) must leave the SDK disabled, not crash the host app
@@ -559,7 +595,7 @@ public class NottiCore {
         self.sendCountryIfChanged(country)
       }
       flushPendingMutations(client, deviceId: response.id, token: token)
-      syncAppVersionIfNeeded(client)
+      syncProfileFieldsIfNeeded(client)
       flushEventQueue()
     case .failure(let message):
       registrationState = .failed
@@ -569,36 +605,46 @@ public class NottiCore {
 
   // MARK: - Foreground retry (spec P1-AC5)
 
-  /// workQueue-only. Diff-and-enqueue (SEGTEL-03): reads the current app
-  /// version via the injected `versionProvider`, and only when it differs
-  /// from the last value successfully synced does it enqueue a PATCH through
-  /// the mutation queue, persisting the new value on Success. A nil read
-  /// (no `CFBundleShortVersionString` in the host bundle) skips entirely —
-  /// no crash, no registration block (SEGTEL edge case).
-  ///
-  /// TODO(review item 7, decision pending): a 2xx is taken as "synced", but
-  /// the current backend answers 200 and silently ignores `app_version`
-  /// (DEVTEL-01 still Pending in zeep-notti's device-telemetry-fields spec;
-  /// `deviceResponse` has no `app_version` field). The contract defines no
-  /// echo of the field in the PATCH response, so the SDK cannot tell
-  /// "persisted" from "ignored" and does not invent one. Consequence: a device
-  /// that syncs before the backend ships DEVTEL-01 will not resend until its
-  /// next version bump. Resolve by either (a) backend echoing `app_version`
-  /// in `deviceResponse` and persisting here only on echo, or (b) shipping
-  /// the backend first.
-  private func syncAppVersionIfNeeded(_ client: NottiApiClient) {
-    guard let current = versionProvider() else { return }
-    guard current != deviceStore.getAppVersion() else { return }
-    performOrQueue(client, description: "app version", coalesceKey: TelemetryKey.appVersion) {
-      [weak self] client, deviceId, token in
-      let result = client.patchDevice(deviceId: deviceId, token: token, fields: ["app_version": current])
-      switch result {
-      case .success:
-        self?.deviceStore.setAppVersion(current)
-      case .failure(let message):
-        self?.logger("Notti.syncAppVersionIfNeeded: PATCH failed (\(message)) - not retried")
+  /// workQueue-only. Diff-and-enqueue (SEGTEL-03) generalized to every
+  /// read-once profile field (device-profile-fields DPF-01..09): for each of
+  /// `app_version`, `device_os`, `device_model`, `sdk_version`,
+  /// `timezone_id`, `language`, reads the injected provider and only when it
+  /// differs from the field's last-synced store value enqueues a coalesced
+  /// PATCH, persisting on Success. A nil provider skips only that field
+  /// (DPF-04/09) - no crash, no registration block. Opaque strings, no parsing.
+  private func syncProfileFieldsIfNeeded(_ client: NottiApiClient) {
+    func sync(
+      _ name: String,
+      coalesceKey: String,
+      provider: () -> String?,
+      synced: () -> String?,
+      setSynced: @escaping (String) -> Void
+    ) {
+      guard let current = provider() else { return }
+      guard current != synced() else { return }
+      performOrQueue(client, description: name, coalesceKey: coalesceKey) {
+        [weak self] client, deviceId, token in
+        let result = client.patchDevice(deviceId: deviceId, token: token, fields: [name: current])
+        switch result {
+        case .success:
+          setSynced(current)
+        case .failure(let message):
+          self?.logger("Notti.\(name): PATCH failed (\(message)) - not retried")
+        }
       }
     }
+    sync("app_version", coalesceKey: TelemetryKey.appVersion, provider: versionProvider,
+      synced: { self.deviceStore.getAppVersion() }, setSynced: { self.deviceStore.setAppVersion($0) })
+    sync("device_os", coalesceKey: TelemetryKey.deviceOs, provider: deviceOsProvider,
+      synced: { self.deviceStore.getLastSyncedDeviceOs() }, setSynced: { self.deviceStore.setLastSyncedDeviceOs($0) })
+    sync("device_model", coalesceKey: TelemetryKey.deviceModel, provider: deviceModelProvider,
+      synced: { self.deviceStore.getLastSyncedDeviceModel() }, setSynced: { self.deviceStore.setLastSyncedDeviceModel($0) })
+    sync("sdk_version", coalesceKey: TelemetryKey.sdkVersion, provider: sdkVersionProvider,
+      synced: { self.deviceStore.getLastSyncedSdkVersion() }, setSynced: { self.deviceStore.setLastSyncedSdkVersion($0) })
+    sync("timezone_id", coalesceKey: TelemetryKey.timezoneId, provider: timezoneProvider,
+      synced: { self.deviceStore.getLastSyncedTimezoneId() }, setSynced: { self.deviceStore.setLastSyncedTimezoneId($0) })
+    sync("language", coalesceKey: TelemetryKey.language, provider: languageProvider,
+      synced: { self.deviceStore.getLastSyncedLanguage() }, setSynced: { self.deviceStore.setLastSyncedLanguage($0) })
   }
 
   /// Subscribes to `UIApplication.didBecomeActiveNotification` directly - a
