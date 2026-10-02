@@ -72,7 +72,11 @@ class NottiCoreTest {
     hasLocationPermission: () -> Boolean = { false },
     countryProvider: (callback: (String?) -> Unit) -> Unit = { cb -> cb(null) },
     clock: () -> Long = { System.currentTimeMillis() },
-    sessionGate: NottiCore.SessionGate = NottiCore.SessionGate()
+    sessionGate: NottiCore.SessionGate = NottiCore.SessionGate(),
+    deviceOsProvider: () -> String? = { null },
+    deviceModelProvider: () -> String? = { null },
+    timezoneProvider: () -> String? = { null },
+    languageProvider: () -> String? = { null }
   ) = NottiCore(
     deviceStore = store,
     eventStore = eventStore,
@@ -96,7 +100,11 @@ class NottiCoreTest {
     hasLocationPermission = hasLocationPermission,
     countryProvider = countryProvider,
     clock = clock,
-    sessionGate = sessionGate
+    sessionGate = sessionGate,
+    deviceOsProvider = deviceOsProvider,
+    deviceModelProvider = deviceModelProvider,
+    timezoneProvider = timezoneProvider,
+    languageProvider = languageProvider
   )
 
   @Test
@@ -627,6 +635,142 @@ class NottiCoreTest {
     assertEquals("PATCH", secondPatch.method)
     assertEquals("1.2.4", JSONObject(secondPatch.body.readUtf8()).getString("app_version"))
     assertEquals("1.2.4", store.getAppVersion())
+  }
+
+  // ---------------------------------------------------------------------
+  // Device profile fields (device-profile-fields, T3)
+  // ---------------------------------------------------------------------
+
+  @Test
+  fun `registration success with profile providers enqueues a PATCH with all six fields`() {
+    repeat(7) { server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}""")) }
+    val core = newCore(
+      versionProvider = { "1.2.3" },
+      deviceOsProvider = { "15.0" },
+      deviceModelProvider = { "Pixel 8" },
+      timezoneProvider = { "America/Sao_Paulo" },
+      languageProvider = { "pt" }
+    )
+
+    core.initialize("app-1", "key", validBaseUrl, "0.5.0")
+    awaitIdle()
+    awaitIdle()
+
+    // Registration POST + six PATCHes (one per field).
+    assertEquals(7, server.requestCount)
+    server.takeRequest(5, TimeUnit.SECONDS) // register
+    val patches = (0 until 6).map {
+      val req = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+      assertEquals("PATCH", req.method)
+      JSONObject(req.body.readUtf8())
+    }
+    assertEquals("1.2.3", patches.first().getString("app_version"))
+    assertEquals("15.0", patches.first { it.has("device_os") }.getString("device_os"))
+    assertEquals("Pixel 8", patches.first { it.has("device_model") }.getString("device_model"))
+    assertEquals("0.5.0", patches.first { it.has("sdk_version") }.getString("sdk_version"))
+    assertEquals("America/Sao_Paulo", patches.first { it.has("timezone_id") }.getString("timezone_id"))
+    assertEquals("pt", patches.first { it.has("language") }.getString("language"))
+    assertEquals("1.2.3", store.getAppVersion())
+    assertEquals("15.0", store.getLastSyncedDeviceOs())
+    assertEquals("Pixel 8", store.getLastSyncedDeviceModel())
+    assertEquals("0.5.0", store.getLastSyncedSdkVersion())
+    assertEquals("America/Sao_Paulo", store.getLastSyncedTimezoneId())
+    assertEquals("pt", store.getLastSyncedLanguage())
+  }
+
+  @Test
+  fun `only a changed profile field is re-sent between two registrations`() {
+    repeat(10) { server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}""")) }
+    var deviceOs = "15.0"
+    var timezone = "America/Sao_Paulo"
+    val core = newCore(
+      versionProvider = { "1.2.3" },
+      deviceOsProvider = { deviceOs },
+      deviceModelProvider = { "Pixel 8" },
+      timezoneProvider = { timezone },
+      languageProvider = { "pt" }
+    )
+
+    core.initialize("app-1", "key", validBaseUrl, "0.5.0")
+    awaitIdle()
+    awaitIdle()
+    assertEquals("15.0", store.getLastSyncedDeviceOs())
+
+    // Only the OS version and timezone change between the two registrations.
+    deviceOs = "16.0"
+    timezone = "America/New_York"
+    core.onTokenRefreshed("new-fcm-token")
+    awaitIdle()
+    awaitIdle()
+
+    // First register POST + 6 PATCHes + second register POST + 2 changed-field PATCHes.
+    assertEquals(10, server.requestCount)
+    server.takeRequest(5, TimeUnit.SECONDS) // first register
+    repeat(6) { server.takeRequest(5, TimeUnit.SECONDS) } // first batch of six PATCHes
+    server.takeRequest(5, TimeUnit.SECONDS) // second register
+    val resent = (0 until 2).map {
+      JSONObject(requireNotNull(server.takeRequest(5, TimeUnit.SECONDS)).body.readUtf8())
+    }
+    assertEquals("16.0", resent.first { it.has("device_os") }.getString("device_os"))
+    assertEquals("America/New_York", resent.first { it.has("timezone_id") }.getString("timezone_id"))
+    // The PATCH always carries `token` (AD-009); beyond that, only the changed
+    // field is re-sent - never the whole profile set (DPF-03/08).
+    assertTrue(
+      "only the changed fields are re-sent: $resent",
+      resent.all { it.length() == 2 && it.has("token") }
+    )
+    assertEquals("16.0", store.getLastSyncedDeviceOs())
+    assertEquals("America/New_York", store.getLastSyncedTimezoneId())
+    // The unchanged fields keep their persisted last-synced values.
+    assertEquals("Pixel 8", store.getLastSyncedDeviceModel())
+    assertEquals("0.5.0", store.getLastSyncedSdkVersion())
+    assertEquals("pt", store.getLastSyncedLanguage())
+  }
+
+  @Test
+  fun `a null profile provider omits that field without crashing`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    // All providers default to null - only versionProvider set.
+    val core = newCore(versionProvider = { "1.2.3" })
+
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+    awaitIdle()
+
+    // Registration POST + only the app_version PATCH - the null providers
+    // enqueue nothing and never crash (DPF-04/09).
+    assertEquals(2, server.requestCount)
+    server.takeRequest(5, TimeUnit.SECONDS) // register
+    val patch = JSONObject(requireNotNull(server.takeRequest(5, TimeUnit.SECONDS)).body.readUtf8())
+    assertEquals("1.2.3", patch.getString("app_version"))
+    assertFalse(patch.has("device_os"))
+    assertFalse(patch.has("device_model"))
+    assertFalse(patch.has("sdk_version"))
+    assertFalse(patch.has("timezone_id"))
+    assertFalse(patch.has("language"))
+  }
+
+  @Test
+  fun `sdk_version passed through initialize reaches the payload`() {
+    repeat(4) { server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}""")) }
+    val core = newCore(deviceOsProvider = { "15.0" }, timezoneProvider = { "UTC" })
+
+    // The package version is forwarded by the JS facade as the 4th arg.
+    core.initialize("app-1", "key", validBaseUrl, "0.5.0")
+    awaitIdle()
+    awaitIdle()
+
+    // Registration POST + 3 PATCHes (device_os, sdk_version, timezone_id).
+    assertEquals(4, server.requestCount)
+    server.takeRequest(5, TimeUnit.SECONDS) // register
+    val patches = (0 until 3).map {
+      JSONObject(requireNotNull(server.takeRequest(5, TimeUnit.SECONDS)).body.readUtf8())
+    }
+    val sdk = patches.firstOrNull { it.has("sdk_version") }
+    assertTrue("sdk_version must reach the payload: $patches", sdk != null)
+    assertEquals("0.5.0", sdk!!.getString("sdk_version"))
+    assertEquals("0.5.0", store.getLastSyncedSdkVersion())
   }
 
   @Test
