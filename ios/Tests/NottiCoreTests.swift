@@ -63,6 +63,10 @@ final class NottiCoreTests: XCTestCase {
     versionProvider: @escaping () -> String? = { nil },
     hasLocationPermission: @escaping () -> Bool = { false },
     countryProvider: @escaping (@escaping (String?) -> Void) -> Void = { $0(nil) },
+    deviceOsProvider: @escaping () -> String? = { nil },
+    deviceModelProvider: @escaping () -> String? = { nil },
+    timezoneProvider: @escaping () -> String? = { nil },
+    languageProvider: @escaping () -> String? = { nil },
     appStateProvider: @escaping (@escaping (Bool) -> Void) -> Void = { $0(false) },
     beginBackgroundTask: @escaping () -> (() -> Void) = { {} },
     heartbeatInterval: TimeInterval = 60,
@@ -85,6 +89,10 @@ final class NottiCoreTests: XCTestCase {
       versionProvider: versionProvider,
       hasLocationPermission: hasLocationPermission,
       countryProvider: countryProvider,
+      deviceOsProvider: deviceOsProvider,
+      deviceModelProvider: deviceModelProvider,
+      timezoneProvider: timezoneProvider,
+      languageProvider: languageProvider,
       appStateProvider: appStateProvider,
       beginBackgroundTask: beginBackgroundTask,
       heartbeatInterval: heartbeatInterval,
@@ -1170,6 +1178,105 @@ final class NottiCoreTests: XCTestCase {
     XCTAssertEqual(bodies[0]["app_version"] as? String, "1.2.3")
     XCTAssertEqual(bodies[1]["app_version"] as? String, "2.0.0")
     XCTAssertEqual(store.getAppVersion(), "2.0.0")
+  }
+
+  // MARK: - Device profile fields (T7, DPF-01..09)
+
+  func test_registrationWithProfileProvidersPatchesAllSixFields() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    for _ in 0..<6 { StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) } // six PATCHes
+    let core = newCore(
+      versionProvider: { "1.2.3" },
+      deviceOsProvider: { "18.0" },
+      deviceModelProvider: { "iPhone17,1" },
+      timezoneProvider: { "America/Sao_Paulo" },
+      languageProvider: { "pt" }
+    )
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl, sdkVersion: "0.5.0")
+    drain(core)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertEqual(bodies.count, 6)
+    XCTAssertEqual(bodies.first { $0["app_version"] != nil }?["app_version"] as? String, "1.2.3")
+    XCTAssertEqual(bodies.first { $0["device_os"] != nil }?["device_os"] as? String, "18.0")
+    XCTAssertEqual(bodies.first { $0["device_model"] != nil }?["device_model"] as? String, "iPhone17,1")
+    XCTAssertEqual(bodies.first { $0["sdk_version"] != nil }?["sdk_version"] as? String, "0.5.0")
+    XCTAssertEqual(bodies.first { $0["timezone_id"] != nil }?["timezone_id"] as? String, "America/Sao_Paulo")
+    XCTAssertEqual(bodies.first { $0["language"] != nil }?["language"] as? String, "pt")
+    XCTAssertEqual(store.getAppVersion(), "1.2.3")
+    XCTAssertEqual(store.getLastSyncedDeviceOs(), "18.0")
+    XCTAssertEqual(store.getLastSyncedDeviceModel(), "iPhone17,1")
+    XCTAssertEqual(store.getLastSyncedSdkVersion(), "0.5.0")
+    XCTAssertEqual(store.getLastSyncedTimezoneId(), "America/Sao_Paulo")
+    XCTAssertEqual(store.getLastSyncedLanguage(), "pt")
+  }
+
+  func test_onlyAChangedProfileFieldIsResentBetweenTwoRegistrations() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration 1
+    for _ in 0..<6 { StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) } // six PATCHes
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration 2
+    for _ in 0..<2 { StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) } // two changed-field PATCHes
+    var deviceOs: String? = "18.0"
+    var timezone: String? = "America/Sao_Paulo"
+    let core = newCore(
+      versionProvider: { "1.2.3" },
+      deviceOsProvider: { deviceOs },
+      deviceModelProvider: { "iPhone17,1" },
+      timezoneProvider: { timezone },
+      languageProvider: { "pt" }
+    )
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl, sdkVersion: "0.5.0")
+    drain(core)
+    XCTAssertEqual(store.getLastSyncedDeviceOs(), "18.0")
+
+    deviceOs = "19.0"
+    timezone = "America/New_York"
+    core.onTokenRefreshed("new-apns-token")
+    drain(core)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    // 8 PATCHes total: six on the first registration + two changed on the second.
+    XCTAssertEqual(bodies.count, 8)
+    XCTAssertEqual(bodies.last { $0["device_os"] != nil }?["device_os"] as? String, "19.0")
+    XCTAssertEqual(bodies.last { $0["timezone_id"] != nil }?["timezone_id"] as? String, "America/New_York")
+    XCTAssertEqual(store.getLastSyncedDeviceOs(), "19.0")
+    XCTAssertEqual(store.getLastSyncedTimezoneId(), "America/New_York")
+    // Unchanged fields keep their synced values.
+    XCTAssertEqual(store.getLastSyncedDeviceModel(), "iPhone17,1")
+    XCTAssertEqual(store.getLastSyncedSdkVersion(), "0.5.0")
+    XCTAssertEqual(store.getLastSyncedLanguage(), "pt")
+  }
+
+  func test_aNilProfileProviderOmitsThatFieldWithoutCrashing() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // app_version PATCH only
+    // All profile providers default to nil - only versionProvider is set.
+    let core = newCore(versionProvider: { "1.2.3" })
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertEqual(bodies.count, 1)
+    XCTAssertEqual(bodies[0]["app_version"] as? String, "1.2.3")
+    XCTAssertNil(bodies[0]["device_os"])
+    XCTAssertNil(bodies[0]["device_model"])
+    XCTAssertNil(bodies[0]["sdk_version"])
+    XCTAssertNil(bodies[0]["timezone_id"])
+    XCTAssertNil(bodies[0]["language"])
+  }
+
+  func test_sdkVersionPassedThroughInitializeReachesThePayload() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    for _ in 0..<3 { StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) } // device_os + sdk_version + timezone_id
+    let core = newCore(deviceOsProvider: { "18.0" }, timezoneProvider: { "UTC" })
+
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl, sdkVersion: "0.5.0")
+    drain(core)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertEqual(bodies.count, 3)
+    XCTAssertEqual(bodies.first { $0["sdk_version"] != nil }?["sdk_version"] as? String, "0.5.0")
+    XCTAssertEqual(store.getLastSyncedSdkVersion(), "0.5.0")
   }
 
   // MARK: - Session lifecycle (T8, SEGTEL-05/06/07/08/09)
