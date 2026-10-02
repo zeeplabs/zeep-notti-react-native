@@ -96,3 +96,6 @@ example/android/app/google-services.json
 
 # npm pack output, used for local real-device smoke testing
 *.tgz
+
+# superpowers: git worktree scratch dirs
+.worktrees/
