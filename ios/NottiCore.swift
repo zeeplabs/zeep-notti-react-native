@@ -384,7 +384,7 @@ public class NottiCore {
           }
           // DPF-12: the OS permission status is re-read from the OS state (not
           // inferred from the dialog bool) and diff-and-enqueued.
-          self.syncPermissionStatusIfNeeded(client)
+          self.syncPermissionStatusIfNeeded()
         }
       }
     }
@@ -708,7 +708,7 @@ public class NottiCore {
       }
       flushPendingMutations(client, deviceId: response.id, token: token)
       syncProfileFieldsIfNeeded(client)
-      syncPermissionStatusIfNeeded(client)
+      syncPermissionStatusIfNeeded()
       resyncHeldEmailAndPhone(client)
       flushEventQueue()
     case .failure(let message):
@@ -772,11 +772,17 @@ public class NottiCore {
   /// Called from three triggers: `registerDevice` success, the
   /// `requestPermission` result, and each session start (catches permission
   /// changed in OS Settings while the app wasn't running, DPF-13).
-  private func syncPermissionStatusIfNeeded(_ client: NottiApiClient) {
+  private func syncPermissionStatusIfNeeded() {
     permissionStatusProvider { [weak self] status in
       guard let self = self, let status = status else { return }
       self.onWorkQueue {
-        guard self.apiClient != nil else { return }
+        // L2-class guard (final review finding): the OS permission read is
+        // async and can outlive a second `initialize()` that replaced
+        // `apiClient`. Re-read the current client at callback time instead of
+        // using a captured one, matching `sendCountryIfChanged` - a stale
+        // client would PATCH the old backend/app. Android's `runOrQueue`
+        // re-reads `apiClient` the same way.
+        guard let client = self.apiClient else { return }
         let previous = self.deviceStore.getLastSyncedPermissionStatus()
         guard status != previous else { return }
         var fields: [String: Any] = ["permission_status": status]
@@ -1007,7 +1013,7 @@ public class NottiCore {
     startHeartbeatTimer()
     readCountryIfEnabled(nowMs: nowMs)
     if let client = apiClient {
-      syncPermissionStatusIfNeeded(client)
+      syncPermissionStatusIfNeeded()
     }
   }
 
