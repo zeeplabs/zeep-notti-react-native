@@ -61,3 +61,11 @@ Status: implementado nas duas plataformas (Android + iOS), com testes unitários
 - **Discovered but out-of-scope gap (flagged, not fixed)**: the library's own `AndroidManifest.xml` (`android/src/main/AndroidManifest.xml`) does not declare `android.permission.POST_NOTIFICATIONS` — a bare-RN integrator must add this to their own app's manifest for `Notti.requestPermission()` to actually prompt on Android 13+. Documented as a required integrator step in T19's README rather than silently added to the library's manifest (Phase 2 scope, not Phase 4/5's).
 - **Uncommitted files**: none (`example/node_modules` is an untracked local symlink workaround; `example/ios/Podfile.lock`/`example/ios/NottiExample/Info.plist` regenerate with environment-local path/flag noise on `pod install`/`react-native build-ios` in this sandbox — both reverted via `git checkout` after each gate run before committing, not meant to be committed)
 - **Branch**: feat/sdk-core-v1
+
+## Feature: device-profile-fields (2026-10-02) — Spec + Design + Tasks (DRAFT, execution pending)
+
+OneSignal-parity device/user profile fields. SDK-side producer for the backend companion spec `device-profile-fields` in `zeep-notti`. 21 requirements (`DPF-01..21`).
+
+**Scope**: P1 `device_os`/`device_model`/`sdk_version` + P2 `timezone_id`/`language` (native capture at init, `syncAppVersionIfNeeded` generalized into `syncProfileFieldsIfNeeded`, diff-and-enqueue per field). P3 two-axis `permission_status` (OS enum: granted/denied/notDetermined/provisional, async provider, triggers at registration/requestPermission/session-start) + `last_unsubscribed_at` (true→false / granted→denied, never cleared on re-subscribe). P4 first-class `email`/`phone` via JS `User.setEmail/clearEmail/setPhone/clearPhone`, explicit-null clear, never merged into tags.
+
+**State**: `spec.md` (DPF-01..21), `design.md` (generalized sync loop + 5 new providers; `permissionStatusProvider` async; P4 JS surface; `sdk_version` threaded from JS `initialize` — the two deliberate JS-visible additions), `tasks.md` (T1 JS Spec+facade → Android T2-T5 / iOS T6-T9 platform-parallel → T10 cross-platform review). **Not executed** — gates green required before Execute. Backend spec/design/tasks live in `zeep-notti`.
