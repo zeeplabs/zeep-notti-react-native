@@ -1353,8 +1353,7 @@ final class NottiCoreTests: XCTestCase {
   func test_setSubscriptionFalseOnASubscribedDeviceSetsLastUnsubscribedWhilePermissionStaysGranted() {
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // permission_status PATCH
-    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // subscribed(false) PATCH
-    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // last_unsubscribed_at PATCH
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // subscribed(false)+last_unsubscribed PATCH
     store.setSubscribed(true)
     let core = newCore(
       permissionStatusProvider: { cb in cb("granted") },
@@ -1364,25 +1363,25 @@ final class NottiCoreTests: XCTestCase {
     drain(core)
     StubURLProtocol.reset()
 
-    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // subscribed(false) PATCH
-    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // last_unsubscribed_at PATCH
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // subscribed(false)+last_unsubscribed PATCH
     core.setSubscription(false)
     drain(core)
 
     let bodies = patchBodies(StubURLProtocol.recordedRequests())
-    XCTAssertTrue(bodies.contains { $0["last_unsubscribed_at"] != nil }, "true->false must PATCH last_unsubscribed_at")
+    XCTAssertEqual(bodies.count, 1, "the timestamp must travel in the same PATCH as subscribed (atomic, DPF-14)")
+    XCTAssertEqual(bodies[0]["subscribed"] as? Bool, false)
+    XCTAssertTrue(bodies[0]["last_unsubscribed_at"] != nil, "true->false must PATCH last_unsubscribed_at")
     XCTAssertNotNil(store.getLastUnsubscribedAtMs())
     XCTAssertFalse(store.getSubscribed())
     // The app opt-out does not touch the OS permission axis (DPF-16).
-    XCTAssertFalse(bodies.contains { $0["permission_status"] != nil })
+    XCTAssertFalse(bodies[0]["permission_status"] != nil)
     XCTAssertEqual(store.getLastSyncedPermissionStatus(), "granted")
   }
 
   func test_reSubscribeDoesNotClearLastUnsubscribedAt() {
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // permission_status PATCH
-    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // subscribed(false) PATCH
-    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // last_unsubscribed_at PATCH
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // subscribed(false)+last_unsubscribed PATCH
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // subscribed(true) PATCH
     store.setSubscribed(true)
     let core = newCore(
@@ -1537,6 +1536,38 @@ final class NottiCoreTests: XCTestCase {
     XCTAssertEqual(bodies.count, 2)
     XCTAssertTrue(bodies.contains { $0["email"] as? String == "held@example.com" })
     XCTAssertTrue(bodies.contains { $0["phone"] as? String == "+10000000000" })
+  }
+
+  func test_setEmailBeforeInitializeIsPersistedAndResentOnRegistration() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // email PATCH
+    let core = newCore()
+    core.setEmail("preinit@example.com")
+    drain(core)
+    XCTAssertEqual(store.getEmail(), "preinit@example.com", "pre-init email must be persisted, not dropped (DPF-19)")
+
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertTrue(bodies.contains { $0["email"] as? String == "preinit@example.com" },
+                  "held pre-init email must be re-sent after registration (DPF-19)")
+  }
+
+  func test_clearEmailBeforeInitializeClearsAHeldValueAndNeverResendsIt() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration only
+    store.setEmail("stale@example.com") // held from a previous session
+    let core = newCore()
+    core.clearEmail()
+    drain(core)
+    XCTAssertNil(store.getEmail(), "pre-init clear must persist nil (DPF-18)")
+
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertTrue(bodies.isEmpty,
+                  "a cleared email must not be re-sent after registration - nil held sends nothing (DPF-19)")
   }
 
   func test_registrationSuccessWithNoHeldEmailOrPhoneSendsNothingForThem() {
