@@ -182,6 +182,23 @@ public class NottiImpl: NSObject {
       languageProvider: {
         Locale.current.languageCode
       },
+      // Device profile fields P3 (T8, DPF-10): OS push-permission state read
+      // via `getNotificationSettings` (callback-based). Maps authorization
+      // status to the enum; unknown/transitional resolves nil (omit, never
+      // fabricate - DPF edge case).
+      permissionStatusProvider: { callback in
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+          let status: String?
+          switch settings.authorizationStatus {
+          case .authorized: status = "granted"
+          case .denied: status = "denied"
+          case .notDetermined: status = "notDetermined"
+          case .provisional: status = "provisional"
+          @unknown default: status = nil
+          }
+          callback(status)
+        }
+      },
       // Review item 2: the cold-start `didBecomeActive` usually fired before
       // this module was constructed; report whether the app is already active
       // (read on the main thread, asynchronously - never `main.sync`, which

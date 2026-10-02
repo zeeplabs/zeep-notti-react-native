@@ -67,6 +67,7 @@ final class NottiCoreTests: XCTestCase {
     deviceModelProvider: @escaping () -> String? = { nil },
     timezoneProvider: @escaping () -> String? = { nil },
     languageProvider: @escaping () -> String? = { nil },
+    permissionStatusProvider: @escaping (@escaping (String?) -> Void) -> Void = { $0(nil) },
     appStateProvider: @escaping (@escaping (Bool) -> Void) -> Void = { $0(false) },
     beginBackgroundTask: @escaping () -> (() -> Void) = { {} },
     heartbeatInterval: TimeInterval = 60,
@@ -93,6 +94,7 @@ final class NottiCoreTests: XCTestCase {
       deviceModelProvider: deviceModelProvider,
       timezoneProvider: timezoneProvider,
       languageProvider: languageProvider,
+      permissionStatusProvider: permissionStatusProvider,
       appStateProvider: appStateProvider,
       beginBackgroundTask: beginBackgroundTask,
       heartbeatInterval: heartbeatInterval,
@@ -1277,6 +1279,140 @@ final class NottiCoreTests: XCTestCase {
     XCTAssertEqual(bodies.count, 3)
     XCTAssertEqual(bodies.first { $0["sdk_version"] != nil }?["sdk_version"] as? String, "0.5.0")
     XCTAssertEqual(store.getLastSyncedSdkVersion(), "0.5.0")
+  }
+
+  // MARK: - Permission status + last_unsubscribed_at (T8, DPF-10..16)
+
+  func test_registrationSuccessSyncsPermissionStatus() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // permission_status PATCH
+    let core = newCore(permissionStatusProvider: { cb in cb("granted") })
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertEqual(bodies.count, 1)
+    XCTAssertEqual(bodies[0]["permission_status"] as? String, "granted")
+    XCTAssertEqual(store.getLastSyncedPermissionStatus(), "granted")
+  }
+
+  func test_requestPermissionResultSyncsTheOSPermissionStatus() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // permission_status (notDetermined)
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // subscribed PATCH
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // permission_status (granted)
+    var permissionStatus: String? = "notDetermined"
+    let core = newCore(
+      permissionRequester: { cb in permissionStatus = "granted"; cb(true) },
+      permissionStatusProvider: { cb in cb(permissionStatus) }
+    )
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    let resolved = expectation(description: "permission callback")
+    core.requestPermission { _ in resolved.fulfill() }
+    wait(for: [resolved], timeout: 15)
+    drain(core)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertTrue(bodies.contains { $0["subscribed"] as? Bool == true })
+    XCTAssertTrue(bodies.contains { $0["permission_status"] as? String == "granted" })
+  }
+
+  func test_aGrantedToDeniedSettingsChangeIsCaughtAtTheNextSessionStart() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // permission_status + last_unsubscribed PATCH
+    store.setLastSyncedPermissionStatus("granted")
+    var permissionStatus: String? = "granted"
+    let core = newCore(
+      permissionStatusProvider: { cb in cb(permissionStatus) },
+      heartbeatInterval: 0
+    )
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+    StubURLProtocol.reset()
+
+    permissionStatus = "denied"
+    let before = Int64(Date().timeIntervalSince1970 * 1000)
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // permission_status + last_unsubscribed PATCH
+    core.handleSessionStart(nowMs: 1_000)
+    drain(core)
+    let after = Int64(Date().timeIntervalSince1970 * 1000)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertEqual(bodies.count, 1)
+    XCTAssertEqual(bodies[0]["permission_status"] as? String, "denied")
+    // last_unsubscribed_at is a real "now" timestamp, not an exact value.
+    let unsub = store.getLastUnsubscribedAtMs()
+    XCTAssertNotNil(unsub)
+    XCTAssertGreaterThanOrEqual(unsub ?? 0, before)
+    XCTAssertLessThanOrEqual(unsub ?? 0, after)
+    XCTAssertEqual(store.getLastSyncedPermissionStatus(), "denied")
+  }
+
+  func test_setSubscriptionFalseOnASubscribedDeviceSetsLastUnsubscribedWhilePermissionStaysGranted() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // permission_status PATCH
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // subscribed(false) PATCH
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // last_unsubscribed_at PATCH
+    store.setSubscribed(true)
+    let core = newCore(
+      permissionStatusProvider: { cb in cb("granted") },
+      heartbeatInterval: 0
+    )
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+    StubURLProtocol.reset()
+
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // subscribed(false) PATCH
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // last_unsubscribed_at PATCH
+    core.setSubscription(false)
+    drain(core)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertTrue(bodies.contains { $0["last_unsubscribed_at"] != nil }, "true->false must PATCH last_unsubscribed_at")
+    XCTAssertNotNil(store.getLastUnsubscribedAtMs())
+    XCTAssertFalse(store.getSubscribed())
+    // The app opt-out does not touch the OS permission axis (DPF-16).
+    XCTAssertFalse(bodies.contains { $0["permission_status"] != nil })
+    XCTAssertEqual(store.getLastSyncedPermissionStatus(), "granted")
+  }
+
+  func test_reSubscribeDoesNotClearLastUnsubscribedAt() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // permission_status PATCH
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // subscribed(false) PATCH
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // last_unsubscribed_at PATCH
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // subscribed(true) PATCH
+    store.setSubscribed(true)
+    let core = newCore(
+      permissionStatusProvider: { cb in cb("granted") },
+      heartbeatInterval: 0
+    )
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    core.setSubscription(false)
+    drain(core)
+    let recorded = store.getLastUnsubscribedAtMs()
+    XCTAssertNotNil(recorded)
+
+    core.setSubscription(true)
+    drain(core)
+
+    XCTAssertEqual(store.getLastUnsubscribedAtMs(), recorded, "re-subscribe must not clear the timestamp")
+    XCTAssertTrue(store.getSubscribed())
+  }
+
+  func test_anUnknownPermissionStatusIsOmittedWithoutCrashing() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration only
+    let core = newCore(permissionStatusProvider: { cb in cb(nil) })
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertTrue(bodies.isEmpty, "a nil permission status must not be fabricated")
+    XCTAssertNil(store.getLastSyncedPermissionStatus())
   }
 
   // MARK: - Session lifecycle (T8, SEGTEL-05/06/07/08/09)
