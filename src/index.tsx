@@ -32,10 +32,46 @@ const User = {
   removeTags(keys: string[]): void {
     NativeNotti.removeTags(keys);
   },
+
+  setEmail(email: string): void {
+    NativeNotti.setEmail(email);
+  },
+
+  clearEmail(): void {
+    NativeNotti.clearEmail();
+  },
+
+  setPhone(phone: string): void {
+    NativeNotti.setPhone(phone);
+  },
+
+  clearPhone(): void {
+    NativeNotti.clearPhone();
+  },
 };
 
 /** Default `baseUrl` for Notti's SaaS mode. Self-hosted deployments must pass their own. */
 const SAAS_BASE_URL = 'https://app.zeepnotti.app';
+
+/**
+ * The SDK package version, resolved once at module load from the package
+ * manifest (`./package.json` is exported, so the version is readable at
+ * runtime). Forwarded to native `initialize` as `sdk_version` - the package
+ * version is the single source of truth, and a native hardcoded copy would
+ * drift across releases. Passed as a constant, not business logic (AD-001).
+ * On any resolution failure (bundler edge case), an empty string is passed
+ * and native treats it as `null` -> the field is omitted.
+ */
+const SDK_VERSION: string = (() => {
+  try {
+    const pkg = require('react-native-notti/package.json') as {
+      version?: string;
+    };
+    return typeof pkg.version === 'string' ? pkg.version : '';
+  } catch {
+    return '';
+  }
+})();
 
 export interface InitializeOptions {
   /**
@@ -50,7 +86,12 @@ function initialize(
   clientKey: string,
   options: InitializeOptions = {}
 ): void {
-  NativeNotti.initialize(appId, clientKey, options.baseUrl ?? SAAS_BASE_URL);
+  NativeNotti.initialize(
+    appId,
+    clientKey,
+    options.baseUrl ?? SAAS_BASE_URL,
+    SDK_VERSION
+  );
 }
 
 function requestPermission(): Promise<boolean> {

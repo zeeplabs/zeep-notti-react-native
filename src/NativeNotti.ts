@@ -15,7 +15,12 @@ export interface NotificationPayload {
 }
 
 export interface Spec extends TurboModule {
-  initialize(appId: string, clientKey: string, baseUrl: string): void;
+  initialize(
+    appId: string,
+    clientKey: string,
+    baseUrl: string,
+    sdkVersion: string
+  ): void;
   requestPermission(): Promise<boolean>;
   login(externalUserId: string): void;
   logout(): void;
@@ -31,6 +36,11 @@ export interface Spec extends TurboModule {
    * previously-synced country value is explicitly cleared server-side.
    */
   setLocationSharingEnabled(enabled: boolean): void;
+
+  setEmail(email: string): void;
+  clearEmail(): void;
+  setPhone(phone: string): void;
+  clearPhone(): void;
 
   /**
    * Returns the Notti-internal Device ID used by the Notti backend to route

@@ -8,6 +8,10 @@ const mockAddTags = jest.fn();
 const mockRemoveTags = jest.fn();
 const mockSetSubscription = jest.fn();
 const mockSetLocationSharingEnabled = jest.fn();
+const mockSetEmail = jest.fn();
+const mockClearEmail = jest.fn();
+const mockSetPhone = jest.fn();
+const mockClearPhone = jest.fn();
 const mockGetDeviceId = jest.fn();
 const mockGetInitialNotificationClick = jest.fn();
 const mockOnNotificationReceived = jest.fn();
@@ -26,6 +30,10 @@ jest.mock('../NativeNotti', () => ({
     setSubscription: (...args: unknown[]) => mockSetSubscription(...args),
     setLocationSharingEnabled: (...args: unknown[]) =>
       mockSetLocationSharingEnabled(...args),
+    setEmail: (...args: unknown[]) => mockSetEmail(...args),
+    clearEmail: (...args: unknown[]) => mockClearEmail(...args),
+    setPhone: (...args: unknown[]) => mockSetPhone(...args),
+    clearPhone: (...args: unknown[]) => mockClearPhone(...args),
     getDeviceId: (...args: unknown[]) => mockGetDeviceId(...args),
     getInitialNotificationClick: (...args: unknown[]) =>
       mockGetInitialNotificationClick(...args),
@@ -37,6 +45,8 @@ jest.mock('../NativeNotti', () => ({
   },
 }));
 
+jest.mock('react-native-notti/package.json', () => ({ version: '0.4.0' }));
+
 import { Notti, type NotificationPayload } from '../index';
 
 describe('Notti facade', () => {
@@ -44,14 +54,15 @@ describe('Notti facade', () => {
     jest.clearAllMocks();
   });
 
-  it('initialize calls NativeNotti.initialize with appId, clientKey, baseUrl', () => {
+  it('initialize calls NativeNotti.initialize with appId, clientKey, baseUrl, sdkVersion', () => {
     Notti.initialize('app-1', 'key-1', {
       baseUrl: 'https://push.example.com',
     });
     expect(mockInitialize).toHaveBeenCalledWith(
       'app-1',
       'key-1',
-      'https://push.example.com'
+      'https://push.example.com',
+      '0.4.0'
     );
   });
 
@@ -60,7 +71,8 @@ describe('Notti facade', () => {
     expect(mockInitialize).toHaveBeenCalledWith(
       'app-1',
       'key-1',
-      'https://app.zeepnotti.app'
+      'https://app.zeepnotti.app',
+      '0.4.0'
     );
   });
 
@@ -69,7 +81,23 @@ describe('Notti facade', () => {
     expect(mockInitialize).toHaveBeenCalledWith(
       'app-1',
       'key-1',
-      'https://app.zeepnotti.app'
+      'https://app.zeepnotti.app',
+      '0.4.0'
+    );
+  });
+
+  it('initialize forwards an empty sdkVersion when the package version cannot be resolved', () => {
+    jest.resetModules();
+    jest.doMock('react-native-notti/package.json', () => ({}));
+    const freshNotti = require('../index').Notti as typeof Notti;
+    freshNotti.initialize('app-1', 'key-1', {
+      baseUrl: 'https://push.example.com',
+    });
+    expect(mockInitialize).toHaveBeenCalledWith(
+      'app-1',
+      'key-1',
+      'https://push.example.com',
+      ''
     );
   });
 
@@ -135,6 +163,26 @@ describe('Notti facade', () => {
   it('User.removeTags calls NativeNotti.removeTags with the full key list', () => {
     Notti.User.removeTags(['plan', 'region']);
     expect(mockRemoveTags).toHaveBeenCalledWith(['plan', 'region']);
+  });
+
+  it('User.setEmail delegates to NativeNotti.setEmail with the passed address', () => {
+    Notti.User.setEmail('user@example.com');
+    expect(mockSetEmail).toHaveBeenCalledWith('user@example.com');
+  });
+
+  it('User.clearEmail calls NativeNotti.clearEmail', () => {
+    Notti.User.clearEmail();
+    expect(mockClearEmail).toHaveBeenCalledWith();
+  });
+
+  it('User.setPhone delegates to NativeNotti.setPhone with the passed number', () => {
+    Notti.User.setPhone('+5511999999999');
+    expect(mockSetPhone).toHaveBeenCalledWith('+5511999999999');
+  });
+
+  it('User.clearPhone calls NativeNotti.clearPhone', () => {
+    Notti.User.clearPhone();
+    expect(mockClearPhone).toHaveBeenCalledWith();
   });
 
   it('getInitialNotificationClick calls NativeNotti.getInitialNotificationClick and returns its result', async () => {
