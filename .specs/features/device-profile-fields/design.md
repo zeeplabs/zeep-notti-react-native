@@ -222,7 +222,7 @@ data class DeviceState(
 | `sdk_version` source | JS reads `package.json` version and passes it to native `initialize` | Single source of truth; no duplicated native constant to drift across releases. Passing a constant at init is not business logic, so `AD-001` holds. |
 | `permissionStatusProvider` shape | Async callback `(String?) -> Unit`, like `countryProvider` | iOS's `getNotificationSettings` is callback-based; the closure keeps `NottiCore` testable without a real `UNUserNotificationCenter`. |
 | `last_unsubscribed_at` never cleared | No explicit-null path, no reset on re-subscribe | Matches spec DPF-15; backend companion has no clear path either. |
-| Email/phone clear durability | **No** persisted pending-clear obligation (unlike `country`) | Country's `pendingCountryClear` exists because opt-out is LGPD-critical and country is SDK-captured. Email/phone are integrator-supplied; a failed clear is retried on the next `clearEmail()` call or re-sent at registration. Documented deviation from the country pattern, accepted. |
+| Email/phone clear durability | **No** persisted pending-clear obligation (unlike `country`) | Country's `pendingCountryClear` exists because opt-out is LGPD-critical and country is SDK-captured. Email/phone are integrator-supplied; a failed clear is retried on the next `clearEmail()` call or re-sent at registration. Documented deviation from the country pattern, accepted. A future data-removal request API (server-side, independent of this SDK) covers the LGPD-erasure gap; reviewed and confirmed 2026-10-02. |
 | Email/phone coalesce | `KEY_EMAIL`/`KEY_PHONE` coalesce keys, treated like telemetry (replace queued, no eviction) | A queued clear must supersede a queued set; one slot each; harmless to the 32-cap since only 2 keys. |
 | Registration re-sync of email/phone | Unconditional set when held value non-null | A fresh backend row (reinstall + backup-restored local value) must converge without the integrator re-calling `setEmail`; cheap single PATCH. |
 | `permission_status` coalesce | Keyed `permissionStatus`, diffed against last-synced | Only changes enqueue; no PATCH storm on repeated session starts. |
@@ -236,7 +236,7 @@ data class DeviceState(
 | Req | Design |
 | --- | --- |
 | DPF-01 (native capture at init) | `syncProfileFieldsIfNeeded` providers (`deviceOsProvider`/`deviceModelProvider`/`sdkVersionProvider`) |
-| DPF-02 (registration payload) | `syncProfileFieldsIfNeeded` called from `registerDevice` success |
+| DPF-02 (registration payload) | `syncProfileFieldsIfNeeded` called from `registerDevice` success | Profile fields travel as N post-registration PATCHes (via the existing telemetry queue), not in the POST body. Consistent with the `app_version` precedent; works with the existing backend contract. Revisit merging into the registration POST once the backend companion spec defines POST acceptance; reviewed and confirmed 2026-10-02. |
 | DPF-03 (diff-and-enqueue) | Per-field diff against `deviceStore` last-synced |
 | DPF-04 (read failure non-fatal) | `null` provider → skip field |
 | DPF-05 (app_version unchanged) | `app_version` folded into the same loop, same behavior |
