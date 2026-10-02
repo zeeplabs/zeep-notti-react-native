@@ -184,8 +184,8 @@ class NottiModule(reactContext: ReactApplicationContext) :
 
   internal fun emitDeviceIdChanged(deviceId: String) = emitOnDeviceIdChanged(deviceId)
 
-  override fun initialize(appId: String?, clientKey: String?, baseUrl: String?) {
-    core.initialize(appId.orEmpty(), clientKey.orEmpty(), baseUrl.orEmpty())
+  override fun initialize(appId: String?, clientKey: String?, baseUrl: String?, sdkVersion: String?) {
+    core.initialize(appId.orEmpty(), clientKey.orEmpty(), baseUrl.orEmpty(), sdkVersion.orEmpty())
   }
 
   override fun requestPermission(promise: Promise?) {
@@ -221,6 +221,22 @@ class NottiModule(reactContext: ReactApplicationContext) :
 
   override fun setSubscription(enabled: Boolean) {
     core.setSubscription(enabled)
+  }
+
+  override fun setEmail(email: String?) {
+    email?.let { core.setEmail(it) }
+  }
+
+  override fun clearEmail() {
+    core.clearEmail()
+  }
+
+  override fun setPhone(phone: String?) {
+    phone?.let { core.setPhone(it) }
+  }
+
+  override fun clearPhone() {
+    core.clearPhone()
   }
 
   override fun setLocationSharingEnabled(enabled: Boolean) {

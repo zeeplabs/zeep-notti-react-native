@@ -38,7 +38,7 @@ class NottiBridgeTest {
     // lambda) -- this only proves onMessageReceived's own null-guard, not
     // the Codegen emit path itself (already exercised elsewhere).
     val module = NottiModule(BridgeFakeReactApplicationContext())
-    module.initialize("app-1", "key", "https://notti.example.com")
+    module.initialize("app-1", "key", "https://notti.example.com", "")
     module.invalidate()
     assertNull(NottiModule.activeCore)
 
@@ -53,7 +53,7 @@ class NottiBridgeTest {
   @Test
   fun `onNewToken reaches the active core without throwing`() {
     val module = NottiModule(BridgeFakeReactApplicationContext())
-    module.initialize("app-1", "key", "https://notti.example.com")
+    module.initialize("app-1", "key", "https://notti.example.com", "")
     assertNotNull(NottiModule.activeCore)
 
     NottiBridge.onNewToken("new-token-value")

@@ -253,4 +253,82 @@ class NottiDeviceStoreTest {
     assertTrue(prefs.committedKeys.contains("notti_pending_country_clear"))
     assertTrue(durable.getPendingCountryClear())
   }
+
+  // ---------------------------------------------------------------------
+  // Device profile fields (device-profile-fields, T2)
+  // ---------------------------------------------------------------------
+
+  @Test
+  fun `device profile fields round-trip through SharedPreferences`() {
+    store.setLastSyncedDeviceOs("15.0")
+    store.setLastSyncedDeviceModel("Pixel 8")
+    store.setLastSyncedSdkVersion("0.5.0")
+    store.setLastSyncedTimezoneId("America/Sao_Paulo")
+    store.setLastSyncedLanguage("pt")
+    store.setLastSyncedPermissionStatus("granted")
+    store.setLastUnsubscribedAtMs(1_700_000_000_000L)
+    store.setEmail("user@example.com")
+    store.setPhone("+5511999999999")
+
+    val state = store.getState()
+    assertEquals("15.0", state.lastSyncedDeviceOs)
+    assertEquals("Pixel 8", state.lastSyncedDeviceModel)
+    assertEquals("0.5.0", state.lastSyncedSdkVersion)
+    assertEquals("America/Sao_Paulo", state.lastSyncedTimezoneId)
+    assertEquals("pt", state.lastSyncedLanguage)
+    assertEquals("granted", state.lastSyncedPermissionStatus)
+    assertEquals(1_700_000_000_000L, state.lastUnsubscribedAtMs)
+    assertEquals("user@example.com", state.email)
+    assertEquals("+5511999999999", state.phone)
+  }
+
+  @Test
+  fun `a fresh store over the same SharedPreferences sees persisted device profile values`() {
+    val prefs = FakeSharedPreferences()
+    NottiDeviceStore(prefs).apply {
+      setLastSyncedDeviceOs("14.0")
+      setLastSyncedDeviceModel("Pixel 7")
+      setLastSyncedSdkVersion("0.4.0")
+      setLastSyncedTimezoneId("America/New_York")
+      setLastSyncedLanguage("en")
+      setLastSyncedPermissionStatus("denied")
+      setLastUnsubscribedAtMs(1_700_000_000_001L)
+      setEmail("a@b.com")
+      setPhone("+10000000000")
+    }
+
+    val state = NottiDeviceStore(prefs).getState()
+    assertEquals("14.0", state.lastSyncedDeviceOs)
+    assertEquals("Pixel 7", state.lastSyncedDeviceModel)
+    assertEquals("0.4.0", state.lastSyncedSdkVersion)
+    assertEquals("America/New_York", state.lastSyncedTimezoneId)
+    assertEquals("en", state.lastSyncedLanguage)
+    assertEquals("denied", state.lastSyncedPermissionStatus)
+    assertEquals(1_700_000_000_001L, state.lastUnsubscribedAtMs)
+    assertEquals("a@b.com", state.email)
+    assertEquals("+10000000000", state.phone)
+  }
+
+  @Test
+  fun `device profile fields default to null when absent`() {
+    val state = store.getState()
+
+    assertNull(state.lastSyncedDeviceOs)
+    assertNull(state.lastSyncedDeviceModel)
+    assertNull(state.lastSyncedSdkVersion)
+    assertNull(state.lastSyncedTimezoneId)
+    assertNull(state.lastSyncedLanguage)
+    assertNull(state.lastSyncedPermissionStatus)
+    assertNull(state.lastUnsubscribedAtMs)
+    assertNull(state.email)
+    assertNull(state.phone)
+  }
+
+  @Test
+  fun `lastUnsubscribedAtMs uses the -1L sentinel so an absent value reads as null`() {
+    store.setLastUnsubscribedAtMs(5_000L)
+    assertEquals(5_000L, store.getLastUnsubscribedAtMs())
+    store.setLastUnsubscribedAtMs(null)
+    assertNull(store.getLastUnsubscribedAtMs())
+  }
 }
