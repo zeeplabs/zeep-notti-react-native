@@ -131,9 +131,8 @@ sequenceDiagram
 - **Location**: `android/NottiCore.kt` (`setSubscription`, `requestPermission`, `syncPermissionStatusIfNeeded`), `ios/NottiCore.swift` (same).
 - **Persisted field**: `last_unsubscribed_at` (epoch ms `Long?`/`Int64?`) in `NottiDeviceStore` — survives process death.
 - **Behavior**:
-  - In `setSubscription(false)`: if the stored `subscribed` was `true` (a real true→false transition), persist `now` and enqueue `{last_unsubscribed_at: iso(now)}` as a coalesced mutation (DPF-14 app-driven path). `setSubscription(true)` never clears it (DPF-15).
+  - In `setSubscription(false)`: if the stored `subscribed` was `true` (a real true→false transition), persist `now` and PATCH `{subscribed: false, last_unsubscribed_at: iso(now)}` in the **same request** (DPF-14 app-driven path) — atomic, so a failed PATCH leaves both unsynced and a retry re-runs the whole transition instead of stranding a server-side `subscribed:false` with no timestamp. `setSubscription(true)` never clears it (DPF-15).
   - In `syncPermissionStatusIfNeeded`: when the freshly-read status is `denied` AND the previous synced status was `granted`, persist `now` and enqueue the timestamp alongside the `permission_status` PATCH (DPF-14 permission-driven path). A same-request PATCH carries both fields atomically.
-- **Coalesce key**: `lastUnsubscribed`, so a queued app-driven and permission-driven write collapse to the latest.
 - **Dependencies**: store field, `clock` (already injected), `formatIsoUtc` (already exists).
 
 ### P4 — `email`/`phone` JS API (both platforms)

@@ -154,7 +154,6 @@ public class NottiCore {
     static let timezoneId = "telemetry.timezoneId"
     static let language = "telemetry.language"
     static let permissionStatus = "telemetry.permissionStatus"
-    static let lastUnsubscribed = "telemetry.lastUnsubscribed"
     static let email = "telemetry.email"
     static let phone = "telemetry.phone"
   }
@@ -423,24 +422,22 @@ public class NottiCore {
       self.performOrQueue(client, description: "setSubscription") { [weak self] client, deviceId, token in
         guard let self = self else { return }
         let wasSubscribed = self.deviceStore.getSubscribed()
-        self.patchSubscribed(client, deviceId: deviceId, token: token, enabled, logContext: "setSubscription")
         // DPF-14 app-driven path: a real true->false transition records the
-        // most-recent unsubscribe timestamp locally and enqueues it (coalesced
-        // so a queued permission-driven write and this collapse to the latest).
-        if !enabled && wasSubscribed && !self.deviceStore.getSubscribed() {
+        // most-recent unsubscribe timestamp and sends it in the SAME PATCH as
+        // `subscribed` so the two writes are atomic - a failed PATCH leaves
+        // both unsynced (subscribed stays true locally, so a retry re-runs the
+        // whole transition) instead of stranding a server-side `subscribed:
+        // false` with `last_unsubscribed_at` never written.
+        var extraFields: [String: Any] = [:]
+        if !enabled && wasSubscribed {
           let now = self.nowMs()
           self.deviceStore.setLastUnsubscribedAtMs(now)
-          self.performOrQueue(client, description: "last unsubscribed", coalesceKey: TelemetryKey.lastUnsubscribed) {
-            [weak self] client, deviceId, token in
-            let result = client.patchDevice(deviceId: deviceId, token: token, fields: ["last_unsubscribed_at": Self.formatIsoUtc(now)])
-            switch result {
-            case .success:
-              break // timestamp already persisted locally
-            case .failure(let message):
-              self?.logger("Notti.lastUnsubscribed: PATCH failed (\(message)) - not retried")
-            }
-          }
+          extraFields["last_unsubscribed_at"] = Self.formatIsoUtc(now)
         }
+        self.patchSubscribed(
+          client, deviceId: deviceId, token: token, enabled,
+          logContext: "setSubscription", extraFields: extraFields
+        )
       }
     }
   }
@@ -451,9 +448,13 @@ public class NottiCore {
   /// field, never merged into tags (DPF-21).
   public func setEmail(_ email: String) {
     workQueue.async { [weak self] in
-      guard let self = self, let client = self.apiClient else { return }
+      guard let self = self else { return }
+      // Persist the held value before the apiClient guard: a pre-init write
+      // must survive to be converged by `resyncHeldEmailAndPhone` (DPF-19),
+      // mirroring Android. The PATCH itself still waits for a client.
       guard email != self.deviceStore.getEmail() else { return }
       self.deviceStore.setEmail(email)
+      guard let client = self.apiClient else { return }
       self.performOrQueue(client, description: "setEmail", coalesceKey: TelemetryKey.email) {
         [weak self] client, deviceId, token in
         let result = client.patchDevice(deviceId: deviceId, token: token, fields: ["email": email])
@@ -470,8 +471,11 @@ public class NottiCore {
   /// Explicit clear (DPF-18): persists nil and enqueues an explicit `email: null`.
   public func clearEmail() {
     workQueue.async { [weak self] in
-      guard let self = self, let client = self.apiClient else { return }
+      guard let self = self else { return }
+      // Persist before the apiClient guard, mirroring Android: a pre-init
+      // clear must clear any held value so it is never re-sent (DPF-18/19).
       self.deviceStore.setEmail(nil)
+      guard let client = self.apiClient else { return }
       self.performOrQueue(client, description: "clearEmail", coalesceKey: TelemetryKey.email) {
         [weak self] client, deviceId, token in
         let result = client.patchDevice(deviceId: deviceId, token: token, fields: ["email": NSNull()])
@@ -488,9 +492,10 @@ public class NottiCore {
   /// First-class device phone (DPF-17); see `setEmail` for the contract.
   public func setPhone(_ phone: String) {
     workQueue.async { [weak self] in
-      guard let self = self, let client = self.apiClient else { return }
+      guard let self = self else { return }
       guard phone != self.deviceStore.getPhone() else { return }
       self.deviceStore.setPhone(phone)
+      guard let client = self.apiClient else { return }
       self.performOrQueue(client, description: "setPhone", coalesceKey: TelemetryKey.phone) {
         [weak self] client, deviceId, token in
         let result = client.patchDevice(deviceId: deviceId, token: token, fields: ["phone": phone])
@@ -507,8 +512,10 @@ public class NottiCore {
   /// Explicit clear (DPF-18): persists nil and enqueues an explicit `phone: null`.
   public func clearPhone() {
     workQueue.async { [weak self] in
-      guard let self = self, let client = self.apiClient else { return }
+      guard let self = self else { return }
+      // Persist before the apiClient guard, mirroring Android (DPF-18/19).
       self.deviceStore.setPhone(nil)
+      guard let client = self.apiClient else { return }
       self.performOrQueue(client, description: "clearPhone", coalesceKey: TelemetryKey.phone) {
         [weak self] client, deviceId, token in
         let result = client.patchDevice(deviceId: deviceId, token: token, fields: ["phone": NSNull()])
@@ -1309,9 +1316,14 @@ public class NottiCore {
     deviceId: String,
     token: String,
     _ subscribed: Bool,
-    logContext: String
+    logContext: String,
+    extraFields: [String: Any] = [:]
   ) {
-    let result = client.patchDevice(deviceId: deviceId, token: token, fields: ["subscribed": subscribed])
+    var fields: [String: Any] = ["subscribed": subscribed]
+    for (key, value) in extraFields {
+      fields[key] = value
+    }
+    let result = client.patchDevice(deviceId: deviceId, token: token, fields: fields)
     switch result {
     case .success:
       deviceStore.setSubscribed(subscribed)

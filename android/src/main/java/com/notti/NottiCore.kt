@@ -176,7 +176,6 @@ class NottiCore(
     private const val KEY_TIMEZONE_ID = "timezoneId"
     private const val KEY_LANGUAGE = "language"
     private const val KEY_PERMISSION_STATUS = "permissionStatus"
-    private const val KEY_LAST_UNSUBSCRIBED = "lastUnsubscribed"
     private const val KEY_EMAIL = "email"
     private const val KEY_PHONE = "phone"
 
@@ -727,24 +726,21 @@ class NottiCore(
   fun setSubscription(enabled: Boolean) {
     mutate("setSubscription") { client, deviceId, token ->
       val wasSubscribed = deviceStore.getSubscribed()
-      val result = client.patchDevice(deviceId, token, mapOf("subscribed" to enabled))
+      // DPF-14 app-driven path: a real true->false transition records the
+      // most-recent unsubscribe timestamp and sends it in the SAME PATCH as
+      // `subscribed` so the two writes are atomic - a failed PATCH leaves both
+      // unsynced (subscribed stays true locally, so a retry re-runs the whole
+      // transition) instead of stranding a server-side `subscribed: false`
+      // with `last_unsubscribed_at` never written.
+      val fields = mutableMapOf<String, Any>("subscribed" to enabled)
+      if (!enabled && wasSubscribed) {
+        val now = clock()
+        deviceStore.setLastUnsubscribedAtMs(now)
+        fields["last_unsubscribed_at"] = formatIsoUtc(now)
+      }
+      val result = client.patchDevice(deviceId, token, fields)
       when (result) {
-        is ApiResult.Success -> {
-          deviceStore.setSubscribed(enabled)
-          // DPF-14 app-driven path: a real true->false transition records the
-          // most-recent unsubscribe timestamp locally and enqueues it (coalesced
-          // so a queued permission-driven write and this collapse to the latest).
-          if (!enabled && wasSubscribed) {
-            val now = clock()
-            deviceStore.setLastUnsubscribedAtMs(now)
-            runOrQueue(PendingMutation("lastUnsubscribed", KEY_LAST_UNSUBSCRIBED) { c, d, t ->
-              when (val r = c.patchDevice(d, t, mapOf("last_unsubscribed_at" to formatIsoUtc(now)))) {
-                is ApiResult.Success -> Unit // timestamp already persisted locally
-                is ApiResult.Failure -> logger("Notti.lastUnsubscribed: PATCH failed (${r.message}) - not retried")
-              }
-            })
-          }
-        }
+        is ApiResult.Success -> deviceStore.setSubscribed(enabled)
         is ApiResult.Failure -> logger("Notti.setSubscription: PATCH failed (${result.message}) - not retried")
       }
     }

@@ -863,9 +863,8 @@ fun `requestPermission result syncs the OS permission status`() {
 
   @Test
   fun `setSubscription false on a subscribed device sets last_unsubscribed_at while permission stays granted`() {
-    // register POST + permission_status PATCH (registration) + subscribed PATCH
-    // + last_unsubscribed_at PATCH (the transition).
-    repeat(4) { server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}""")) }
+    // register POST + permission_status PATCH (registration) + subscribed(false)+last_unsubscribed_at PATCH.
+    repeat(3) { server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}""")) }
     store.setSubscribed(true)
     val core = newCore(
       permissionStatusProvider = { cb -> cb("granted") },
@@ -880,8 +879,9 @@ fun `requestPermission result syncs the OS permission status`() {
     awaitIdle()
 
     val bodies = drainRequests().map { JSONObject(it.body.readUtf8()) }
-    val unsub = bodies.first { it.has("last_unsubscribed_at") }
-    assertEquals("1970-01-01T00:00:01.000Z", unsub.getString("last_unsubscribed_at"))
+    val transition = bodies.filter { it.has("subscribed") }.first { it.getBoolean("subscribed") == false }
+    assertEquals("the timestamp must travel in the same PATCH as subscribed (atomic, DPF-14)",
+      "1970-01-01T00:00:01.000Z", transition.getString("last_unsubscribed_at"))
     assertEquals(1_000L, store.getLastUnsubscribedAtMs())
     // The app opt-out does not touch the OS permission axis (DPF-16).
     val permissionPatches = bodies.filter { it.has("permission_status") }
@@ -892,9 +892,8 @@ fun `requestPermission result syncs the OS permission status`() {
 
   @Test
   fun `re-subscribe does not clear last_unsubscribed_at`() {
-    // register POST + permission_status PATCH + subscribed(false) PATCH +
-    // last_unsubscribed_at PATCH + subscribed(true) PATCH.
-    repeat(5) { server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}""")) }
+    // register POST + permission_status PATCH + subscribed(false)+last_unsubscribed_at PATCH + subscribed(true) PATCH.
+    repeat(4) { server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}""")) }
     store.setSubscribed(true)
     val core = newCore(
       permissionStatusProvider = { cb -> cb("granted") },
