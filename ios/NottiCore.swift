@@ -155,6 +155,8 @@ public class NottiCore {
     static let language = "telemetry.language"
     static let permissionStatus = "telemetry.permissionStatus"
     static let lastUnsubscribed = "telemetry.lastUnsubscribed"
+    static let email = "telemetry.email"
+    static let phone = "telemetry.phone"
   }
   private static let maxPendingMutations = 32
   private var pendingMutations: [PendingMutation] = []
@@ -443,6 +445,83 @@ public class NottiCore {
     }
   }
 
+  /// First-class device email (DPF-17): persists the held value locally, then
+  /// enqueues a coalesced PATCH. A value equal to the currently-held value is
+  /// a no-op (DPF-20, matching `addTag` idempotence). Travels as its own PATCH
+  /// field, never merged into tags (DPF-21).
+  public func setEmail(_ email: String) {
+    workQueue.async { [weak self] in
+      guard let self = self, let client = self.apiClient else { return }
+      guard email != self.deviceStore.getEmail() else { return }
+      self.deviceStore.setEmail(email)
+      self.performOrQueue(client, description: "setEmail", coalesceKey: TelemetryKey.email) {
+        [weak self] client, deviceId, token in
+        let result = client.patchDevice(deviceId: deviceId, token: token, fields: ["email": email])
+        switch result {
+        case .success:
+          break // held == synced
+        case .failure(let message):
+          self?.logger("Notti.setEmail: PATCH failed (\(message)) - not retried")
+        }
+      }
+    }
+  }
+
+  /// Explicit clear (DPF-18): persists nil and enqueues an explicit `email: null`.
+  public func clearEmail() {
+    workQueue.async { [weak self] in
+      guard let self = self, let client = self.apiClient else { return }
+      self.deviceStore.setEmail(nil)
+      self.performOrQueue(client, description: "clearEmail", coalesceKey: TelemetryKey.email) {
+        [weak self] client, deviceId, token in
+        let result = client.patchDevice(deviceId: deviceId, token: token, fields: ["email": NSNull()])
+        switch result {
+        case .success:
+          break
+        case .failure(let message):
+          self?.logger("Notti.clearEmail: PATCH failed (\(message)) - not retried")
+        }
+      }
+    }
+  }
+
+  /// First-class device phone (DPF-17); see `setEmail` for the contract.
+  public func setPhone(_ phone: String) {
+    workQueue.async { [weak self] in
+      guard let self = self, let client = self.apiClient else { return }
+      guard phone != self.deviceStore.getPhone() else { return }
+      self.deviceStore.setPhone(phone)
+      self.performOrQueue(client, description: "setPhone", coalesceKey: TelemetryKey.phone) {
+        [weak self] client, deviceId, token in
+        let result = client.patchDevice(deviceId: deviceId, token: token, fields: ["phone": phone])
+        switch result {
+        case .success:
+          break
+        case .failure(let message):
+          self?.logger("Notti.setPhone: PATCH failed (\(message)) - not retried")
+        }
+      }
+    }
+  }
+
+  /// Explicit clear (DPF-18): persists nil and enqueues an explicit `phone: null`.
+  public func clearPhone() {
+    workQueue.async { [weak self] in
+      guard let self = self, let client = self.apiClient else { return }
+      self.deviceStore.setPhone(nil)
+      self.performOrQueue(client, description: "clearPhone", coalesceKey: TelemetryKey.phone) {
+        [weak self] client, deviceId, token in
+        let result = client.patchDevice(deviceId: deviceId, token: token, fields: ["phone": NSNull()])
+        switch result {
+        case .success:
+          break
+        case .failure(let message):
+          self?.logger("Notti.clearPhone: PATCH failed (\(message)) - not retried")
+        }
+      }
+    }
+  }
+
   /// P3 opt-in toggle (SEGTEL-10, the single deliberate AD-001 JS-visible API):
   /// persists the flag. On opt-in it sends nothing itself; the next session
   /// start attempts the best-effort read.
@@ -630,6 +709,7 @@ public class NottiCore {
       flushPendingMutations(client, deviceId: response.id, token: token)
       syncProfileFieldsIfNeeded(client)
       syncPermissionStatusIfNeeded(client)
+      resyncHeldEmailAndPhone(client)
       flushEventQueue()
     case .failure(let message):
       registrationState = .failed
@@ -714,6 +794,38 @@ public class NottiCore {
           case .failure(let message):
             self?.logger("Notti.permissionStatus: PATCH failed (\(message)) - not retried")
           }
+        }
+      }
+    }
+  }
+
+  /// workQueue-only. Registration-success re-sync of a locally-held
+  /// `email`/`phone` (DPF-19): when the held value is non-nil, enqueue a set
+  /// unconditionally - the backend row may be fresh after a reinstall/backup-
+  /// restore, so the value must converge without the integrator re-calling the
+  /// setter. A nil held value sends nothing.
+  private func resyncHeldEmailAndPhone(_ client: NottiApiClient) {
+    if let email = deviceStore.getEmail() {
+      performOrQueue(client, description: "resync email", coalesceKey: TelemetryKey.email) {
+        [weak self] client, deviceId, token in
+        let result = client.patchDevice(deviceId: deviceId, token: token, fields: ["email": email])
+        switch result {
+        case .success:
+          break
+        case .failure(let message):
+          self?.logger("Notti.resyncEmail: PATCH failed (\(message)) - not retried")
+        }
+      }
+    }
+    if let phone = deviceStore.getPhone() {
+      performOrQueue(client, description: "resync phone", coalesceKey: TelemetryKey.phone) {
+        [weak self] client, deviceId, token in
+        let result = client.patchDevice(deviceId: deviceId, token: token, fields: ["phone": phone])
+        switch result {
+        case .success:
+          break
+        case .failure(let message):
+          self?.logger("Notti.resyncPhone: PATCH failed (\(message)) - not retried")
         }
       }
     }

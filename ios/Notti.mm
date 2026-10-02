@@ -70,6 +70,26 @@
     [_impl setSubscription:enabled];
 }
 
+- (void)setEmail:(NSString *)email
+{
+    [_impl setEmail:email];
+}
+
+- (void)clearEmail
+{
+    [_impl clearEmail];
+}
+
+- (void)setPhone:(NSString *)phone
+{
+    [_impl setPhone:phone];
+}
+
+- (void)clearPhone
+{
+    [_impl clearPhone];
+}
+
 - (void)setLocationSharingEnabled:(BOOL)enabled
 {
     [_impl setLocationSharingEnabled:enabled];
