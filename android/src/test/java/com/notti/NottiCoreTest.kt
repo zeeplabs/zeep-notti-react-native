@@ -76,7 +76,8 @@ class NottiCoreTest {
     deviceOsProvider: () -> String? = { null },
     deviceModelProvider: () -> String? = { null },
     timezoneProvider: () -> String? = { null },
-    languageProvider: () -> String? = { null }
+    languageProvider: () -> String? = { null },
+    permissionStatusProvider: (callback: (String?) -> Unit) -> Unit = { cb -> cb(null) }
   ) = NottiCore(
     deviceStore = store,
     eventStore = eventStore,
@@ -104,7 +105,8 @@ class NottiCoreTest {
     deviceOsProvider = deviceOsProvider,
     deviceModelProvider = deviceModelProvider,
     timezoneProvider = timezoneProvider,
-    languageProvider = languageProvider
+    languageProvider = languageProvider,
+    permissionStatusProvider = permissionStatusProvider
   )
 
   @Test
@@ -771,6 +773,166 @@ class NottiCoreTest {
     assertTrue("sdk_version must reach the payload: $patches", sdk != null)
     assertEquals("0.5.0", sdk!!.getString("sdk_version"))
     assertEquals("0.5.0", store.getLastSyncedSdkVersion())
+  }
+
+  // ---------------------------------------------------------------------
+  // Permission status + last_unsubscribed_at (device-profile-fields, T4)
+  // ---------------------------------------------------------------------
+
+  @Test
+  fun `registration success syncs permission status`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    val core = newCore(permissionStatusProvider = { cb -> cb("granted") })
+
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+    awaitIdle()
+
+    server.takeRequest(5, TimeUnit.SECONDS) // register
+    val patch = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+    assertEquals("PATCH", patch.method)
+    assertEquals("granted", JSONObject(patch.body.readUtf8()).getString("permission_status"))
+    assertEquals("granted", store.getLastSyncedPermissionStatus())
+  }
+
+  @Test
+fun `requestPermission result syncs the OS permission status`() {
+    // register POST + permission_status (notDetermined) + subscribed PATCH +
+    // permission_status (granted) PATCH.
+    repeat(4) { server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}""")) }
+    // Registration saw "never asked" (notDetermined); the user then grants the
+    // OS prompt, so requestPermission must read the NEW OS state.
+    var permissionStatus: String? = "notDetermined"
+    val core = newCore(
+      permissionRequester = { cb -> permissionStatus = "granted"; cb(true) },
+      permissionStatusProvider = { cb -> cb(permissionStatus) }
+    )
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+    awaitIdle()
+    server.takeRequest(5, TimeUnit.SECONDS) // register
+    server.takeRequest(5, TimeUnit.SECONDS) // permission_status (notDetermined)
+
+    core.requestPermission { }
+    awaitIdle()
+    awaitIdle()
+
+    // The subscribed PATCH (from the dialog bool) plus a permission_status
+    // PATCH read from the OS state, not inferred from the bool.
+    val bodies = (0 until 2).map {
+      JSONObject(requireNotNull(server.takeRequest(5, TimeUnit.SECONDS)).body.readUtf8())
+    }
+    val subscribed = bodies.first { it.has("subscribed") }
+    assertEquals(true, subscribed.getBoolean("subscribed"))
+    val permission = bodies.first { it.has("permission_status") }
+    assertEquals("granted", permission.getString("permission_status"))
+  }
+
+  @Test
+  fun `a granted to denied Settings change is caught at the next session start`() {
+    repeat(4) { server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}""")) }
+    store.setLastSyncedPermissionStatus("granted")
+    var permissionStatus: String? = "granted"
+    val core = newCore(
+      permissionStatusProvider = { cb -> cb(permissionStatus) },
+      clock = { 1_000L }
+    )
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+    awaitIdle()
+    drainRequests()
+
+    // The user disables push in OS Settings while the app is backgrounded;
+    // the next session start re-reads the OS state and finds granted -> denied.
+    permissionStatus = "denied"
+    core.onAppForegrounded()
+    awaitIdle()
+    awaitIdle()
+
+    val permission = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+    assertEquals("PATCH", permission.method)
+    val body = JSONObject(permission.body.readUtf8())
+    assertEquals("denied", body.getString("permission_status"))
+    // The granted->denied transition also carries last_unsubscribed_at in the
+    // same atomic request (DPF-14 permission-driven path).
+    assertEquals("1970-01-01T00:00:01.000Z", body.getString("last_unsubscribed_at"))
+    assertEquals("denied", store.getLastSyncedPermissionStatus())
+    assertEquals(1_000L, store.getLastUnsubscribedAtMs())
+  }
+
+  @Test
+  fun `setSubscription false on a subscribed device sets last_unsubscribed_at while permission stays granted`() {
+    // register POST + permission_status PATCH (registration) + subscribed PATCH
+    // + last_unsubscribed_at PATCH (the transition).
+    repeat(4) { server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}""")) }
+    store.setSubscribed(true)
+    val core = newCore(
+      permissionStatusProvider = { cb -> cb("granted") },
+      clock = { 1_000L }
+    )
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+    awaitIdle()
+
+    core.setSubscription(false)
+    awaitIdle()
+    awaitIdle()
+
+    val bodies = drainRequests().map { JSONObject(it.body.readUtf8()) }
+    val unsub = bodies.first { it.has("last_unsubscribed_at") }
+    assertEquals("1970-01-01T00:00:01.000Z", unsub.getString("last_unsubscribed_at"))
+    assertEquals(1_000L, store.getLastUnsubscribedAtMs())
+    // The app opt-out does not touch the OS permission axis (DPF-16).
+    val permissionPatches = bodies.filter { it.has("permission_status") }
+    assertTrue("permission_status must stay granted, not flip: $bodies",
+      permissionPatches.all { it.getString("permission_status") == "granted" })
+    assertFalse(store.getSubscribed())
+  }
+
+  @Test
+  fun `re-subscribe does not clear last_unsubscribed_at`() {
+    // register POST + permission_status PATCH + subscribed(false) PATCH +
+    // last_unsubscribed_at PATCH + subscribed(true) PATCH.
+    repeat(5) { server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}""")) }
+    store.setSubscribed(true)
+    val core = newCore(
+      permissionStatusProvider = { cb -> cb("granted") },
+      clock = { 1_000L }
+    )
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+    awaitIdle()
+
+    core.setSubscription(false)
+    awaitIdle()
+    awaitIdle()
+    assertEquals(1_000L, store.getLastUnsubscribedAtMs())
+
+    core.setSubscription(true)
+    awaitIdle()
+    awaitIdle()
+
+    // The timestamp is history, never cleared on re-subscribe (DPF-15).
+    assertEquals(1_000L, store.getLastUnsubscribedAtMs())
+    assertTrue(store.getSubscribed())
+    val bodies = drainRequests().map { JSONObject(it.body.readUtf8()) }
+    assertTrue("no clear of last_unsubscribed_at: $bodies",
+      bodies.none { it.has("last_unsubscribed_at") && it.isNull("last_unsubscribed_at") })
+  }
+
+  @Test
+  fun `an unknown permission status is omitted without crashing`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    val core = newCore(permissionStatusProvider = { cb -> cb(null) })
+
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+    awaitIdle()
+
+    // Registration POST only - no permission_status fabricated (DPF edge case).
+    assertEquals(1, server.requestCount)
+    assertNull(store.getLastSyncedPermissionStatus())
   }
 
   @Test

@@ -82,6 +82,17 @@ class NottiCore(
    */
   private val languageProvider: () -> String? = { null },
   /**
+   * Best-effort, async OS push-permission state read (DPF-10): resolves with
+   * one of `granted`/`denied`/`notDetermined` (plus `provisional` on iOS) or
+   * `null` on an unknown/transitional state or read failure - `null` omits the
+   * field, never fabricates a value (DPF edge case). Injected so [NottiCore]
+   * stays `Context`-free; the default no-op provider returns `null` (omit).
+   * Follows the async `countryProvider` callback shape, since the real OS
+   * read (iOS `UNUserNotificationCenter.getNotificationSettings`) is
+   * callback-based.
+   */
+  private val permissionStatusProvider: (callback: (String?) -> Unit) -> Unit = { cb -> cb(null) },
+  /**
    * Check-only OS location permission gate (SEGTEL-12/14): true only when the
    * host app has already been granted location permission. Never prompts - the
    * SDK only reads, it never requests (SEGTEL-14). Injected so [NottiCore]
@@ -164,6 +175,8 @@ class NottiCore(
     private const val KEY_SDK_VERSION = "sdkVersion"
     private const val KEY_TIMEZONE_ID = "timezoneId"
     private const val KEY_LANGUAGE = "language"
+    private const val KEY_PERMISSION_STATUS = "permissionStatus"
+    private const val KEY_LAST_UNSUBSCRIBED = "lastUnsubscribed"
 
     /**
      * Single-threaded so blocking HTTP work never piles up more than one
@@ -482,6 +495,7 @@ class NottiCore(
       deviceStore.setLastForegroundAtMs(nowMs)
     }
     readCountryIfOptedIn()
+    syncPermissionStatusIfNeeded()
   }
 
   private fun estimateOrphanEnd(startedAt: Long, heartbeat: Long?, nowMs: Long): Long {
@@ -617,6 +631,7 @@ class NottiCore(
             if (deviceStore.getPendingCountryClear()) runPendingCountryClearNow()
             flushPendingMutations()
             syncProfileFieldsIfNeeded()
+            syncPermissionStatusIfNeeded()
             flushEventQueue()
           }
           is ApiResult.Failure -> {
@@ -674,6 +689,9 @@ class NottiCore(
           )
         }
       }
+      // DPF-12: the OS permission status is re-read from the OS state (not
+      // inferred from the dialog bool) and diff-and-enqueued.
+      syncPermissionStatusIfNeeded()
       callback(granted)
     }
   }
@@ -705,9 +723,25 @@ class NottiCore(
 
   fun setSubscription(enabled: Boolean) {
     mutate("setSubscription") { client, deviceId, token ->
+      val wasSubscribed = deviceStore.getSubscribed()
       val result = client.patchDevice(deviceId, token, mapOf("subscribed" to enabled))
       when (result) {
-        is ApiResult.Success -> deviceStore.setSubscribed(enabled)
+        is ApiResult.Success -> {
+          deviceStore.setSubscribed(enabled)
+          // DPF-14 app-driven path: a real true->false transition records the
+          // most-recent unsubscribe timestamp locally and enqueues it (coalesced
+          // so a queued permission-driven write and this collapse to the latest).
+          if (!enabled && wasSubscribed) {
+            val now = clock()
+            deviceStore.setLastUnsubscribedAtMs(now)
+            runOrQueue(PendingMutation("lastUnsubscribed", KEY_LAST_UNSUBSCRIBED) { c, d, t ->
+              when (val r = c.patchDevice(d, t, mapOf("last_unsubscribed_at" to formatIsoUtc(now)))) {
+                is ApiResult.Success -> Unit // timestamp already persisted locally
+                is ApiResult.Failure -> logger("Notti.lastUnsubscribed: PATCH failed (${r.message}) - not retried")
+              }
+            })
+          }
+        }
         is ApiResult.Failure -> logger("Notti.setSubscription: PATCH failed (${result.message}) - not retried")
       }
     }
@@ -930,6 +964,44 @@ class NottiCore(
     sync("sdk_version", KEY_SDK_VERSION, sdkVersionProvider, deviceStore::getLastSyncedSdkVersion, deviceStore::setLastSyncedSdkVersion)
     sync("timezone_id", KEY_TIMEZONE_ID, timezoneProvider, deviceStore::getLastSyncedTimezoneId, deviceStore::setLastSyncedTimezoneId)
     sync("language", KEY_LANGUAGE, languageProvider, deviceStore::getLastSyncedLanguage, deviceStore::setLastSyncedLanguage)
+  }
+
+  /**
+   * Syncs the OS push-permission state (DPF-10..13, DPF-14 permission-driven
+   * unsubscribe). Fires the async [permissionStatusProvider]; only when the
+   * freshly-read status differs from the last synced one is a coalesced PATCH
+   * enqueued (diff-and-enqueue, DPF-11/13). A `null`/unknown status omits the
+   * field - never fabricated (DPF edge case). A granted -> denied transition
+   * additionally persists `last_unsubscribed_at` and carries it in the same
+   * atomic request (DPF-14).
+   *
+   * Called from three triggers: [registerDevice] success, the `requestPermission`
+   * result, and each session start (catches permission changed in OS Settings
+   * while the app wasn't running, DPF-13).
+   */
+  private fun syncPermissionStatusIfNeeded() {
+    permissionStatusProvider { status ->
+      if (status == null) return@permissionStatusProvider
+      dispatch("permissionStatus") {
+        if (apiClient == null) return@dispatch
+        // Already on the executor: run/queue directly rather than through
+        // [mutate], which would add a second dispatch hop.
+        runOrQueue(PendingMutation("permissionStatus", KEY_PERMISSION_STATUS) { client, deviceId, token ->
+          val previous = deviceStore.getLastSyncedPermissionStatus()
+          if (status == previous) return@PendingMutation
+          val fields = mutableMapOf<String, Any>("permission_status" to status)
+          if (status == "denied" && previous == "granted") {
+            val now = clock()
+            deviceStore.setLastUnsubscribedAtMs(now)
+            fields["last_unsubscribed_at"] = formatIsoUtc(now)
+          }
+          when (val result = client.patchDevice(deviceId, token, fields)) {
+            is ApiResult.Success -> deviceStore.setLastSyncedPermissionStatus(status)
+            is ApiResult.Failure -> logger("Notti.permissionStatus: PATCH failed (${result.message}) - not retried")
+          }
+        })
+      }
+    }
   }
 
   /** Called from [registerDevice] while [mutationLock] is held. */

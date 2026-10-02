@@ -7,6 +7,7 @@ import android.location.Geocoder
 import android.location.LocationManager
 import android.os.Build
 import android.util.Log
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
@@ -110,6 +111,7 @@ class NottiModule(reactContext: ReactApplicationContext) :
       deviceModelProvider = { readDeviceModel() },
       timezoneProvider = { readTimezoneId() },
       languageProvider = { readLanguage() },
+      permissionStatusProvider = { callback -> readPermissionStatus(callback) },
       hasLocationPermission = { hasLocationPermission() },
       countryProvider = { callback -> resolveCountry(callback) },
       // Routed through `activeInstance` (companion object, nulled out by
@@ -311,6 +313,42 @@ class NottiModule(reactContext: ReactApplicationContext) :
   } catch (t: Throwable) {
     Log.e(NAME, "Notti: failed to read language - ${t.message}")
     null
+  }
+
+  /**
+   * Best-effort OS push-permission state read (DPF-10): `granted` / `denied`
+   * / `notDetermined`, or `null` on an unknown/transitional state (DPF edge
+   * case - never fabricate). Below Android 13 no runtime permission exists, so
+   * the notifications-enabled check alone maps enabled->granted / disabled->
+   * denied. On 13+ the permission exists but may be unasked: a granted
+   * `POST_NOTIFICATIONS` maps to `granted`, and a not-enabled (or denied)
+   * state maps to `denied` - `notDetermined` is only reported where the OS
+   * itself has not yet decided (enabled but permission never requested).
+   */
+  private fun readPermissionStatus(callback: (String?) -> Unit) {
+    try {
+      val notificationsEnabled = NotificationManagerCompat
+        .from(reactApplicationContext)
+        .areNotificationsEnabled()
+      if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+        callback(if (notificationsEnabled) "granted" else "denied")
+        return
+      }
+      val permissionGranted = ContextCompat.checkSelfPermission(
+        reactApplicationContext,
+        Manifest.permission.POST_NOTIFICATIONS
+      ) == PackageManager.PERMISSION_GRANTED
+      callback(
+        when {
+          permissionGranted -> "granted"
+          notificationsEnabled -> "notDetermined"
+          else -> "denied"
+        }
+      )
+    } catch (t: Throwable) {
+      Log.e(NAME, "Notti: failed to read permission status - ${t.message}")
+      callback(null)
+    }
   }
 
   /**
