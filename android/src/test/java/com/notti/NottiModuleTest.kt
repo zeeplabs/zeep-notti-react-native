@@ -44,7 +44,7 @@ class NottiModuleTest {
     // NottiCore has an apiClient (set synchronously by initialize(), before
     // the async FCM-token fetch resolves) - mirrors NottiCoreTest.kt's own
     // "called before initialize" guard on the same method.
-    module.initialize("app-1", "key", "https://notti.example.com")
+    module.initialize("app-1", "key", "https://notti.example.com", "")
 
     var resolvedValue: Any? = null
     module.requestPermission(object : Promise {
@@ -75,7 +75,7 @@ class NottiModuleTest {
   fun `invalidate releases the process-wide hooks so a torn-down instance stops receiving clicks`() {
     NottiNotificationClickRelay.reset()
     val module = NottiModule(FakeReactApplicationContext())
-    module.initialize("app-1", "key", "https://notti.example.com")
+    module.initialize("app-1", "key", "https://notti.example.com", "")
     assertNotNull(NottiModule.activeCore)
 
     // RN destroys and rebuilds modules on every dev reload; without cleanup

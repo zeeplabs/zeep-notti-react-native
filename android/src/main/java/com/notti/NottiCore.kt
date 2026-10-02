@@ -156,6 +156,15 @@ class NottiCore(
   private var apiClient: NottiApiClient? = null
 
   /**
+   * The SDK package version, passed from JS at `initialize` (the package
+   * manifest is the single source of truth). Holds `null` when not provided
+   * or empty - the field is then omitted from the payload. Consumed by the
+   * `sdkVersionProvider` wired in `NottiModule` (DPF-01..04).
+   */
+  @Volatile
+  private var sdkVersion: String? = null
+
+  /**
    * Where the device's registration stands right now. Drives both the
    * app-foreground retry (spec SDK-05: after the 5-attempt backoff is
    * exhausted the SDK stops "until the next app foreground or the next
@@ -217,11 +226,16 @@ class NottiCore(
    */
   private val countryClearScheduled = AtomicBoolean(false)
 
-  fun initialize(appId: String, clientKey: String, baseUrl: String) {
+  fun initialize(appId: String, clientKey: String, baseUrl: String, sdkVersion: String? = null) {
     if (appId.isBlank() || clientKey.isBlank() || baseUrl.isBlank()) {
       logger("Notti.initialize: appId, clientKey, or baseUrl is missing/empty - skipping registration")
       return
     }
+
+    // Blank/empty sdkVersion (resolution failure on the JS side) is stored as
+    // null so the `sdk_version` field is omitted from the payload, never sent
+    // as an empty string.
+    this.sdkVersion = sdkVersion?.takeIf { it.isNotBlank() }
 
     // Validated and normalized exactly once, here (SDK-03 crash safety): a
     // scheme-less or otherwise malformed host would otherwise only blow up
@@ -660,6 +674,31 @@ class NottiCore(
         is ApiResult.Failure -> logger("Notti.setSubscription: PATCH failed (${result.message}) - not retried")
       }
     }
+  }
+
+  /**
+   * First-class device email (DPF-17, device-profile-fields P4): persists the
+   * held value locally. The PATCH enqueue (diff-and-enqueue against the held
+   * value, coalesced set) is completed in the T5 pass; this establishes the
+   * store write the rest builds on.
+   */
+  fun setEmail(email: String) {
+    deviceStore.setEmail(email)
+  }
+
+  /** Explicit clear (DPF-18): the held email is removed locally. */
+  fun clearEmail() {
+    deviceStore.setEmail(null)
+  }
+
+  /** First-class device phone (DPF-17): persists the held value locally. */
+  fun setPhone(phone: String) {
+    deviceStore.setPhone(phone)
+  }
+
+  /** Explicit clear (DPF-18): the held phone is removed locally. */
+  fun clearPhone() {
+    deviceStore.setPhone(null)
   }
 
   /**

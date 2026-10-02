@@ -20,7 +20,17 @@ data class DeviceState(
   val sessionCount: Int, // running total (P2)
   val sessionTimeMs: Long, // cumulative foreground ms (P2)
   val sessionStartedAtMs: Long?, // in-flight session, null when idle (P2)
-  val locationSharingEnabled: Boolean // P3 opt-in flag, default false
+  val locationSharingEnabled: Boolean, // P3 opt-in flag, default false
+  // --- device profile fields (device-profile-fields design.md) ---
+  val lastSyncedDeviceOs: String?, // P1 last synced OS version
+  val lastSyncedDeviceModel: String?, // P1 last synced device model
+  val lastSyncedSdkVersion: String?, // P1 last synced SDK version
+  val lastSyncedTimezoneId: String?, // P2 last synced IANA timezone
+  val lastSyncedLanguage: String?, // P2 last synced ISO 639-1 language
+  val lastSyncedPermissionStatus: String?, // P3 last synced OS permission state
+  val lastUnsubscribedAtMs: Long?, // P3 most-recent unsubscribe transition
+  val email: String?, // P4 held email (== last synced)
+  val phone: String? // P4 held phone (== last synced)
 )
 
 class NottiDeviceStore(private val prefs: SharedPreferences) {
@@ -43,6 +53,17 @@ class NottiDeviceStore(private val prefs: SharedPreferences) {
     private const val KEY_PENDING_COUNTRY_CLEAR = "notti_pending_country_clear"
     private const val KEY_LAST_SYNCED_COUNTRY = "notti_last_synced_country"
     private const val KEY_LAST_FOREGROUND_AT = "notti_last_foreground_at_ms"
+
+    // --- device profile field keys (same `notti_*` convention) ---
+    private const val KEY_LAST_SYNCED_DEVICE_OS = "notti_last_synced_device_os"
+    private const val KEY_LAST_SYNCED_DEVICE_MODEL = "notti_last_synced_device_model"
+    private const val KEY_LAST_SYNCED_SDK_VERSION = "notti_last_synced_sdk_version"
+    private const val KEY_LAST_SYNCED_TIMEZONE_ID = "notti_last_synced_timezone_id"
+    private const val KEY_LAST_SYNCED_LANGUAGE = "notti_last_synced_language"
+    private const val KEY_LAST_SYNCED_PERMISSION_STATUS = "notti_last_synced_permission_status"
+    private const val KEY_LAST_UNSUBSCRIBED_AT_MS = "notti_last_unsubscribed_at_ms"
+    private const val KEY_EMAIL = "notti_email"
+    private const val KEY_PHONE = "notti_phone"
 
     /**
      * Pure merge of the current tag map against an add map and/or a remove
@@ -113,7 +134,16 @@ class NottiDeviceStore(private val prefs: SharedPreferences) {
     sessionCount = getSessionCount(),
     sessionTimeMs = getSessionTimeMs(),
     sessionStartedAtMs = getSessionStartedAtMs(),
-    locationSharingEnabled = getLocationSharingEnabled()
+    locationSharingEnabled = getLocationSharingEnabled(),
+    lastSyncedDeviceOs = getLastSyncedDeviceOs(),
+    lastSyncedDeviceModel = getLastSyncedDeviceModel(),
+    lastSyncedSdkVersion = getLastSyncedSdkVersion(),
+    lastSyncedTimezoneId = getLastSyncedTimezoneId(),
+    lastSyncedLanguage = getLastSyncedLanguage(),
+    lastSyncedPermissionStatus = getLastSyncedPermissionStatus(),
+    lastUnsubscribedAtMs = getLastUnsubscribedAtMs(),
+    email = getEmail(),
+    phone = getPhone()
   )
 
   fun getAppVersion(): String? = prefs.getString(KEY_APP_VERSION, null)
@@ -188,5 +218,63 @@ class NottiDeviceStore(private val prefs: SharedPreferences) {
 
   fun setLastForegroundAtMs(lastForegroundAtMs: Long?) {
     prefs.edit().putLong(KEY_LAST_FOREGROUND_AT, lastForegroundAtMs ?: -1L).apply()
+  }
+
+  // --- device profile field accessors (device-profile-fields) ---
+
+  fun getLastSyncedDeviceOs(): String? = prefs.getString(KEY_LAST_SYNCED_DEVICE_OS, null)
+
+  fun setLastSyncedDeviceOs(value: String?) {
+    prefs.edit().putString(KEY_LAST_SYNCED_DEVICE_OS, value).apply()
+  }
+
+  fun getLastSyncedDeviceModel(): String? = prefs.getString(KEY_LAST_SYNCED_DEVICE_MODEL, null)
+
+  fun setLastSyncedDeviceModel(value: String?) {
+    prefs.edit().putString(KEY_LAST_SYNCED_DEVICE_MODEL, value).apply()
+  }
+
+  fun getLastSyncedSdkVersion(): String? = prefs.getString(KEY_LAST_SYNCED_SDK_VERSION, null)
+
+  fun setLastSyncedSdkVersion(value: String?) {
+    prefs.edit().putString(KEY_LAST_SYNCED_SDK_VERSION, value).apply()
+  }
+
+  fun getLastSyncedTimezoneId(): String? = prefs.getString(KEY_LAST_SYNCED_TIMEZONE_ID, null)
+
+  fun setLastSyncedTimezoneId(value: String?) {
+    prefs.edit().putString(KEY_LAST_SYNCED_TIMEZONE_ID, value).apply()
+  }
+
+  fun getLastSyncedLanguage(): String? = prefs.getString(KEY_LAST_SYNCED_LANGUAGE, null)
+
+  fun setLastSyncedLanguage(value: String?) {
+    prefs.edit().putString(KEY_LAST_SYNCED_LANGUAGE, value).apply()
+  }
+
+  fun getLastSyncedPermissionStatus(): String? =
+    prefs.getString(KEY_LAST_SYNCED_PERMISSION_STATUS, null)
+
+  fun setLastSyncedPermissionStatus(value: String?) {
+    prefs.edit().putString(KEY_LAST_SYNCED_PERMISSION_STATUS, value).apply()
+  }
+
+  fun getLastUnsubscribedAtMs(): Long? =
+    prefs.getLong(KEY_LAST_UNSUBSCRIBED_AT_MS, -1L).takeIf { it >= 0 }
+
+  fun setLastUnsubscribedAtMs(value: Long?) {
+    prefs.edit().putLong(KEY_LAST_UNSUBSCRIBED_AT_MS, value ?: -1L).apply()
+  }
+
+  fun getEmail(): String? = prefs.getString(KEY_EMAIL, null)
+
+  fun setEmail(value: String?) {
+    prefs.edit().putString(KEY_EMAIL, value).apply()
+  }
+
+  fun getPhone(): String? = prefs.getString(KEY_PHONE, null)
+
+  fun setPhone(value: String?) {
+    prefs.edit().putString(KEY_PHONE, value).apply()
   }
 }
