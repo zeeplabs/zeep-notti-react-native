@@ -935,6 +935,130 @@ fun `requestPermission result syncs the OS permission status`() {
     assertNull(store.getLastSyncedPermissionStatus())
   }
 
+  // ---------------------------------------------------------------------
+  // First-class email/phone (device-profile-fields, T5)
+  // ---------------------------------------------------------------------
+
+  @Test
+  fun `setEmail enqueues a PATCH with email and never touches tags`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    val core = newCore()
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    core.setEmail("user@example.com")
+    awaitIdle()
+    awaitIdle()
+
+    server.takeRequest(5, TimeUnit.SECONDS) // register
+    val patch = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+    assertEquals("PATCH", patch.method)
+    val body = JSONObject(patch.body.readUtf8())
+    assertEquals("user@example.com", body.getString("email"))
+    assertFalse("email must travel as its own field, never merged into tags (DPF-21)", body.has("tags"))
+    assertEquals("user@example.com", store.getEmail())
+  }
+
+  @Test
+  fun `clearEmail enqueues an explicit email null clear`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    val core = newCore()
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    core.clearEmail()
+    awaitIdle()
+    awaitIdle()
+
+    server.takeRequest(5, TimeUnit.SECONDS) // register
+    val patch = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+    assertEquals("PATCH", patch.method)
+    assertTrue(JSONObject(patch.body.readUtf8()).isNull("email"))
+    assertNull(store.getEmail())
+  }
+
+  @Test
+  fun `setEmail twice with the same value enqueues a single mutation`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    val core = newCore()
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    core.setEmail("user@example.com")
+    awaitIdle()
+    awaitIdle()
+    assertEquals("user@example.com", store.getEmail())
+
+    core.setEmail("user@example.com")
+    awaitIdle()
+    awaitIdle()
+
+    // register POST + exactly one email PATCH - the duplicate set is a no-op
+    // (DPF-20 idempotence, matching addTag).
+    assertEquals(2, server.requestCount)
+    assertEquals("user@example.com", store.getEmail())
+  }
+
+  @Test
+  fun `setPhone enqueues a PATCH with phone`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    val core = newCore()
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    core.setPhone("+5511999999999")
+    awaitIdle()
+    awaitIdle()
+
+    server.takeRequest(5, TimeUnit.SECONDS) // register
+    val patch = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+    assertEquals("PATCH", patch.method)
+    assertEquals("+5511999999999", JSONObject(patch.body.readUtf8()).getString("phone"))
+    assertEquals("+5511999999999", store.getPhone())
+  }
+
+  @Test
+  fun `registration success re-sends a held email and phone`() {
+    store.setEmail("held@example.com")
+    store.setPhone("+10000000000")
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    val core = newCore()
+
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+    awaitIdle()
+
+    // register POST + email PATCH + phone PATCH - the held values converge
+    // onto a (possibly fresh) backend row without re-calling the setters
+    // (DPF-19).
+    assertEquals(3, server.requestCount)
+    server.takeRequest(5, TimeUnit.SECONDS) // register
+    val bodies = (0 until 2).map {
+      JSONObject(requireNotNull(server.takeRequest(5, TimeUnit.SECONDS)).body.readUtf8())
+    }
+    assertTrue(bodies.any { it.optString("email") == "held@example.com" })
+    assertTrue(bodies.any { it.optString("phone") == "+10000000000" })
+  }
+
+  @Test
+  fun `registration success with no held email or phone sends nothing for them`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    val core = newCore()
+
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+    awaitIdle()
+
+    // Only the registration POST - null held values are never sent (DPF-19).
+    assertEquals(1, server.requestCount)
+  }
+
   @Test
   fun `session end after a foreground start aggregates count and time and enqueues a snapshot PATCH`() {
     server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
