@@ -177,6 +177,8 @@ class NottiCore(
     private const val KEY_LANGUAGE = "language"
     private const val KEY_PERMISSION_STATUS = "permissionStatus"
     private const val KEY_LAST_UNSUBSCRIBED = "lastUnsubscribed"
+    private const val KEY_EMAIL = "email"
+    private const val KEY_PHONE = "phone"
 
     /**
      * Single-threaded so blocking HTTP work never piles up more than one
@@ -632,6 +634,7 @@ class NottiCore(
             flushPendingMutations()
             syncProfileFieldsIfNeeded()
             syncPermissionStatusIfNeeded()
+            resyncHeldEmailAndPhone()
             flushEventQueue()
           }
           is ApiResult.Failure -> {
@@ -748,28 +751,58 @@ class NottiCore(
   }
 
   /**
-   * First-class device email (DPF-17, device-profile-fields P4): persists the
-   * held value locally. The PATCH enqueue (diff-and-enqueue against the held
-   * value, coalesced set) is completed in the T5 pass; this establishes the
-   * store write the rest builds on.
+   * First-class device email (DPF-17): persists the held value locally, then
+   * enqueues a coalesced PATCH. A value equal to the currently-held value is
+   * a no-op (DPF-20, matching `addTag` idempotence). Travels as its own PATCH
+   * field, never merged into tags (DPF-21).
    */
   fun setEmail(email: String) {
+    if (email == deviceStore.getEmail()) return
     deviceStore.setEmail(email)
+    mutate("setEmail", KEY_EMAIL) { client, deviceId, token ->
+      val result = client.patchDevice(deviceId, token, mapOf("email" to email))
+      when (result) {
+        is ApiResult.Success -> Unit // held == synced
+        is ApiResult.Failure -> logger("Notti.setEmail: PATCH failed (${result.message}) - not retried")
+      }
+    }
   }
 
-  /** Explicit clear (DPF-18): the held email is removed locally. */
+  /** Explicit clear (DPF-18): persists `null` and enqueues an explicit `{email: null}`. */
   fun clearEmail() {
     deviceStore.setEmail(null)
+    mutate("clearEmail", KEY_EMAIL) { client, deviceId, token ->
+      val result = client.patchDevice(deviceId, token, mapOf("email" to org.json.JSONObject.NULL))
+      when (result) {
+        is ApiResult.Success -> Unit
+        is ApiResult.Failure -> logger("Notti.clearEmail: PATCH failed (${result.message}) - not retried")
+      }
+    }
   }
 
-  /** First-class device phone (DPF-17): persists the held value locally. */
+  /** First-class device phone (DPF-17); see [setEmail] for the contract. */
   fun setPhone(phone: String) {
+    if (phone == deviceStore.getPhone()) return
     deviceStore.setPhone(phone)
+    mutate("setPhone", KEY_PHONE) { client, deviceId, token ->
+      val result = client.patchDevice(deviceId, token, mapOf("phone" to phone))
+      when (result) {
+        is ApiResult.Success -> Unit
+        is ApiResult.Failure -> logger("Notti.setPhone: PATCH failed (${result.message}) - not retried")
+      }
+    }
   }
 
-  /** Explicit clear (DPF-18): the held phone is removed locally. */
+  /** Explicit clear (DPF-18): persists `null` and enqueues an explicit `{phone: null}`. */
   fun clearPhone() {
     deviceStore.setPhone(null)
+    mutate("clearPhone", KEY_PHONE) { client, deviceId, token ->
+      val result = client.patchDevice(deviceId, token, mapOf("phone" to org.json.JSONObject.NULL))
+      when (result) {
+        is ApiResult.Success -> Unit
+        is ApiResult.Failure -> logger("Notti.clearPhone: PATCH failed (${result.message}) - not retried")
+      }
+    }
   }
 
   /**
@@ -1001,6 +1034,35 @@ class NottiCore(
           }
         })
       }
+    }
+  }
+
+  /**
+   * Registration-success re-sync of a locally-held `email`/`phone` (DPF-19):
+   * when the held value is non-null, enqueue a set unconditionally - the
+   * backend row may be fresh after a reinstall/backup-restore, so the value
+   * must converge without the integrator re-calling `setEmail`/`setPhone`.
+   * A null held value sends nothing. Called from [registerDevice]'s success
+   * branch alongside the profile/permission syncs.
+   */
+  private fun resyncHeldEmailAndPhone() {
+    val email = deviceStore.getEmail()
+    if (email != null) {
+      runOrQueue(PendingMutation("resyncEmail", KEY_EMAIL) { client, deviceId, token ->
+        when (val result = client.patchDevice(deviceId, token, mapOf("email" to email))) {
+          is ApiResult.Success -> Unit
+          is ApiResult.Failure -> logger("Notti.resyncEmail: PATCH failed (${result.message}) - not retried")
+        }
+      })
+    }
+    val phone = deviceStore.getPhone()
+    if (phone != null) {
+      runOrQueue(PendingMutation("resyncPhone", KEY_PHONE) { client, deviceId, token ->
+        when (val result = client.patchDevice(deviceId, token, mapOf("phone" to phone))) {
+          is ApiResult.Success -> Unit
+          is ApiResult.Failure -> logger("Notti.resyncPhone: PATCH failed (${result.message}) - not retried")
+        }
+      })
     }
   }
 
