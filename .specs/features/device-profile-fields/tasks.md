@@ -69,13 +69,13 @@ iOS:     T6 ──→ T7 ──→ T8 ──→ T9
 - Skill: NONE
 
 **Done when**:
-- [ ] `Spec.initialize(appId: string, clientKey: string, baseUrl: string, sdkVersion: string): void` in `src/NativeNotti.ts` (the codegen signature the native overrides compile against)
-- [ ] `Spec.setEmail(email: string): void`, `clearEmail(): void`, `setPhone(phone: string): void`, `clearPhone(): void` declared in `src/NativeNotti.ts` (positioned with the other setters, after `setLocationSharingEnabled`)
-- [ ] `initialize` in `src/index.tsx` resolves the package version once at module load (`require('react-native-notti/package.json').version` via the package's `exports`; on resolution failure passes `''`) and forwards it as the 4th native arg — native treats empty as `null` → field omitted; public `initialize(appId, clientKey, options)` unchanged
-- [ ] `User.setEmail(email: string)`, `User.clearEmail()`, `User.setPhone(phone: string)`, `User.clearPhone()` added to the `User` object, each delegating one line to `NativeNotti` (AD-001: thin pass-through, no business logic in TS)
-- [ ] Unit tests in `src/__tests__/index.test.tsx`: `initialize` forwards the resolved `sdkVersion` as the 4th arg; empty-string fallback path; the four email/phone methods delegate to `NativeNotti` with the passed args (mock `NativeNotti` per the file's existing pattern)
-- [ ] Gate check passes: `pnpm typecheck && pnpm lint && pnpm test`
-- [ ] Test count: at least 5 new tests pass, all pre-existing `index.test.tsx` tests still pass
+- [x] `Spec.initialize(appId: string, clientKey: string, baseUrl: string, sdkVersion: string): void` in `src/NativeNotti.ts` (the codegen signature the native overrides compile against)
+- [x] `Spec.setEmail(email: string): void`, `clearEmail(): void`, `setPhone(phone: string): void`, `clearPhone(): void` declared in `src/NativeNotti.ts` (positioned with the other setters, after `setLocationSharingEnabled`)
+- [x] `initialize` in `src/index.tsx` resolves the package version once at module load (`require('react-native-notti/package.json').version` via the package's `exports`; on resolution failure passes `''`) and forwards it as the 4th native arg — native treats empty as `null` → field omitted; public `initialize(appId, clientKey, options)` unchanged
+- [x] `User.setEmail(email: string)`, `User.clearEmail()`, `User.setPhone(phone: string)`, `User.clearPhone()` added to the `User` object, each delegating one line to `NativeNotti` (AD-001: thin pass-through, no business logic in TS)
+- [x] Unit tests in `src/__tests__/index.test.tsx`: `initialize` forwards the resolved `sdkVersion` as the 4th arg; empty-string fallback path; the four email/phone methods delegate to `NativeNotti` with the passed args (mock `NativeNotti` per the file's existing pattern)
+- [x] Gate check passes: `pnpm typecheck && pnpm lint && pnpm test`
+- [x] Test count: at least 5 new tests pass, all pre-existing `index.test.tsx` tests still pass
 
 **Tests**: unit (Jest)
 **Gate**: quick (JS trio)
@@ -97,12 +97,12 @@ iOS:     T6 ──→ T7 ──→ T8 ──→ T9
 - Skill: NONE
 
 **Done when**:
-- [ ] `DeviceState` gains: `lastSyncedDeviceOs: String?`, `lastSyncedDeviceModel: String?`, `lastSyncedSdkVersion: String?`, `lastSyncedTimezoneId: String?`, `lastSyncedLanguage: String?`, `lastSyncedPermissionStatus: String?`, `lastUnsubscribedAtMs: Long?`, `email: String?`, `phone: String?`
-- [ ] Keys added following the existing `notti_*` convention (`notti_last_synced_device_os`, `notti_last_synced_device_model`, `notti_last_synced_sdk_version`, `notti_last_synced_timezone_id`, `notti_last_synced_language`, `notti_last_synced_permission_status`, `notti_last_unsubscribed_at_ms`, `notti_email`, `notti_phone`) + getter/setter per field, all `prefs.edit().putX(...).apply()` style; `lastUnsubscribedAtMs` uses the `getLong(KEY, -1L).takeIf { it >= 0 }` sentinel of the other `Long?` fields
-- [ ] `getState()` returns the extended `DeviceState` with all nine new fields populated
-- [ ] Unit tests: round-trip each new field (set → get); a fresh `NottiDeviceStore` over the same `SharedPreferences` sees persisted values (proves real persistence); absent fields default to `null`
-- [ ] Gate check passes: `cd example/android && ./gradlew :react-native-notti:testDebugUnitTest`
-- [ ] Test count: new tests pass, all pre-existing `NottiDeviceStoreTest.kt` tests still pass (constructor/getState call sites across the suite may need updating — that's expected, assertions unchanged)
+- [x] `DeviceState` gains: `lastSyncedDeviceOs: String?`, `lastSyncedDeviceModel: String?`, `lastSyncedSdkVersion: String?`, `lastSyncedTimezoneId: String?`, `lastSyncedLanguage: String?`, `lastSyncedPermissionStatus: String?`, `lastUnsubscribedAtMs: Long?`, `email: String?`, `phone: String?`
+- [x] Keys added following the existing `notti_*` convention (`notti_last_synced_device_os`, `notti_last_synced_device_model`, `notti_last_synced_sdk_version`, `notti_last_synced_timezone_id`, `notti_last_synced_language`, `notti_last_synced_permission_status`, `notti_last_unsubscribed_at_ms`, `notti_email`, `notti_phone`) + getter/setter per field, all `prefs.edit().putX(...).apply()` style; `lastUnsubscribedAtMs` uses the `getLong(KEY, -1L).takeIf { it >= 0 }` sentinel of the other `Long?` fields
+- [x] `getState()` returns the extended `DeviceState` with all nine new fields populated
+- [x] Unit tests: round-trip each new field (set → get); a fresh `NottiDeviceStore` over the same `SharedPreferences` sees persisted values (proves real persistence); absent fields default to `null`
+- [x] Gate check passes: `cd example/android && ./gradlew :react-native-notti:testDebugUnitTest`
+- [x] Test count: new tests pass, all pre-existing `NottiDeviceStoreTest.kt` tests still pass (constructor/getState call sites across the suite may need updating — that's expected, assertions unchanged)
 
 **Tests**: unit
 **Gate**: quick
@@ -124,14 +124,14 @@ iOS:     T6 ──→ T7 ──→ T8 ──→ T9
 - Skill: NONE
 
 **Done when**:
-- [ ] `NottiCore` constructor gains `deviceOsProvider: () -> String?`, `deviceModelProvider: () -> String?`, `sdkVersionProvider: () -> String?`, `timezoneProvider: () -> String?`, `languageProvider: () -> String?` (defaults `{ null }` so existing tests instantiate unchanged — a null provider makes that field's sync a no-op, DPF-04/09)
-- [ ] `syncProfileFieldsIfNeeded()` replaces `syncAppVersionIfNeeded()`: for each of the six fields, `provider()?.let { cur -> if (cur != store.getLastSynced<Field>()) mutate("<field>", coalesceKey) { patchDevice(mapOf("<field>" to cur)); on Success -> store.setLastSynced<Field>(cur) } }`; opaque strings, no semver/locale parsing; `app_version` folds into the loop with unchanged behavior (DPF-05)
-- [ ] `initialize(appId: String, clientKey: String, baseUrl: String, sdkVersion: String?)` accepts and stores the version (empty/blank → `null`), feeding `sdkVersionProvider`
-- [ ] `syncProfileFieldsIfNeeded()` called from `registerDevice`'s Success branch right after `flushPendingMutations()` (replacing the `syncAppVersionIfNeeded()` call, 568) — covers DPF-02 (registration payload) and DPF-07
-- [ ] `NottiModule` override `initialize(appId, clientKey, baseUrl, sdkVersion)` forwards the version to core; real providers wired in the `core` lazy (97-127): `Build.VERSION.RELEASE`, `Build.MODEL`, `TimeZone.getDefault().id`, `Locale.getDefault().language`, each wrapped in try/catch → `null` on failure (SDK must never crash here, DPF-04/09)
-- [ ] Unit tests (`NottiCoreTest.kt`): a fresh registration payload carries `device_os`/`device_model`/`sdk_version`/`timezone_id`/`language`/`app_version`; mutating one mocked value between two flows re-sends ONLY that field (diff, not the whole set — DPF-03/08); a `null` provider → that field omitted, no crash; `sdk_version` passed via `initialize` reaches the payload; `app_version` still syncs on change
-- [ ] Gate check passes: `cd example/android && ./gradlew :react-native-notti:testDebugUnitTest`
-- [ ] Test count: at least 5 new tests pass, all pre-existing `NottiCoreTest.kt` tests still pass
+- [x] `NottiCore` constructor gains `deviceOsProvider: () -> String?`, `deviceModelProvider: () -> String?`, `sdkVersionProvider: () -> String?`, `timezoneProvider: () -> String?`, `languageProvider: () -> String?` (defaults `{ null }` so existing tests instantiate unchanged — a null provider makes that field's sync a no-op, DPF-04/09)
+- [x] `syncProfileFieldsIfNeeded()` replaces `syncAppVersionIfNeeded()`: for each of the six fields, `provider()?.let { cur -> if (cur != store.getLastSynced<Field>()) mutate("<field>", coalesceKey) { patchDevice(mapOf("<field>" to cur)); on Success -> store.setLastSynced<Field>(cur) } }`; opaque strings, no semver/locale parsing; `app_version` folds into the loop with unchanged behavior (DPF-05)
+- [x] `initialize(appId: String, clientKey: String, baseUrl: String, sdkVersion: String?)` accepts and stores the version (empty/blank → `null`), feeding `sdkVersionProvider`
+- [x] `syncProfileFieldsIfNeeded()` called from `registerDevice`'s Success branch right after `flushPendingMutations()` (replacing the `syncAppVersionIfNeeded()` call, 568) — covers DPF-02 (registration payload) and DPF-07
+- [x] `NottiModule` override `initialize(appId, clientKey, baseUrl, sdkVersion)` forwards the version to core; real providers wired in the `core` lazy (97-127): `Build.VERSION.RELEASE`, `Build.MODEL`, `TimeZone.getDefault().id`, `Locale.getDefault().language`, each wrapped in try/catch → `null` on failure (SDK must never crash here, DPF-04/09)
+- [x] Unit tests (`NottiCoreTest.kt`): a fresh registration payload carries `device_os`/`device_model`/`sdk_version`/`timezone_id`/`language`/`app_version`; mutating one mocked value between two flows re-sends ONLY that field (diff, not the whole set — DPF-03/08); a `null` provider → that field omitted, no crash; `sdk_version` passed via `initialize` reaches the payload; `app_version` still syncs on change
+- [x] Gate check passes: `cd example/android && ./gradlew :react-native-notti:testDebugUnitTest`
+- [x] Test count: at least 5 new tests pass, all pre-existing `NottiCoreTest.kt` tests still pass
 
 **Tests**: unit
 **Gate**: quick
@@ -153,18 +153,18 @@ iOS:     T6 ──→ T7 ──→ T8 ──→ T9
 - Skill: NONE
 
 **Done when**:
-- [ ] `NottiCore` constructor gains `permissionStatusProvider: (callback: (String?) -> Unit) -> Unit` (async, default `{ cb -> cb(null) }` — keeps existing tests compiling; null → omit)
-- [ ] `syncPermissionStatusIfNeeded()`: fires the provider; if `status != deviceStore.getLastSyncedPermissionStatus()`, enqueues a coalesced PATCH `permission_status` and persists the value on Success; `null`/unknown status → omit, never fabricate (DPF edge case)
-- [ ] Trigger 1 — `registerDevice` Success: `syncPermissionStatusIfNeeded()` called alongside `syncProfileFieldsIfNeeded()` (DPF-11)
-- [ ] Trigger 2 — `requestPermission` result: in the existing `mutate("requestPermission")` work (616-625), after the `subscribed` PATCH, fire the provider and enqueue the current `permission_status` in its callback (DPF-12 — reads OS state, not the dialog bool)
-- [ ] Trigger 3 — `handleSessionStart`: after session bookkeeping, fire the provider and diff-and-enqueue (DPF-13 — catches permission changed in OS Settings while the app wasn't running)
-- [ ] `setSubscription(false)`: if stored `subscribed` was `true` (a real true→false transition), persist `lastUnsubscribedAtMs = now` and enqueue `{last_unsubscribed_at: formatIsoUtc(now)}` coalesced key `lastUnsubscribed` (DPF-14 app-driven path); `setSubscription(true)` never clears it (DPF-15)
-- [ ] In `syncPermissionStatusIfNeeded`: freshly-read status `denied` AND previous synced status `granted` → persist `lastUnsubscribedAtMs = now` and carry `last_unsubscribed_at` in the same PATCH (DPF-14 permission-driven path — atomic single request)
-- [ ] Two-axis independence: `permission_status` and `subscribed` updated independently, no cross-field inference (DPF-16)
-- [ ] `NottiModule` provides the real provider: `NotificationManagerCompat.areNotificationsEnabled(context)` + API 33 `checkSelfPermission(POST_NOTIFICATIONS)`; `<33` maps enabled→`granted`/disabled→`denied` (no runtime permission exists below 33); unknown/transitional → `null`
-- [ ] Unit tests (`NottiCoreTest.kt`): registration success syncs `permission_status`; `requestPermission` result syncs it; a simulated granted→denied Settings change at the next session start enqueues `permission_status` + `last_unsubscribed_at`; `setSubscription(false)` on a subscribed device sets `last_unsubscribed_at` while `permission_status` stays `granted`; re-subscribe does NOT clear `last_unsubscribed_at`; unknown status → omitted, no crash
-- [ ] Gate check passes: `cd example/android && ./gradlew :react-native-notti:testDebugUnitTest`
-- [ ] Test count: at least 5 new tests pass, all pre-existing tests still pass
+- [x] `NottiCore` constructor gains `permissionStatusProvider: (callback: (String?) -> Unit) -> Unit` (async, default `{ cb -> cb(null) }` — keeps existing tests compiling; null → omit)
+- [x] `syncPermissionStatusIfNeeded()`: fires the provider; if `status != deviceStore.getLastSyncedPermissionStatus()`, enqueues a coalesced PATCH `permission_status` and persists the value on Success; `null`/unknown status → omit, never fabricate (DPF edge case)
+- [x] Trigger 1 — `registerDevice` Success: `syncPermissionStatusIfNeeded()` called alongside `syncProfileFieldsIfNeeded()` (DPF-11)
+- [x] Trigger 2 — `requestPermission` result: in the existing `mutate("requestPermission")` work (616-625), after the `subscribed` PATCH, fire the provider and enqueue the current `permission_status` in its callback (DPF-12 — reads OS state, not the dialog bool)
+- [x] Trigger 3 — `handleSessionStart`: after session bookkeeping, fire the provider and diff-and-enqueue (DPF-13 — catches permission changed in OS Settings while the app wasn't running)
+- [x] `setSubscription(false)`: if stored `subscribed` was `true` (a real true→false transition), persist `lastUnsubscribedAtMs = now` and enqueue `{last_unsubscribed_at: formatIsoUtc(now)}` coalesced key `lastUnsubscribed` (DPF-14 app-driven path); `setSubscription(true)` never clears it (DPF-15)
+- [x] In `syncPermissionStatusIfNeeded`: freshly-read status `denied` AND previous synced status `granted` → persist `lastUnsubscribedAtMs = now` and carry `last_unsubscribed_at` in the same PATCH (DPF-14 permission-driven path — atomic single request)
+- [x] Two-axis independence: `permission_status` and `subscribed` updated independently, no cross-field inference (DPF-16)
+- [x] `NottiModule` provides the real provider: `NotificationManagerCompat.areNotificationsEnabled(context)` + API 33 `checkSelfPermission(POST_NOTIFICATIONS)`; `<33` maps enabled→`granted`/disabled→`denied` (no runtime permission exists below 33); unknown/transitional → `null`
+- [x] Unit tests (`NottiCoreTest.kt`): registration success syncs `permission_status`; `requestPermission` result syncs it; a simulated granted→denied Settings change at the next session start enqueues `permission_status` + `last_unsubscribed_at`; `setSubscription(false)` on a subscribed device sets `last_unsubscribed_at` while `permission_status` stays `granted`; re-subscribe does NOT clear `last_unsubscribed_at`; unknown status → omitted, no crash
+- [x] Gate check passes: `cd example/android && ./gradlew :react-native-notti:testDebugUnitTest`
+- [x] Test count: at least 5 new tests pass, all pre-existing tests still pass
 
 **Tests**: unit
 **Gate**: quick
@@ -186,14 +186,14 @@ iOS:     T6 ──→ T7 ──→ T8 ──→ T9
 - Skill: NONE
 
 **Done when**:
-- [ ] `NottiCore.setEmail(email: String)`/`setPhone(phone: String)`: persist the value; if equal to the currently-held value → no-op (DPF-20); else `mutate("setEmail", KEY_EMAIL)` enqueue `patchDevice({email: value})`, on Success no-op (held == synced)
-- [ ] `NottiCore.clearEmail()`/`clearPhone()`: persist `null`; enqueue `{email: JSONObject.NULL}`/`{phone: JSONObject.NULL}` via the raw-JSON null path (DPF-18); coalesce key so a queued set is superseded by the clear
-- [ ] Coalesce keys `KEY_EMAIL`/`KEY_PHONE` added to the companion, treated like the telemetry keys (replace queued, not against the 32-cap — design Tech Decisions)
-- [ ] `registerDevice` Success: after the profile/permission syncs, if held `email`/`phone` is non-null, enqueue a set unconditionally (DPF-19 — fresh backend row after reinstall/backup-restore converges); null held → nothing sent
-- [ ] `NottiModule` overrides the 4 codegen methods (`setEmail(email: String?)`, `clearEmail()`, `setPhone(phone: String?)`, `clearPhone()`) delegating one line to core
-- [ ] Unit tests (`NottiCoreTest.kt`): `setEmail` enqueues PATCH `{email}` and NO `tags` field (DPF-21); `clearEmail` enqueues `{email: null}`; `setEmail` twice with the same value → a single mutation (DPF-20 idempotence); registration success re-sends a held email/phone; null held → nothing sent
-- [ ] Gate check passes: `cd example/android && ./gradlew :react-native-notti:testDebugUnitTest`
-- [ ] Test count: at least 5 new tests pass, all pre-existing tests still pass
+- [x] `NottiCore.setEmail(email: String)`/`setPhone(phone: String)`: persist the value; if equal to the currently-held value → no-op (DPF-20); else `mutate("setEmail", KEY_EMAIL)` enqueue `patchDevice({email: value})`, on Success no-op (held == synced)
+- [x] `NottiCore.clearEmail()`/`clearPhone()`: persist `null`; enqueue `{email: JSONObject.NULL}`/`{phone: JSONObject.NULL}` via the raw-JSON null path (DPF-18); coalesce key so a queued set is superseded by the clear
+- [x] Coalesce keys `KEY_EMAIL`/`KEY_PHONE` added to the companion, treated like the telemetry keys (replace queued, not against the 32-cap — design Tech Decisions)
+- [x] `registerDevice` Success: after the profile/permission syncs, if held `email`/`phone` is non-null, enqueue a set unconditionally (DPF-19 — fresh backend row after reinstall/backup-restore converges); null held → nothing sent
+- [x] `NottiModule` overrides the 4 codegen methods (`setEmail(email: String?)`, `clearEmail()`, `setPhone(phone: String?)`, `clearPhone()`) delegating one line to core
+- [x] Unit tests (`NottiCoreTest.kt`): `setEmail` enqueues PATCH `{email}` and NO `tags` field (DPF-21); `clearEmail` enqueues `{email: null}`; `setEmail` twice with the same value → a single mutation (DPF-20 idempotence); registration success re-sends a held email/phone; null held → nothing sent
+- [x] Gate check passes: `cd example/android && ./gradlew :react-native-notti:testDebugUnitTest`
+- [x] Test count: at least 5 new tests pass, all pre-existing tests still pass
 
 **Tests**: unit
 **Gate**: quick
@@ -215,12 +215,12 @@ iOS:     T6 ──→ T7 ──→ T8 ──→ T9
 - Skill: NONE
 
 **Done when**:
-- [ ] `DeviceState` gains the same 9 fields as T2 (`lastSyncedDeviceOs`/`lastSyncedDeviceModel`/`lastSyncedSdkVersion`/`lastSyncedTimezoneId`/`lastSyncedLanguage`/`lastSyncedPermissionStatus: String?`, `lastUnsubscribedAtMs: Int64?`, `email: String?`, `phone: String?`), with matching `init` defaults
-- [ ] Keys + getters/setters per field, `UserDefaults` style matching existing (`notti_last_synced_*`, `notti_last_unsubscribed_at_ms`, `notti_email`, `notti_phone`); `Int64?` via the `(defaults.object(...) as? NSNumber)?.int64Value` pattern; absent → nil
-- [ ] `getState()` extended with all nine fields
-- [ ] Unit tests mirroring T2's (round-trip, real persistence across a new store instance over the same suite, nil defaults)
-- [ ] Gate check passes: `xcodebuild test -workspace example/ios/NottiExample.xcworkspace -scheme NottiTests -destination 'platform=iOS Simulator,name=iPhone 17'`
-- [ ] Test count: new tests pass, all pre-existing `NottiDeviceStoreTests.swift` tests still pass
+- [x] `DeviceState` gains the same 9 fields as T2 (`lastSyncedDeviceOs`/`lastSyncedDeviceModel`/`lastSyncedSdkVersion`/`lastSyncedTimezoneId`/`lastSyncedLanguage`/`lastSyncedPermissionStatus: String?`, `lastUnsubscribedAtMs: Int64?`, `email: String?`, `phone: String?`), with matching `init` defaults
+- [x] Keys + getters/setters per field, `UserDefaults` style matching existing (`notti_last_synced_*`, `notti_last_unsubscribed_at_ms`, `notti_email`, `notti_phone`); `Int64?` via the `(defaults.object(...) as? NSNumber)?.int64Value` pattern; absent → nil
+- [x] `getState()` extended with all nine fields
+- [x] Unit tests mirroring T2's (round-trip, real persistence across a new store instance over the same suite, nil defaults)
+- [x] Gate check passes: `xcodebuild test -workspace example/ios/NottiExample.xcworkspace -scheme NottiTests -destination 'platform=iOS Simulator,name=iPhone 17'`
+- [x] Test count: new tests pass, all pre-existing `NottiDeviceStoreTests.swift` tests still pass
 
 **Tests**: unit
 **Gate**: quick
@@ -242,14 +242,14 @@ iOS:     T6 ──→ T7 ──→ T8 ──→ T9
 - Skill: NONE
 
 **Done when**:
-- [ ] `NottiCore` init gains `deviceOsProvider`/`deviceModelProvider`/`sdkVersionProvider`/`timezoneProvider`/`languageProvider` (`() -> String?`, defaults `{ nil }`)
-- [ ] `syncProfileFieldsIfNeeded(_ client:)` replaces `syncAppVersionIfNeeded`: six-field loop, per-field diff against the store's last-synced value, coalesced `performOrQueue` PATCH, persist on Success; nil provider → skip that field only (DPF-04/09); `app_version` unchanged (DPF-05)
-- [ ] `initialize(appId:clientKey:baseUrl:sdkVersion:)` accepts and stores `sdkVersion` (empty → nil), feeding `sdkVersionProvider`; `Notti.mm`'s `initialize:` forwards the new 4th param (32-37); `NottiImpl` override matches
-- [ ] `syncProfileFieldsIfNeeded` called from `registerDevice`'s success branch after `flushPendingMutations` (replacing the `syncAppVersionIfNeeded` call, 562)
-- [ ] `NottiImpl` provides real providers: `UIDevice.current.systemVersion`, `utsname.machine`, `TimeZone.current.identifier`, `Locale.current.languageCode` (each fails → nil, never crash)
-- [ ] Unit tests mirroring T3's 5 cases (fresh registration carries all six fields; one field changed between flushes re-sends only it; nil provider omits; `sdk_version` from `initialize` reaches the payload; `app_version` still syncs) using the existing `NottiCoreTests.swift` mocking pattern
-- [ ] Gate check passes: `xcodebuild test -workspace example/ios/NottiExample.xcworkspace -scheme NottiTests -destination 'platform=iOS Simulator,name=iPhone 17'`
-- [ ] Test count: at least 5 new tests pass, all pre-existing `NottiCoreTests.swift` tests still pass
+- [x] `NottiCore` init gains `deviceOsProvider`/`deviceModelProvider`/`sdkVersionProvider`/`timezoneProvider`/`languageProvider` (`() -> String?`, defaults `{ nil }`)
+- [x] `syncProfileFieldsIfNeeded(_ client:)` replaces `syncAppVersionIfNeeded`: six-field loop, per-field diff against the store's last-synced value, coalesced `performOrQueue` PATCH, persist on Success; nil provider → skip that field only (DPF-04/09); `app_version` unchanged (DPF-05)
+- [x] `initialize(appId:clientKey:baseUrl:sdkVersion:)` accepts and stores `sdkVersion` (empty → nil), feeding `sdkVersionProvider`; `Notti.mm`'s `initialize:` forwards the new 4th param (32-37); `NottiImpl` override matches
+- [x] `syncProfileFieldsIfNeeded` called from `registerDevice`'s success branch after `flushPendingMutations` (replacing the `syncAppVersionIfNeeded` call, 562)
+- [x] `NottiImpl` provides real providers: `UIDevice.current.systemVersion`, `utsname.machine`, `TimeZone.current.identifier`, `Locale.current.languageCode` (each fails → nil, never crash)
+- [x] Unit tests mirroring T3's 5 cases (fresh registration carries all six fields; one field changed between flushes re-sends only it; nil provider omits; `sdk_version` from `initialize` reaches the payload; `app_version` still syncs) using the existing `NottiCoreTests.swift` mocking pattern
+- [x] Gate check passes: `xcodebuild test -workspace example/ios/NottiExample.xcworkspace -scheme NottiTests -destination 'platform=iOS Simulator,name=iPhone 17'`
+- [x] Test count: at least 5 new tests pass, all pre-existing `NottiCoreTests.swift` tests still pass
 
 **Tests**: unit
 **Gate**: quick
@@ -271,18 +271,18 @@ iOS:     T6 ──→ T7 ──→ T8 ──→ T9
 - Skill: NONE
 
 **Done when**:
-- [ ] `NottiCore` init gains `permissionStatusProvider: (@escaping (String?) -> Void) -> Void` (default `{ $0(nil) }`)
-- [ ] `syncPermissionStatusIfNeeded(_ client:)` mirrors T4: diff against `lastSyncedPermissionStatus`, coalesced PATCH, persist on Success; nil/unknown → omit, never fabricate
-- [ ] Trigger 1 — `registerDevice` success: called alongside `syncProfileFieldsIfNeeded` (DPF-11)
-- [ ] Trigger 2 — `requestPermission` result (310-342): after the `subscribed` PATCH, fire the provider and enqueue `permission_status` in its callback (DPF-12)
-- [ ] Trigger 3 — `handleSessionStartOnQueue` (768-779): after session bookkeeping, fire the provider and diff-and-enqueue (DPF-13)
-- [ ] `setSubscription(false)`: true→false transition → persist `lastUnsubscribedAtMs` and enqueue `{last_unsubscribed_at}` coalesced `lastUnsubscribed` (DPF-14); `setSubscription(true)` never clears (DPF-15)
-- [ ] Granted→denied in `syncPermissionStatusIfNeeded` → persist timestamp + same-request PATCH carries both fields (DPF-14)
-- [ ] Two-axis independence (DPF-16)
-- [ ] `NottiImpl` provides the real provider: `UNUserNotificationCenter.current().getNotificationSettings` → `authorizationStatus` → `granted`/`denied`/`notDetermined`/`provisional` (provisional auth), unknown → nil
-- [ ] Unit tests mirroring T4's cases (registration sync, requestPermission sync, Settings granted→denied at session start, app-driven unsubscribe keeps `permission_status` granted, re-subscribe not clearing, unknown omitted)
-- [ ] Gate check passes: `xcodebuild test -workspace example/ios/NottiExample.xcworkspace -scheme NottiTests -destination 'platform=iOS Simulator,name=iPhone 17'`
-- [ ] Test count: at least 5 new tests pass, all pre-existing tests in touched files still pass
+- [x] `NottiCore` init gains `permissionStatusProvider: (@escaping (String?) -> Void) -> Void` (default `{ $0(nil) }`)
+- [x] `syncPermissionStatusIfNeeded(_ client:)` mirrors T4: diff against `lastSyncedPermissionStatus`, coalesced PATCH, persist on Success; nil/unknown → omit, never fabricate
+- [x] Trigger 1 — `registerDevice` success: called alongside `syncProfileFieldsIfNeeded` (DPF-11)
+- [x] Trigger 2 — `requestPermission` result (310-342): after the `subscribed` PATCH, fire the provider and enqueue `permission_status` in its callback (DPF-12)
+- [x] Trigger 3 — `handleSessionStartOnQueue` (768-779): after session bookkeeping, fire the provider and diff-and-enqueue (DPF-13)
+- [x] `setSubscription(false)`: true→false transition → persist `lastUnsubscribedAtMs` and enqueue `{last_unsubscribed_at}` coalesced `lastUnsubscribed` (DPF-14); `setSubscription(true)` never clears (DPF-15)
+- [x] Granted→denied in `syncPermissionStatusIfNeeded` → persist timestamp + same-request PATCH carries both fields (DPF-14)
+- [x] Two-axis independence (DPF-16)
+- [x] `NottiImpl` provides the real provider: `UNUserNotificationCenter.current().getNotificationSettings` → `authorizationStatus` → `granted`/`denied`/`notDetermined`/`provisional` (provisional auth), unknown → nil
+- [x] Unit tests mirroring T4's cases (registration sync, requestPermission sync, Settings granted→denied at session start, app-driven unsubscribe keeps `permission_status` granted, re-subscribe not clearing, unknown omitted)
+- [x] Gate check passes: `xcodebuild test -workspace example/ios/NottiExample.xcworkspace -scheme NottiTests -destination 'platform=iOS Simulator,name=iPhone 17'`
+- [x] Test count: at least 5 new tests pass, all pre-existing tests in touched files still pass
 
 **Tests**: unit
 **Gate**: quick
@@ -304,15 +304,15 @@ iOS:     T6 ──→ T7 ──→ T8 ──→ T9
 - Skill: NONE
 
 **Done when**:
-- [ ] `NottiCore.setEmail(_ email: String)`/`setPhone(_ phone: String)`: persist; equal to held value → no-op (DPF-20); else `performOrQueue` PATCH `["email": email]` with a coalesce key (DPF-17)
-- [ ] `NottiCore.clearEmail()`/`clearPhone()`: persist nil; enqueue `["email": NSNull()]`/`["phone": NSNull()]` (DPF-18), coalesce so a queued set is superseded
-- [ ] Coalesce keys `email`/`phone` added alongside the `TelemetryKey` constants (120-124)
-- [ ] `registerDevice` success: unconditional set of held non-nil `email`/`phone` after `flushPendingMutations` (DPF-19); nil held → nothing
-- [ ] `NottiImpl` adds `@objc(setEmail:)`/`@objc(clearEmail)`/`@objc(setPhone:)`/`@objc(clearPhone)` delegating to core; `Notti.mm` exposes the same selectors mirroring `setSubscription:`
-- [ ] Never merged into tags (DPF-21)
-- [ ] Unit tests mirroring T5's cases (set enqueues `email` with no `tags` change; clear enqueues `{email: null}`; same-value set → single mutation; registration re-syncs held values; nil held → nothing)
-- [ ] Gate check passes: `xcodebuild test -workspace example/ios/NottiExample.xcworkspace -scheme NottiTests -destination 'platform=iOS Simulator,name=iPhone 17'`
-- [ ] Test count: at least 5 new tests pass, all pre-existing tests in touched files still pass
+- [x] `NottiCore.setEmail(_ email: String)`/`setPhone(_ phone: String)`: persist; equal to held value → no-op (DPF-20); else `performOrQueue` PATCH `["email": email]` with a coalesce key (DPF-17)
+- [x] `NottiCore.clearEmail()`/`clearPhone()`: persist nil; enqueue `["email": NSNull()]`/`["phone": NSNull()]` (DPF-18), coalesce so a queued set is superseded
+- [x] Coalesce keys `email`/`phone` added alongside the `TelemetryKey` constants (120-124)
+- [x] `registerDevice` success: unconditional set of held non-nil `email`/`phone` after `flushPendingMutations` (DPF-19); nil held → nothing
+- [x] `NottiImpl` adds `@objc(setEmail:)`/`@objc(clearEmail)`/`@objc(setPhone:)`/`@objc(clearPhone)` delegating to core; `Notti.mm` exposes the same selectors mirroring `setSubscription:`
+- [x] Never merged into tags (DPF-21)
+- [x] Unit tests mirroring T5's cases (set enqueues `email` with no `tags` change; clear enqueues `{email: null}`; same-value set → single mutation; registration re-syncs held values; nil held → nothing)
+- [x] Gate check passes: `xcodebuild test -workspace example/ios/NottiExample.xcworkspace -scheme NottiTests -destination 'platform=iOS Simulator,name=iPhone 17'`
+- [x] Test count: at least 5 new tests pass, all pre-existing tests in touched files still pass
 
 **Tests**: unit
 **Gate**: quick
@@ -334,12 +334,12 @@ iOS:     T6 ──→ T7 ──→ T8 ──→ T9
 - Skill: NONE
 
 **Done when**:
-- [ ] Side-by-side read confirms identical PATCH payload keys on both platforms: `device_os`, `device_model`, `sdk_version`, `timezone_id`, `language`, `permission_status`, `last_unsubscribed_at`, `email`, `phone` (and `email: null`/`phone: null` for clear)
-- [ ] Both platforms diff-and-enqueue profile fields the same way (six-field loop incl. `app_version`); coalesce semantics match (`lastUnsubscribed`/`permissionStatus`/`email`/`phone` replace queued, no eviction)
-- [ ] Both platforms' `permission_status` triggers match (registration / requestPermission / session start); granted→denied sets `last_unsubscribed_at`; re-subscribe never clears it; `subscribed` and `permission_status` stay independent
-- [ ] `git grep -n "device_os\|device_model\|sdk_version\|timezone_id\|permission_status\|last_unsubscribed_at\|setEmail\|clearEmail"` across `android/`/`ios/`/`src/` shows consistent key/method names (no typo drift)
-- [ ] Full native gate re-run on both platforms + `pnpm typecheck && pnpm lint && pnpm test` (already green from prior tasks; final confirmation after cross-review fixes)
-- [ ] Requirement traceability in `spec.md`: DPF-01..21 all → Implemented (Verifier pending)
+- [x] Side-by-side read confirms identical PATCH payload keys on both platforms: `device_os`, `device_model`, `sdk_version`, `timezone_id`, `language`, `permission_status`, `last_unsubscribed_at`, `email`, `phone` (and `email: null`/`phone: null` for clear)
+- [x] Both platforms diff-and-enqueue profile fields the same way (six-field loop incl. `app_version`); coalesce semantics match (`lastUnsubscribed`/`permissionStatus`/`email`/`phone` replace queued, no eviction)
+- [x] Both platforms' `permission_status` triggers match (registration / requestPermission / session start); granted→denied sets `last_unsubscribed_at`; re-subscribe never clears it; `subscribed` and `permission_status` stay independent
+- [x] `git grep -n "device_os\|device_model\|sdk_version\|timezone_id\|permission_status\|last_unsubscribed_at\|setEmail\|clearEmail"` across `android/`/`ios/`/`src/` shows consistent key/method names (no typo drift)
+- [x] Full native gate re-run on both platforms + `pnpm typecheck && pnpm lint && pnpm test` (already green from prior tasks; final confirmation after cross-review fixes)
+- [x] Requirement traceability in `spec.md`: DPF-01..21 all → Implemented (Verifier pending)
 
 **Tests**: none (review task)
 **Gate**: full (both platforms' commands + JS trio)

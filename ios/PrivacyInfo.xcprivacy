@@ -14,18 +14,48 @@
 		</dict>
 	</array>
 	<!--
-	  NSPrivacyCollectedDataTypes left empty deliberately (M6, pre-release
-	  review round 3): the SDK reads the host's existing CoreLocation fix
-	  (check-only, never requests permission) and reverse-geocodes it to a
-	  country code tied to the device id (NottiCore's P3 telemetry). Whether
-	  that qualifies as a declared "Coarse Location" collected-data entry
-	  here - and under what linkage/tracking flags - is a product/legal
-	  call for Starbem/Zeep to make, not one this fix should assert on its
-	  own. Validate with whoever owns the App Store privacy "nutrition
-	  label" before the next release that ships this telemetry.
+	  Email Address / Phone Number: sent to the integrator's Notti instance
+	  only when the host app calls User.setEmail / User.setPhone
+	  (device-profile-fields P4). Linked to the device row (and to the user
+	  when login() is used); never used for tracking.
+
+	  Still NOT declared here, pending a product/legal decision by whoever
+	  owns the App Store privacy "nutrition label" (M6, pre-release review
+	  round 3, and device-profile-fields review): the opt-in country
+	  (Coarse Location, reverse-geocoded from the host's existing CoreLocation
+	  fix), CTR events / session aggregates (Product Interaction) and the
+	  automatic device profile (device_os, device_model, sdk_version,
+	  timezone_id, language, permission_status, last_unsubscribed_at). The
+	  README's "Privacy, App Store labels and LGPD" section tells integrators
+	  to evaluate them for their own label.
 	-->
 	<key>NSPrivacyCollectedDataTypes</key>
-	<array/>
+	<array>
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeEmailAddress</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypePhoneNumber</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+	</array>
 	<key>NSPrivacyTracking</key>
 	<false/>
 </dict>
