@@ -77,8 +77,9 @@ class NottiCore(
    */
   private val timezoneProvider: () -> String? = { null },
   /**
-   * Reads the OS language (Android `Locale.getDefault().language`, iOS
-   * `Locale.current.languageCode`), or `null` on failure (DPF-06/09).
+   * Reads the OS language (Android: [normalizeLanguage] over
+   * `Locale.getDefault().toLanguageTag()`, iOS `Locale.current.languageCode`),
+   * or `null` on failure/undetermined (DPF-06/09).
    */
   private val languageProvider: () -> String? = { null },
   /**
@@ -187,6 +188,65 @@ class NottiCore(
     @JvmStatic
     fun newDefaultExecutor(): Executor = Executors.newSingleThreadExecutor { runnable ->
       Thread(runnable, "notti-io").apply { isDaemon = true }
+    }
+
+    /** API 33 (Android 13, TIRAMISU): first level with a runtime `POST_NOTIFICATIONS` permission. */
+    private const val API_TIRAMISU = 33
+
+    /**
+     * Pure mapping of the Android OS notification state to `permission_status`
+     * (DPF-10), kept `Context`-free so every branch is unit-testable; the
+     * platform reads live in `NottiModule.readPermissionStatus`.
+     *
+     * - API < 33: no runtime permission exists - enabled -> `granted`, else `denied`.
+     * - API >= 33, permission granted: notifications enabled -> `granted`;
+     *   disabled -> `denied` (user blocked the app in Settings after granting).
+     * - API >= 33, permission not granted: [shouldShowRationale] `true` ->
+     *   `denied` (the user already said no once); else never requested by the
+     *   SDK ([permissionRequestedBefore] false) -> `notDetermined`; else `denied`
+     *   (permanently denied, the OS stops offering a rationale).
+     *
+     * [shouldShowRationale] is `null` when no Activity was available to ask.
+     *
+     * Known limitation: [permissionRequestedBefore] only tracks prompts shown by
+     * this SDK. A permission requested through another library and then
+     * permanently denied (no rationale) reads as `notDetermined`, since the OS
+     * exposes no "was ever asked" signal.
+     */
+    @JvmStatic
+    internal fun mapPermissionStatus(
+      sdkInt: Int,
+      notificationsEnabled: Boolean,
+      permissionGranted: Boolean,
+      permissionRequestedBefore: Boolean,
+      shouldShowRationale: Boolean?
+    ): String? {
+      if (sdkInt < API_TIRAMISU) return if (notificationsEnabled) "granted" else "denied"
+      if (permissionGranted) return if (notificationsEnabled) "granted" else "denied"
+      return when {
+        shouldShowRationale == true -> "denied"
+        !permissionRequestedBefore -> "notDetermined"
+        else -> "denied"
+      }
+    }
+
+    /**
+     * Normalizes a BCP 47 tag (`Locale.toLanguageTag()`) to the bare ISO 639-1
+     * primary subtag sent as `language` (DPF-06): `pt-BR` -> `pt`. Legacy
+     * Java codes are mapped to their current ones (`iw`->`he`, `in`->`id`,
+     * `ji`->`yi`) so both platforms agree; an empty or undetermined (`und`)
+     * tag yields `null`, which omits the field (DPF-09).
+     */
+    @JvmStatic
+    internal fun normalizeLanguage(tag: String?): String? {
+      val primary = tag?.trim()?.substringBefore('-')?.lowercase(Locale.ROOT) ?: return null
+      if (primary.isEmpty() || primary == "und") return null
+      return when (primary) {
+        "iw" -> "he"
+        "in" -> "id"
+        "ji" -> "yi"
+        else -> primary
+      }
     }
   }
 
@@ -711,36 +771,62 @@ class NottiCore(
   /**
    * The backend does not support clearing `external_user_id` server-side
    * (spec Edge Case) - only the SDK's locally-held association is cleared.
+   * The user's `email`/`phone` ARE cleared server-side (LGPD: a signed-out
+   * user's PII must not stay attached to the device): same durable path as
+   * [clearEmail]/[clearPhone], so a failed or pre-`initialize()` logout still
+   * converges at the next registration.
    *
    * Handed to [executor] like every other mutation (and like iOS' `logout`,
    * which hops onto its `workQueue`) rather than written straight from the
    * caller's thread: `login("u1")` immediately followed by `logout()` would
    * otherwise clear the id synchronously *first*, and login's PATCH - still
    * queued on the executor - would then re-persist "u1" onto a device the
-   * user had already logged out of.
+   * user had already logged out of. The email/phone clears keep the same
+   * guarantee: their PATCHes are dispatched to the same executor after any
+   * earlier `login`/`setEmail`/`setPhone`, and the coalesce key makes the
+   * clear supersede a set still queued before registration.
    */
   fun logout() {
     dispatch("logout") { deviceStore.setExternalUserId(null) }
+    clearEmail()
+    clearPhone()
   }
 
   fun setSubscription(enabled: Boolean) {
+    // Captured on the caller's thread, like the session clock: the moment the
+    // user opted out, not when a busy/queued executor got to it.
+    val requestedAt = clock()
     mutate("setSubscription") { client, deviceId, token ->
-      val wasSubscribed = deviceStore.getSubscribed()
-      // DPF-14 app-driven path: a real true->false transition records the
-      // most-recent unsubscribe timestamp and sends it in the SAME PATCH as
-      // `subscribed` so the two writes are atomic - a failed PATCH leaves both
-      // unsynced (subscribed stays true locally, so a retry re-runs the whole
-      // transition) instead of stranding a server-side `subscribed: false`
-      // with `last_unsubscribed_at` never written.
+      // Tri-state: `null` = this install never had a subscription acked. The
+      // backend creates device rows with `subscribed = true`, so unknown is
+      // treated as subscribed - only a known `false` makes this a non-transition.
+      val wasSubscribed = deviceStore.getSubscribedOrNull()
+      // DPF-14 app-driven path: a real (true|unknown)->false transition records
+      // the most-recent unsubscribe timestamp and sends it in the SAME PATCH
+      // as `subscribed` so the two writes are atomic - a failed PATCH leaves
+      // both unsynced (subscribed stays true/unknown locally, so a retry
+      // re-runs the whole transition) instead of stranding a server-side
+      // `subscribed: false` with `last_unsubscribed_at` never written. The
+      // timestamp is stamped ONCE, when the transition is first detected, and
+      // a retry re-sends that persisted value rather than a fresh now().
       val fields = mutableMapOf<String, Any>("subscribed" to enabled)
-      if (!enabled && wasSubscribed) {
-        val now = clock()
-        deviceStore.setLastUnsubscribedAtMs(now)
-        fields["last_unsubscribed_at"] = formatIsoUtc(now)
+      var stamp: Long? = null
+      if (enabled) {
+        // Re-subscribed before the opt-out was acked: that transition is moot.
+        deviceStore.setPendingUnsubscribeAtMs(null)
+      } else if (wasSubscribed != false) {
+        stamp = deviceStore.getPendingUnsubscribeAtMs() ?: requestedAt.also {
+          deviceStore.setPendingUnsubscribeAtMs(it)
+          deviceStore.setLastUnsubscribedAtMs(it)
+        }
+        fields["last_unsubscribed_at"] = formatIsoUtc(stamp)
       }
       val result = client.patchDevice(deviceId, token, fields)
       when (result) {
-        is ApiResult.Success -> deviceStore.setSubscribed(enabled)
+        is ApiResult.Success -> {
+          deviceStore.setSubscribed(enabled)
+          if (stamp != null) deviceStore.setPendingUnsubscribeAtMs(null)
+        }
         is ApiResult.Failure -> logger("Notti.setSubscription: PATCH failed (${result.message}) - not retried")
       }
     }
@@ -748,56 +834,85 @@ class NottiCore(
 
   /**
    * First-class device email (DPF-17): persists the held value locally, then
-   * enqueues a coalesced PATCH. A value equal to the currently-held value is
-   * a no-op (DPF-20, matching `addTag` idempotence). Travels as its own PATCH
-   * field, never merged into tags (DPF-21).
+   * enqueues a coalesced PATCH. A no-op only when the value is both held AND
+   * acknowledged by the backend (DPF-20, matching `addTag` idempotence) - a
+   * repeat call after a failed PATCH re-sends instead of being swallowed.
+   * Travels as its own PATCH field, never merged into tags (DPF-21).
    */
-  fun setEmail(email: String) {
-    if (email == deviceStore.getEmail()) return
-    deviceStore.setEmail(email)
-    mutate("setEmail", KEY_EMAIL) { client, deviceId, token ->
-      val result = client.patchDevice(deviceId, token, mapOf("email" to email))
-      when (result) {
-        is ApiResult.Success -> Unit // held == synced
-        is ApiResult.Failure -> logger("Notti.setEmail: PATCH failed (${result.message}) - not retried")
-      }
-    }
-  }
+  fun setEmail(email: String) = setContactField(emailField, email)
 
-  /** Explicit clear (DPF-18): persists `null` and enqueues an explicit `{email: null}`. */
-  fun clearEmail() {
-    deviceStore.setEmail(null)
-    mutate("clearEmail", KEY_EMAIL) { client, deviceId, token ->
-      val result = client.patchDevice(deviceId, token, mapOf("email" to org.json.JSONObject.NULL))
-      when (result) {
-        is ApiResult.Success -> Unit
-        is ApiResult.Failure -> logger("Notti.clearEmail: PATCH failed (${result.message}) - not retried")
-      }
-    }
-  }
+  /**
+   * Explicit clear (DPF-18): persists `null` and enqueues an explicit
+   * `{email: null}`, keyed like [setEmail] so it supersedes a still-queued set.
+   * Durable: if the PATCH fails, never runs (before `initialize()`, process
+   * death with it queued), the held/last-synced diff re-sends it at the next
+   * registration (see [resyncHeldEmailAndPhone]).
+   */
+  fun clearEmail() = setContactField(emailField, null)
 
   /** First-class device phone (DPF-17); see [setEmail] for the contract. */
-  fun setPhone(phone: String) {
-    if (phone == deviceStore.getPhone()) return
-    deviceStore.setPhone(phone)
-    mutate("setPhone", KEY_PHONE) { client, deviceId, token ->
-      val result = client.patchDevice(deviceId, token, mapOf("phone" to phone))
-      when (result) {
-        is ApiResult.Success -> Unit
-        is ApiResult.Failure -> logger("Notti.setPhone: PATCH failed (${result.message}) - not retried")
-      }
-    }
+  fun setPhone(phone: String) = setContactField(phoneField, phone)
+
+  /** Explicit clear (DPF-18); see [clearEmail] for the contract. */
+  fun clearPhone() = setContactField(phoneField, null)
+
+  /**
+   * Held-vs-acknowledged bookkeeping for one contact field (`email`/`phone`).
+   * `held` is what the integrator last asked for; `lastSynced` is what the
+   * backend last acknowledged - the two differ exactly while a set/clear is
+   * still owed to the server.
+   */
+  private class ContactField(
+    val name: String,
+    val coalesceKey: String,
+    val getHeld: () -> String?,
+    val setHeld: (String?) -> Unit,
+    val getLastSynced: () -> String?,
+    val setLastSynced: (String?) -> Unit
+  )
+
+  private val emailField = ContactField(
+    "email", KEY_EMAIL,
+    deviceStore::getEmail, deviceStore::setEmail,
+    deviceStore::getLastSyncedEmail, deviceStore::setLastSyncedEmail
+  )
+
+  private val phoneField = ContactField(
+    "phone", KEY_PHONE,
+    deviceStore::getPhone, deviceStore::setPhone,
+    deviceStore::getLastSyncedPhone, deviceStore::setLastSyncedPhone
+  )
+
+  /** `value == null` is a clear: always enqueued, never short-circuited. */
+  private fun setContactField(field: ContactField, value: String?) {
+    if (value != null && value == field.getHeld() && value == field.getLastSynced()) return
+    field.setHeld(value)
+    val operation = (if (value == null) "clear" else "set") + field.name.replaceFirstChar { it.uppercase() }
+    mutate(operation, field.coalesceKey, contactFieldWork(operation, field, value))
   }
 
-  /** Explicit clear (DPF-18): persists `null` and enqueues an explicit `{phone: null}`. */
-  fun clearPhone() {
-    deviceStore.setPhone(null)
-    mutate("clearPhone", KEY_PHONE) { client, deviceId, token ->
-      val result = client.patchDevice(deviceId, token, mapOf("phone" to org.json.JSONObject.NULL))
-      when (result) {
-        is ApiResult.Success -> Unit
-        is ApiResult.Failure -> logger("Notti.clearPhone: PATCH failed (${result.message}) - not retried")
-      }
+  /**
+   * The PATCH for one contact-field set/clear. On a 2xx, `lastSynced` records
+   * the value just acknowledged - unconditionally, NOT only when it still
+   * equals the held value: every mutation runs serially on [executor] in call
+   * order, so the last ack to land is always the server's current value and
+   * a stale ack can never overwrite a newer one. Skipping the write when the
+   * held value moved on (e.g. a set acked after a clear was issued) would
+   * leave `lastSynced` behind the server: if that clear then failed, the
+   * registration diff would see `held == lastSynced == null` and never re-send
+   * it, stranding the PII server-side.
+   */
+  private fun contactFieldWork(
+    operation: String,
+    field: ContactField,
+    value: String?
+  ): (NottiApiClient, String, String) -> Unit = { client, deviceId, token ->
+    // JSONObject.NULL is the raw-JSON null sentinel toJsonValue passes through
+    // unchanged - the explicit {email: null} / {phone: null} clear (DPF-18).
+    val payload: Any = value ?: org.json.JSONObject.NULL
+    when (val result = client.patchDevice(deviceId, token, mapOf(field.name to payload))) {
+      is ApiResult.Success -> field.setLastSynced(value)
+      is ApiResult.Failure -> logger("Notti.$operation: PATCH failed (${result.message}) - re-sent at the next registration")
     }
   }
 
@@ -1011,22 +1126,37 @@ class NottiCore(
   private fun syncPermissionStatusIfNeeded() {
     permissionStatusProvider { status ->
       if (status == null) return@permissionStatusProvider
+      val detectedAt = clock()
       dispatch("permissionStatus") {
         if (apiClient == null) return@dispatch
         // Already on the executor: run/queue directly rather than through
         // [mutate], which would add a second dispatch hop.
         runOrQueue(PendingMutation("permissionStatus", KEY_PERMISSION_STATUS) { client, deviceId, token ->
           val previous = deviceStore.getLastSyncedPermissionStatus()
+          if (status != "denied") {
+            // Back to a non-denied state before a granted->denied sync was
+            // acked: that transition is moot, the next one gets a fresh stamp.
+            deviceStore.setPendingPermissionUnsubscribeAtMs(null)
+          }
           if (status == previous) return@PendingMutation
           val fields = mutableMapOf<String, Any>("permission_status" to status)
+          var stamp: Long? = null
           if (status == "denied" && previous == "granted") {
-            val now = clock()
-            deviceStore.setLastUnsubscribedAtMs(now)
-            fields["last_unsubscribed_at"] = formatIsoUtc(now)
+            // Stamped once at first detection ([detectedAt], captured when the
+            // OS state was read); a retry at a later session start re-sends
+            // the persisted value instead of a fresh now() (F8).
+            stamp = deviceStore.getPendingPermissionUnsubscribeAtMs() ?: detectedAt.also {
+              deviceStore.setPendingPermissionUnsubscribeAtMs(it)
+              deviceStore.setLastUnsubscribedAtMs(it)
+            }
+            fields["last_unsubscribed_at"] = formatIsoUtc(stamp)
           }
           when (val result = client.patchDevice(deviceId, token, fields)) {
-            is ApiResult.Success -> deviceStore.setLastSyncedPermissionStatus(status)
-            is ApiResult.Failure -> logger("Notti.permissionStatus: PATCH failed (${result.message}) - not retried")
+            is ApiResult.Success -> {
+              deviceStore.setLastSyncedPermissionStatus(status)
+              if (stamp != null) deviceStore.setPendingPermissionUnsubscribeAtMs(null)
+            }
+            is ApiResult.Failure -> logger("Notti.permissionStatus: PATCH failed (${result.message}) - re-checked at the next session start")
           }
         })
       }
@@ -1034,31 +1164,23 @@ class NottiCore(
   }
 
   /**
-   * Registration-success re-sync of a locally-held `email`/`phone` (DPF-19):
-   * when the held value is non-null, enqueue a set unconditionally - the
-   * backend row may be fresh after a reinstall/backup-restore, so the value
-   * must converge without the integrator re-calling `setEmail`/`setPhone`.
-   * A null held value sends nothing. Called from [registerDevice]'s success
-   * branch alongside the profile/permission syncs.
+   * Registration-success re-sync of `email`/`phone` (DPF-19), per field:
+   * - held non-null: send a set unconditionally - the backend row may be
+   *   fresh after a reinstall/backup-restore, so the value must converge
+   *   without the integrator re-calling `setEmail`/`setPhone`;
+   * - held null but last-synced non-null: a clear is still owed (issued
+   *   before `initialize()`, its PATCH failed, or it was dropped from the
+   *   in-memory queue on process death) - send `{field: null}`;
+   * - both null: nothing.
+   * Called from [registerDevice]'s success branch alongside the
+   * profile/permission syncs (caller holds [mutationLock]).
    */
   private fun resyncHeldEmailAndPhone() {
-    val email = deviceStore.getEmail()
-    if (email != null) {
-      runOrQueue(PendingMutation("resyncEmail", KEY_EMAIL) { client, deviceId, token ->
-        when (val result = client.patchDevice(deviceId, token, mapOf("email" to email))) {
-          is ApiResult.Success -> Unit
-          is ApiResult.Failure -> logger("Notti.resyncEmail: PATCH failed (${result.message}) - not retried")
-        }
-      })
-    }
-    val phone = deviceStore.getPhone()
-    if (phone != null) {
-      runOrQueue(PendingMutation("resyncPhone", KEY_PHONE) { client, deviceId, token ->
-        when (val result = client.patchDevice(deviceId, token, mapOf("phone" to phone))) {
-          is ApiResult.Success -> Unit
-          is ApiResult.Failure -> logger("Notti.resyncPhone: PATCH failed (${result.message}) - not retried")
-        }
-      })
+    for (field in listOf(emailField, phoneField)) {
+      val held = field.getHeld()
+      if (held == null && field.getLastSynced() == null) continue
+      val operation = "resync" + field.name.replaceFirstChar { it.uppercase() }
+      runOrQueue(PendingMutation(operation, field.coalesceKey, contactFieldWork(operation, field, held)))
     }
   }
 

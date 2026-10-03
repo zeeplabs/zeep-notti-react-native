@@ -29,8 +29,11 @@ data class DeviceState(
   val lastSyncedLanguage: String?, // P2 last synced ISO 639-1 language
   val lastSyncedPermissionStatus: String?, // P3 last synced OS permission state
   val lastUnsubscribedAtMs: Long?, // P3 most-recent unsubscribe transition
-  val email: String?, // P4 held email (== last synced)
-  val phone: String? // P4 held phone (== last synced)
+  val email: String?, // P4 held email (what the integrator last set)
+  val phone: String?, // P4 held phone (what the integrator last set)
+  val lastSyncedEmail: String?, // P4 last email the backend acknowledged
+  val lastSyncedPhone: String?, // P4 last phone the backend acknowledged
+  val permissionRequested: Boolean // P3 SDK has shown the POST_NOTIFICATIONS prompt
 )
 
 class NottiDeviceStore(private val prefs: SharedPreferences) {
@@ -64,6 +67,11 @@ class NottiDeviceStore(private val prefs: SharedPreferences) {
     private const val KEY_LAST_UNSUBSCRIBED_AT_MS = "notti_last_unsubscribed_at_ms"
     private const val KEY_EMAIL = "notti_email"
     private const val KEY_PHONE = "notti_phone"
+    private const val KEY_LAST_SYNCED_EMAIL = "notti_last_synced_email"
+    private const val KEY_LAST_SYNCED_PHONE = "notti_last_synced_phone"
+    private const val KEY_PERMISSION_REQUESTED = "notti_permission_requested"
+    private const val KEY_PENDING_UNSUBSCRIBE_AT_MS = "notti_pending_unsubscribe_at_ms"
+    private const val KEY_PENDING_PERMISSION_UNSUBSCRIBE_AT_MS = "notti_pending_permission_unsubscribe_at_ms"
 
     /**
      * Pure merge of the current tag map against an add map and/or a remove
@@ -104,6 +112,16 @@ class NottiDeviceStore(private val prefs: SharedPreferences) {
 
   fun getSubscribed(): Boolean = prefs.getBoolean(KEY_SUBSCRIBED, false)
 
+  /**
+   * Tri-state read of the locally-known subscription: `null` when this install
+   * has never had a subscription PATCH acknowledged (key absent). The backend
+   * creates a new device row with `subscribed = true`, so an unknown local
+   * state must not be read as `false` when deciding whether an unsubscribe is
+   * a real transition (DPF-14). [getSubscribed] keeps its `false` default.
+   */
+  fun getSubscribedOrNull(): Boolean? =
+    if (prefs.contains(KEY_SUBSCRIBED)) prefs.getBoolean(KEY_SUBSCRIBED, false) else null
+
   fun setSubscribed(subscribed: Boolean) {
     prefs.edit().putBoolean(KEY_SUBSCRIBED, subscribed).apply()
   }
@@ -143,7 +161,10 @@ class NottiDeviceStore(private val prefs: SharedPreferences) {
     lastSyncedPermissionStatus = getLastSyncedPermissionStatus(),
     lastUnsubscribedAtMs = getLastUnsubscribedAtMs(),
     email = getEmail(),
-    phone = getPhone()
+    phone = getPhone(),
+    lastSyncedEmail = getLastSyncedEmail(),
+    lastSyncedPhone = getLastSyncedPhone(),
+    permissionRequested = getPermissionRequested()
   )
 
   fun getAppVersion(): String? = prefs.getString(KEY_APP_VERSION, null)
@@ -269,12 +290,65 @@ class NottiDeviceStore(private val prefs: SharedPreferences) {
   fun getEmail(): String? = prefs.getString(KEY_EMAIL, null)
 
   fun setEmail(value: String?) {
-    prefs.edit().putString(KEY_EMAIL, value).apply()
+    // commit(), not apply(): a clear (held = null) must survive process death (LGPD). Callers are off main (RN native-modules thread).
+    prefs.edit().putString(KEY_EMAIL, value).commit()
   }
 
   fun getPhone(): String? = prefs.getString(KEY_PHONE, null)
 
   fun setPhone(value: String?) {
-    prefs.edit().putString(KEY_PHONE, value).apply()
+    prefs.edit().putString(KEY_PHONE, value).commit()
+  }
+
+  /**
+   * Last email/phone the backend acknowledged with a 2xx (`null` = cleared or
+   * never synced). Diffed against the held value so a set or clear whose PATCH
+   * failed - or was issued before `initialize()`, or dropped with the
+   * in-memory queue on process death - is re-sent at the next registration
+   * instead of being silently lost (DPF-17..20).
+   */
+  fun getLastSyncedEmail(): String? = prefs.getString(KEY_LAST_SYNCED_EMAIL, null)
+
+  fun setLastSyncedEmail(value: String?) {
+    // commit(), not apply(): a clear's ack must survive process death (LGPD). Callers are on notti-io.
+    prefs.edit().putString(KEY_LAST_SYNCED_EMAIL, value).commit()
+  }
+
+  fun getLastSyncedPhone(): String? = prefs.getString(KEY_LAST_SYNCED_PHONE, null)
+
+  fun setLastSyncedPhone(value: String?) {
+    prefs.edit().putString(KEY_LAST_SYNCED_PHONE, value).commit()
+  }
+
+  /**
+   * True once the SDK has shown the Android 13+ `POST_NOTIFICATIONS` prompt.
+   * Lets the permission-status read tell "never asked" (`notDetermined`) from
+   * "denied without rationale" (`denied`), which the OS APIs alone cannot.
+   */
+  fun getPermissionRequested(): Boolean = prefs.getBoolean(KEY_PERMISSION_REQUESTED, false)
+
+  fun setPermissionRequested(value: Boolean) {
+    prefs.edit().putBoolean(KEY_PERMISSION_REQUESTED, value).apply()
+  }
+
+  /**
+   * Detection time of an app-driven (`setSubscription(false)`) unsubscribe
+   * whose PATCH has not been acknowledged yet, or `null`. Stamped once when
+   * the transition is detected and re-sent as-is on every retry, so the
+   * backend records when the user unsubscribed, not when the sync landed.
+   */
+  fun getPendingUnsubscribeAtMs(): Long? =
+    prefs.getLong(KEY_PENDING_UNSUBSCRIBE_AT_MS, -1L).takeIf { it >= 0 }
+
+  fun setPendingUnsubscribeAtMs(value: Long?) {
+    prefs.edit().putLong(KEY_PENDING_UNSUBSCRIBE_AT_MS, value ?: -1L).apply()
+  }
+
+  /** Same as [getPendingUnsubscribeAtMs], for the permission-driven (granted -> denied) path. */
+  fun getPendingPermissionUnsubscribeAtMs(): Long? =
+    prefs.getLong(KEY_PENDING_PERMISSION_UNSUBSCRIBE_AT_MS, -1L).takeIf { it >= 0 }
+
+  fun setPendingPermissionUnsubscribeAtMs(value: Long?) {
+    prefs.edit().putLong(KEY_PENDING_PERMISSION_UNSUBSCRIBE_AT_MS, value ?: -1L).apply()
   }
 }

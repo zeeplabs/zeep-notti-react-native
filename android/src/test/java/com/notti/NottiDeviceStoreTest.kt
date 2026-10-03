@@ -331,4 +331,66 @@ class NottiDeviceStoreTest {
     store.setLastUnsubscribedAtMs(null)
     assertNull(store.getLastUnsubscribedAtMs())
   }
+
+  // ---------------------------------------------------------------------
+  // Review fixes (device-profile-fields, PR #24)
+  // ---------------------------------------------------------------------
+
+  @Test
+  fun `lastSynced email and phone round-trip and are written with a synchronous commit`() {
+    val prefs = FakeSharedPreferences()
+    val durable = NottiDeviceStore(prefs)
+
+    durable.setEmail(null)
+    durable.setPhone(null)
+    durable.setLastSyncedEmail("a@b.com")
+    durable.setLastSyncedPhone("+10000000000")
+
+    val state = NottiDeviceStore(prefs).getState()
+    assertEquals("a@b.com", state.lastSyncedEmail)
+    assertEquals("+10000000000", state.lastSyncedPhone)
+    // A clear (held = null) and its ack must survive process death (LGPD).
+    assertTrue(prefs.committedKeys.containsAll(listOf(
+      "notti_email", "notti_phone", "notti_last_synced_email", "notti_last_synced_phone"
+    )))
+
+    durable.setLastSyncedEmail(null)
+    assertNull(durable.getLastSyncedEmail())
+  }
+
+  @Test
+  fun `subscribed tri-state reads null until a value is persisted`() {
+    assertNull(store.getSubscribedOrNull())
+    // The legacy accessor keeps its false default for existing callers.
+    assertFalse(store.getSubscribed())
+
+    store.setSubscribed(false)
+    assertEquals(false, store.getSubscribedOrNull())
+    store.setSubscribed(true)
+    assertEquals(true, store.getSubscribedOrNull())
+  }
+
+  @Test
+  fun `permissionRequested defaults to false and round-trips`() {
+    assertFalse(store.getState().permissionRequested)
+    store.setPermissionRequested(true)
+    assertTrue(store.getPermissionRequested())
+    assertTrue(store.getState().permissionRequested)
+  }
+
+  @Test
+  fun `pending unsubscribe timestamps default to null and round-trip`() {
+    assertNull(store.getPendingUnsubscribeAtMs())
+    assertNull(store.getPendingPermissionUnsubscribeAtMs())
+
+    store.setPendingUnsubscribeAtMs(1_000L)
+    store.setPendingPermissionUnsubscribeAtMs(2_000L)
+    assertEquals(1_000L, store.getPendingUnsubscribeAtMs())
+    assertEquals(2_000L, store.getPendingPermissionUnsubscribeAtMs())
+
+    store.setPendingUnsubscribeAtMs(null)
+    store.setPendingPermissionUnsubscribeAtMs(null)
+    assertNull(store.getPendingUnsubscribeAtMs())
+    assertNull(store.getPendingPermissionUnsubscribeAtMs())
+  }
 }
