@@ -224,4 +224,45 @@ final class NottiDeviceStoreTests: XCTestCase {
     XCTAssertEqual(state.email, "user@example.com")
     XCTAssertEqual(state.phone, "+5511999999999")
   }
+
+  // MARK: - Review fixes (F1/F4/F8)
+
+  func test_lastSyncedEmailAndPhoneRoundTripPersistAndAppearInState() {
+    XCTAssertNil(store.getLastSyncedEmail())
+    XCTAssertNil(store.getLastSyncedPhone())
+    store.setLastSyncedEmail("user@example.com")
+    store.setLastSyncedPhone("+5511999999999")
+
+    let fresh = NottiDeviceStore(defaults: defaults)
+    XCTAssertEqual(fresh.getLastSyncedEmail(), "user@example.com")
+    XCTAssertEqual(fresh.getLastSyncedPhone(), "+5511999999999")
+    XCTAssertEqual(fresh.getState().lastSyncedEmail, "user@example.com")
+    XCTAssertEqual(fresh.getState().lastSyncedPhone, "+5511999999999")
+
+    store.setLastSyncedEmail(nil)
+    XCTAssertNil(store.getLastSyncedEmail())
+  }
+
+  func test_subscribedIfKnownIsNilUntilWrittenThenTracksTheValue() {
+    XCTAssertNil(store.getSubscribedIfKnown())
+    XCTAssertFalse(store.getSubscribed(), "the legacy getter still collapses unknown to false")
+    store.setSubscribed(false)
+    XCTAssertEqual(store.getSubscribedIfKnown(), false)
+    store.setSubscribed(true)
+    XCTAssertEqual(store.getSubscribedIfKnown(), true)
+  }
+
+  func test_pendingUnsubscribeStampsRoundTripAndClear() {
+    XCTAssertNil(store.getPendingUnsubscribeAtMs())
+    XCTAssertNil(store.getPendingPermissionUnsubscribeAtMs())
+    store.setPendingUnsubscribeAtMs(1_700_000_000_000)
+    store.setPendingPermissionUnsubscribeAtMs(1_700_000_000_001)
+    let fresh = NottiDeviceStore(defaults: defaults)
+    XCTAssertEqual(fresh.getPendingUnsubscribeAtMs(), 1_700_000_000_000)
+    XCTAssertEqual(fresh.getPendingPermissionUnsubscribeAtMs(), 1_700_000_000_001)
+    store.setPendingUnsubscribeAtMs(nil)
+    store.setPendingPermissionUnsubscribeAtMs(nil)
+    XCTAssertNil(store.getPendingUnsubscribeAtMs())
+    XCTAssertNil(store.getPendingPermissionUnsubscribeAtMs())
+  }
 }

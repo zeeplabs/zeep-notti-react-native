@@ -29,6 +29,8 @@ public struct DeviceState {
   public let lastUnsubscribedAtMs: Int64?
   public let email: String?
   public let phone: String?
+  public let lastSyncedEmail: String?
+  public let lastSyncedPhone: String?
 
   public init(
     deviceId: String?,
@@ -51,7 +53,9 @@ public struct DeviceState {
     lastSyncedPermissionStatus: String? = nil,
     lastUnsubscribedAtMs: Int64? = nil,
     email: String? = nil,
-    phone: String? = nil
+    phone: String? = nil,
+    lastSyncedEmail: String? = nil,
+    lastSyncedPhone: String? = nil
   ) {
     self.deviceId = deviceId
     self.lastToken = lastToken
@@ -74,6 +78,8 @@ public struct DeviceState {
     self.lastUnsubscribedAtMs = lastUnsubscribedAtMs
     self.email = email
     self.phone = phone
+    self.lastSyncedEmail = lastSyncedEmail
+    self.lastSyncedPhone = lastSyncedPhone
   }
 }
 
@@ -102,8 +108,12 @@ public class NottiDeviceStore {
   private static let keyLastSyncedLanguage = "notti_last_synced_language"
   private static let keyLastSyncedPermissionStatus = "notti_last_synced_permission_status"
   private static let keyLastUnsubscribedAtMs = "notti_last_unsubscribed_at_ms"
+  private static let keyPendingUnsubscribeAtMs = "notti_pending_unsubscribe_at_ms"
+  private static let keyPendingPermissionUnsubscribeAtMs = "notti_pending_permission_unsubscribe_at_ms"
   private static let keyEmail = "notti_email"
   private static let keyPhone = "notti_phone"
+  private static let keyLastSyncedEmail = "notti_last_synced_email"
+  private static let keyLastSyncedPhone = "notti_last_synced_phone"
 
   private let defaults: UserDefaults
 
@@ -153,6 +163,14 @@ public class NottiDeviceStore {
 
   public func getSubscribed() -> Bool {
     defaults.bool(forKey: Self.keySubscribed)
+  }
+
+  /// Tri-state read of `subscribed`: nil when the key was never written (no
+  /// subscription PATCH acknowledged yet). `getSubscribed()` collapses that
+  /// to `false`, which hid the unknown state from the DPF-14 transition check
+  /// - the backend registers devices subscribed by default.
+  public func getSubscribedIfKnown() -> Bool? {
+    (defaults.object(forKey: Self.keySubscribed) as? NSNumber)?.boolValue
   }
 
   public func setSubscribed(_ subscribed: Bool) {
@@ -289,7 +307,9 @@ public class NottiDeviceStore {
       lastSyncedPermissionStatus: getLastSyncedPermissionStatus(),
       lastUnsubscribedAtMs: getLastUnsubscribedAtMs(),
       email: getEmail(),
-      phone: getPhone()
+      phone: getPhone(),
+      lastSyncedEmail: getLastSyncedEmail(),
+      lastSyncedPhone: getLastSyncedPhone()
     )
   }
 
@@ -351,6 +371,28 @@ public class NottiDeviceStore {
     defaults.set(ms.map(NSNumber.init(value:)), forKey: Self.keyLastUnsubscribedAtMs)
   }
 
+  /// Stamp of an app-driven (`setSubscription(false)`) unsubscribe the
+  /// backend has not acknowledged yet, nil otherwise. A retry re-sends this
+  /// persisted value instead of a fresh `now` (DPF-14 records the detection
+  /// time). Mirrors Android's `pendingUnsubscribeAtMs`.
+  public func getPendingUnsubscribeAtMs() -> Int64? {
+    (defaults.object(forKey: Self.keyPendingUnsubscribeAtMs) as? NSNumber)?.int64Value
+  }
+
+  public func setPendingUnsubscribeAtMs(_ ms: Int64?) {
+    defaults.set(ms.map(NSNumber.init(value:)), forKey: Self.keyPendingUnsubscribeAtMs)
+  }
+
+  /// Same as `getPendingUnsubscribeAtMs`, for the permission-driven
+  /// (granted -> denied) path.
+  public func getPendingPermissionUnsubscribeAtMs() -> Int64? {
+    (defaults.object(forKey: Self.keyPendingPermissionUnsubscribeAtMs) as? NSNumber)?.int64Value
+  }
+
+  public func setPendingPermissionUnsubscribeAtMs(_ ms: Int64?) {
+    defaults.set(ms.map(NSNumber.init(value:)), forKey: Self.keyPendingPermissionUnsubscribeAtMs)
+  }
+
   public func getEmail() -> String? {
     defaults.string(forKey: Self.keyEmail)
   }
@@ -365,5 +407,26 @@ public class NottiDeviceStore {
 
   public func setPhone(_ value: String?) {
     defaults.set(value, forKey: Self.keyPhone)
+  }
+
+  /// The last email value the backend acknowledged (2xx), nil when a clear
+  /// was acknowledged or nothing was ever synced. Distinguishes "held nil and
+  /// already cleared server-side" from "held nil but the clear never landed",
+  /// so a failed/pre-init clear is re-sent at the next registration (DPF-18).
+  public func getLastSyncedEmail() -> String? {
+    defaults.string(forKey: Self.keyLastSyncedEmail)
+  }
+
+  public func setLastSyncedEmail(_ value: String?) {
+    defaults.set(value, forKey: Self.keyLastSyncedEmail)
+  }
+
+  /// Phone counterpart of `getLastSyncedEmail`.
+  public func getLastSyncedPhone() -> String? {
+    defaults.string(forKey: Self.keyLastSyncedPhone)
+  }
+
+  public func setLastSyncedPhone(_ value: String?) {
+    defaults.set(value, forKey: Self.keyLastSyncedPhone)
   }
 }

@@ -400,24 +400,64 @@ final class NottiCoreTests: XCTestCase {
     XCTAssertTrue(store.getSubscribed())
   }
 
-  func test_logoutClearsTheLocallyHeldExternalUserIdWithoutSendingAnyPatch() {
-    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
-    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#))
+  func test_logoutClearsTheExternalUserIdLocallyOnlyAndEnqueuesEmailAndPhoneNullClears() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // login
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // email set
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // phone set
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // email null
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // phone null
     let core = newCore()
     core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
     drain(core)
     core.login("user-42")
+    core.setEmail("user@example.com")
+    core.setPhone("+5511999999999")
     drain(core)
     XCTAssertEqual(store.getExternalUserId(), "user-42")
+    XCTAssertEqual(store.getLastSyncedEmail(), "user@example.com")
 
     core.logout()
     drain(core)
 
-    // Only the initial register + login PATCH from setup above - logout()
-    // itself must not issue any network call (spec SDK-15: local-only clear,
-    // the backend has no support for clearing external_user_id server-side).
-    XCTAssertEqual(StubURLProtocol.recordedRequests().count, 2)
+    // external_user_id is a local-only clear (spec SDK-15: the backend has no
+    // support for clearing it server-side), but the PII email/phone ARE
+    // cleared server-side with explicit nulls (F2).
+    let requests = StubURLProtocol.recordedRequests()
+    XCTAssertEqual(requests.count, 6, "register + login + email/phone set + email/phone null")
+    let logoutBodies = patchBodies(Array(requests.dropFirst(4)))
+    XCTAssertTrue(logoutBodies.allSatisfy { $0["external_user_id"] == nil })
+    XCTAssertTrue(logoutBodies.contains { $0["email"] is NSNull })
+    XCTAssertTrue(logoutBodies.contains { $0["phone"] is NSNull })
     XCTAssertNil(store.getExternalUserId())
+    XCTAssertNil(store.getEmail())
+    XCTAssertNil(store.getPhone())
+    XCTAssertNil(store.getLastSyncedEmail())
+    XCTAssertNil(store.getLastSyncedPhone())
+  }
+
+  func test_logoutBeforeInitializeClearsLocallyAndResendsTheNullsAtRegistration() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // email null
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // phone null
+    store.setEmail("user@example.com")
+    store.setLastSyncedEmail("user@example.com")
+    store.setPhone("+5511999999999")
+    store.setLastSyncedPhone("+5511999999999")
+    let core = newCore()
+    core.logout()
+    drain(core)
+    XCTAssertNil(store.getEmail())
+    XCTAssertNil(store.getPhone())
+
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertTrue(bodies.contains { $0["email"] is NSNull })
+    XCTAssertTrue(bodies.contains { $0["phone"] is NSNull })
+    XCTAssertNil(store.getLastSyncedEmail())
+    XCTAssertNil(store.getLastSyncedPhone())
   }
 
   func test_setSubscriptionPatchesTheGivenSubscribedValueAndTheCachedTokenAndPersistsItLocallyOnSuccess() {
@@ -1403,6 +1443,154 @@ final class NottiCoreTests: XCTestCase {
     XCTAssertTrue(store.getSubscribed())
   }
 
+  private func isoUtc(_ epochMs: Int64) -> String {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter.string(from: Date(timeIntervalSince1970: Double(epochMs) / 1000))
+  }
+
+  func test_setSubscriptionFalseWithAnUnknownLocalStateRecordsLastUnsubscribedAt() {
+    // F4: the backend registers devices subscribed by default, so a never-
+    // acknowledged local state counts as subscribed.
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // subscribed(false)
+    XCTAssertNil(store.getSubscribedIfKnown())
+    let core = newCore(heartbeatInterval: 0)
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    core.setSubscription(false)
+    drain(core)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertEqual(bodies.count, 1)
+    XCTAssertEqual(bodies[0]["subscribed"] as? Bool, false)
+    XCTAssertNotNil(bodies[0]["last_unsubscribed_at"], "unknown -> false is a transition")
+    XCTAssertNotNil(store.getLastUnsubscribedAtMs())
+    XCTAssertNil(store.getPendingUnsubscribeAtMs(), "acknowledged: nothing left pending")
+  }
+
+  func test_setSubscriptionFalseWhenAlreadyFalseDoesNotRecordLastUnsubscribedAt() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // subscribed(false)
+    store.setSubscribed(false)
+    let core = newCore(heartbeatInterval: 0)
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    core.setSubscription(false)
+    drain(core)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertEqual(bodies.count, 1)
+    XCTAssertNil(bodies[0]["last_unsubscribed_at"], "false -> false is never a transition")
+    XCTAssertNil(store.getLastUnsubscribedAtMs())
+  }
+
+  func test_aRetriedSetSubscriptionFalseResendsThePersistedTimestamp() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    StubURLProtocol.enqueue(.status(400)) // first opt-out: terminal failure
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // retry
+    store.setSubscribed(true)
+    let core = newCore(heartbeatInterval: 0)
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    core.setSubscription(false)
+    drain(core)
+    let stamped = store.getLastUnsubscribedAtMs()
+    XCTAssertNotNil(stamped)
+    XCTAssertEqual(store.getPendingUnsubscribeAtMs(), stamped)
+    XCTAssertTrue(store.getSubscribed(), "a failed opt-out leaves the local state untouched")
+
+    Thread.sleep(forTimeInterval: 0.01) // a fresh now() would differ
+    core.setSubscription(false)
+    drain(core)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertEqual(bodies.count, 2)
+    XCTAssertEqual(bodies[1]["last_unsubscribed_at"] as? String, isoUtc(stamped!),
+                   "the retry must re-send the stamp of the original detection")
+    XCTAssertEqual(store.getLastUnsubscribedAtMs(), stamped)
+    XCTAssertNil(store.getPendingUnsubscribeAtMs())
+    XCTAssertFalse(store.getSubscribed())
+  }
+
+  func test_aRetriedPermissionDenialResendsThePersistedTimestamp() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    store.setLastSyncedPermissionStatus("granted")
+    var permissionStatus: String? = "granted"
+    let core = newCore(
+      permissionStatusProvider: { cb in cb(permissionStatus) },
+      heartbeatInterval: 0
+    )
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    permissionStatus = "denied"
+    StubURLProtocol.reset()
+    StubURLProtocol.enqueue(.status(400)) // denied PATCH: terminal failure
+    core.handleSessionStart(nowMs: 1_000)
+    drain(core)
+    let stamped = store.getLastUnsubscribedAtMs()
+    XCTAssertNotNil(stamped)
+    XCTAssertEqual(store.getLastSyncedPermissionStatus(), "granted")
+
+    Thread.sleep(forTimeInterval: 0.01)
+    StubURLProtocol.reset()
+    StubURLProtocol.enqueue(.status(200)) // orphaned-session telemetry PATCH (closed first)
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // retried denied PATCH
+    core.handleSessionStart(nowMs: 2_000)
+    drain(core)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests()).filter { $0["permission_status"] != nil }
+    XCTAssertEqual(bodies.count, 1)
+    XCTAssertEqual(bodies[0]["permission_status"] as? String, "denied")
+    XCTAssertEqual(bodies[0]["last_unsubscribed_at"] as? String, isoUtc(stamped!))
+    XCTAssertEqual(store.getLastSyncedPermissionStatus(), "denied")
+    XCTAssertNil(store.getPendingPermissionUnsubscribeAtMs())
+  }
+
+  func test_aPermissionFlipQueuedBeforeRegistrationSendsOnlyTheFinalState() {
+    // F8: denied -> granted both detected before registration. The diff runs
+    // at execution time against the acknowledged status, so the stale
+    // `{denied, last_unsubscribed_at}` is never sent.
+    var deliverToken: ((String?) -> Void)?
+    store.setLastSyncedPermissionStatus("granted")
+    var permissionStatus: String? = "denied"
+    let core = newCore(
+      tokenProvider: { cb in deliverToken = cb },
+      permissionStatusProvider: { cb in cb(permissionStatus) },
+      heartbeatInterval: 0
+    )
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    core.handleSessionStart(nowMs: 1_000) // queues the denied read
+    drain(core)
+    permissionStatus = "granted"
+    core.handleSessionStart(nowMs: 2_000) // coalesces onto it with granted
+    drain(core)
+
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    for _ in 0..<5 { StubURLProtocol.enqueue(.status(200)) }
+    deliverToken?("apns-token")
+    drain(core)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertFalse(bodies.contains { $0["permission_status"] as? String == "denied" })
+    XCTAssertTrue(bodies.allSatisfy { $0["last_unsubscribed_at"] == nil })
+    XCTAssertNil(store.getLastUnsubscribedAtMs())
+    XCTAssertEqual(store.getLastSyncedPermissionStatus(), "granted")
+  }
+
+  func test_normalizedLanguageCodeKeepsOnlyTheIso6391PrimarySubtag() {
+    XCTAssertEqual(NottiCore.normalizedLanguageCode("pt"), "pt")
+    XCTAssertEqual(NottiCore.normalizedLanguageCode("pt-BR"), "pt")
+    XCTAssertEqual(NottiCore.normalizedLanguageCode("EN_us"), "en")
+    XCTAssertNil(NottiCore.normalizedLanguageCode(""))
+    XCTAssertNil(NottiCore.normalizedLanguageCode("und"))
+    XCTAssertNil(NottiCore.normalizedLanguageCode(nil))
+  }
+
   func test_anUnknownPermissionStatusIsOmittedWithoutCrashing() {
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration only
     let core = newCore(permissionStatusProvider: { cb in cb(nil) })
@@ -1554,9 +1742,11 @@ final class NottiCoreTests: XCTestCase {
                   "held pre-init email must be re-sent after registration (DPF-19)")
   }
 
-  func test_clearEmailBeforeInitializeClearsAHeldValueAndNeverResendsIt() {
-    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration only
-    store.setEmail("stale@example.com") // held from a previous session
+  func test_clearEmailBeforeInitializeOfASyncedValueIsSentAsNullAtRegistration() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // email null
+    store.setEmail("stale@example.com") // held + acknowledged in a previous session
+    store.setLastSyncedEmail("stale@example.com")
     let core = newCore()
     core.clearEmail()
     drain(core)
@@ -1566,8 +1756,111 @@ final class NottiCoreTests: XCTestCase {
     drain(core)
 
     let bodies = patchBodies(StubURLProtocol.recordedRequests())
-    XCTAssertTrue(bodies.isEmpty,
-                  "a cleared email must not be re-sent after registration - nil held sends nothing (DPF-19)")
+    XCTAssertEqual(bodies.count, 1)
+    XCTAssertTrue(bodies[0]["email"] is NSNull,
+                  "a pre-init clear of a synced email must reach the backend as an explicit null (F1)")
+    XCTAssertNil(store.getLastSyncedEmail())
+    XCTAssertNil(store.getEmail(), "the cleared value must never be re-sent as a set")
+  }
+
+  func test_clearEmailBeforeInitializeOfANeverSyncedValueSendsNothing() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration only
+    store.setEmail("never-synced@example.com")
+    let core = newCore()
+    core.clearEmail()
+    drain(core)
+
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    XCTAssertTrue(patchBodies(StubURLProtocol.recordedRequests()).isEmpty,
+                  "held nil + nothing acknowledged: nothing to clear server-side")
+  }
+
+  func test_aFailedClearIsResentAsNullAtTheNextRegistration() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // email set
+    StubURLProtocol.enqueue(.status(400)) // email clear: terminal failure, single attempt
+    let core = newCore()
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+    core.setEmail("user@example.com")
+    drain(core)
+    XCTAssertEqual(store.getLastSyncedEmail(), "user@example.com")
+
+    core.clearEmail()
+    drain(core)
+    XCTAssertNil(store.getEmail())
+    XCTAssertEqual(store.getLastSyncedEmail(), "user@example.com", "a failed clear must stay owed")
+
+    StubURLProtocol.reset()
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // re-registration
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // email null resync
+    core.onTokenRefreshed("apns-token-2")
+    drain(core)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertEqual(bodies.count, 1)
+    XCTAssertTrue(bodies[0]["email"] is NSNull)
+    XCTAssertNil(store.getLastSyncedEmail())
+  }
+
+  func test_setEmailWithTheSameValueAfterAFailedPatchReEnqueuesIt() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    StubURLProtocol.enqueue(.status(400)) // first set: terminal failure
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // retry set
+    let core = newCore()
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    core.setEmail("user@example.com")
+    drain(core)
+    XCTAssertNil(store.getLastSyncedEmail())
+
+    core.setEmail("user@example.com")
+    drain(core)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertEqual(bodies.count, 2, "held == value but never acknowledged: the repeat is not a no-op")
+    XCTAssertEqual(bodies[1]["email"] as? String, "user@example.com")
+    XCTAssertEqual(store.getLastSyncedEmail(), "user@example.com")
+  }
+
+  func test_aSetAckedAfterANewerClearStillLeavesTheClearResendable() {
+    // A clear issued while the older set's PATCH is in flight (simulated by
+    // the hook) whose own PATCH then fails: the set's 2xx must still record
+    // lastSynced = set value, so the next registration re-sends the null.
+    let heldStore: NottiDeviceStore = store
+    var clearAttempts = 0
+    var bodies: [[String: Any]] = []
+    let client = PatchHookApiClient { fields in
+      bodies.append(fields)
+      if fields["email"] as? String == "old@example.com" {
+        heldStore.setEmail(nil) // the newer clear's local write lands mid-flight
+      }
+      if fields["email"] is NSNull {
+        clearAttempts += 1
+        return clearAttempts > 1 // first clear PATCH fails, the resync succeeds
+      }
+      return true
+    }
+    let core = newCore(apiClient: client)
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    core.setEmail("old@example.com")
+    core.clearEmail()
+    drain(core)
+    XCTAssertNil(store.getEmail())
+    XCTAssertEqual(store.getLastSyncedEmail(), "old@example.com",
+                   "the set's ack is recorded even though a newer clear was issued")
+
+    core.onTokenRefreshed("apns-token-2") // next registration
+    drain(core)
+
+    XCTAssertEqual(clearAttempts, 2, "the failed clear is re-sent at registration")
+    XCTAssertTrue(bodies.last?["email"] is NSNull)
+    XCTAssertNil(store.getLastSyncedEmail())
   }
 
   func test_registrationSuccessWithNoHeldEmailOrPhoneSendsNothingForThem() {
@@ -2229,30 +2522,59 @@ final class NottiCoreTests: XCTestCase {
     XCTAssertEqual(bodies[0]["session_time_seconds"] as? Int, 3)
   }
 
-  func test_telemetryNeverEvictsAQueuedLoginOrTagMutation() {
+  func test_coalescedTelemetryNeitherCountsAgainstNorEvictsQueuedUserMutations() {
+    // Mirrors Android's `runOrQueue`: coalesced entries never count against
+    // the 32-entry cap, so telemetry never evicts a login/tag mutation and is
+    // itself never evicted.
     var deliverToken: ((String?) -> Void)?
     let core = newCore(tokenProvider: { cb in deliverToken = cb })
     core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
     core.login("user-42")
     for index in 0..<30 { core.mutateTags(add: ["k\(index)": "v"], remove: nil) }
     core.handleSessionStart(nowMs: 1_000)
-    core.handleSessionEnd(nowMs: 2_000) // 32nd entry: telemetry
-    core.mutateTags(add: ["last": "v"], remove: nil) // full: must evict the telemetry, not the login
+    core.handleSessionEnd(nowMs: 2_000) // telemetry: outside the cap
+    core.mutateTags(add: ["last": "v"], remove: nil) // 32nd user mutation: fits
     core.handleSessionStart(nowMs: 3_000)
-    core.handleSessionEnd(nowMs: 4_000) // full of user mutations: telemetry dropped
+    core.handleSessionEnd(nowMs: 4_000) // coalesced onto the queued session snapshot
     drain(core)
 
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
-    for _ in 0..<32 { StubURLProtocol.enqueue(.status(200)) }
+    for _ in 0..<33 { StubURLProtocol.enqueue(.status(200)) }
     deliverToken?("apns-token")
     drain(core)
 
     let bodies = patchBodies(StubURLProtocol.recordedRequests())
-    XCTAssertEqual(bodies.count, 32, "all 32 user mutations, no telemetry")
+    XCTAssertEqual(bodies.count, 33, "all 32 user mutations + the single coalesced session snapshot")
     XCTAssertEqual(bodies[0]["external_user_id"] as? String, "user-42", "login must never be evicted by telemetry")
-    XCTAssertTrue(bodies.allSatisfy { $0["session_count"] == nil })
+    XCTAssertEqual(bodies.filter { $0["session_count"] != nil }.count, 1)
+    XCTAssertEqual(bodies.first { $0["session_count"] != nil }?["session_count"] as? Int, 2)
     XCTAssertEqual((bodies.last?["tags"] as? [String: String])?["last"], "v")
     XCTAssertEqual(store.getSessionCount(), 2, "the aggregate itself is still persisted locally")
+  }
+
+  func test_queuedEmailAndPhoneAreNeverEvictedFromAFullQueue() {
+    var deliverToken: ((String?) -> Void)?
+    let logs = LogSink()
+    let core = newCore(tokenProvider: { cb in deliverToken = cb }, logs: logs)
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    core.setEmail("user@example.com") // queued first
+    core.clearPhone()                  // queued second (a PII erasure)
+    core.login("user-42")
+    for index in 0..<31 { core.mutateTags(add: ["k\(index)": "v"], remove: nil) } // 32 user mutations
+    core.mutateTags(add: ["last": "v"], remove: nil) // 33rd: evicts the oldest USER mutation (login)
+    drain(core)
+
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    for _ in 0..<40 { StubURLProtocol.enqueue(.status(200)) }
+    deliverToken?("apns-token")
+    drain(core)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertEqual(bodies[0]["email"] as? String, "user@example.com", "queued email must survive a full queue")
+    XCTAssertTrue(bodies[1]["phone"] is NSNull, "queued phone clear must survive a full queue")
+    XCTAssertTrue(bodies.allSatisfy { $0["external_user_id"] == nil }, "the oldest user mutation is what gets evicted")
+    XCTAssertEqual(bodies.filter { $0["tags"] != nil }.count, 32)
+    XCTAssertTrue(logs.messages.contains { $0.contains("dropping the oldest queued mutation (login)") })
   }
 }
 
@@ -2327,6 +2649,26 @@ final class LogSink {
   var messages: [String] {
     lock.lock(); defer { lock.unlock() }
     return storage
+  }
+}
+
+/// Registers successfully and answers every PATCH through `onPatch` (true =
+/// 2xx, false = terminal 400) - lets a test mutate store state while a PATCH
+/// is "in flight" and fail specific requests. Called on the work queue only.
+final class PatchHookApiClient: NottiApiClient {
+  private let onPatch: ([String: Any]) -> Bool
+
+  init(onPatch: @escaping ([String: Any]) -> Bool) {
+    self.onPatch = onPatch
+    super.init(baseUrl: "https://notti.example.com", appId: "app-1", clientKey: "key", sleeper: { _ in })
+  }
+
+  override func createOrUpdateDevice(token: String, platform: String) -> ApiResult {
+    .success(DeviceResponse(id: "device-1", tags: [:]))
+  }
+
+  override func patchDevice(deviceId: String, token: String, fields: [String: Any]) -> ApiResult {
+    onPatch(fields) ? .success(DeviceResponse(id: deviceId, tags: [:])) : .failure("HTTP 400")
   }
 }
 
