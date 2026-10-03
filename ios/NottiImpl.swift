@@ -180,7 +180,8 @@ public class NottiImpl: NSObject {
         TimeZone.current.identifier
       },
       languageProvider: {
-        Locale.current.languageCode
+        // ISO 639-1 primary subtag; "" / "und" -> nil (parity with Android).
+        NottiCore.normalizedLanguageCode(Locale.current.languageCode)
       },
       // Device profile fields P3 (T8, DPF-10): OS push-permission state read
       // via `getNotificationSettings` (callback-based). Maps authorization

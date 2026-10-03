@@ -133,12 +133,13 @@ public class NottiCore {
   /// once it does. Bounded so a never-registering device cannot grow it
   /// without limit.
   ///
-  /// `coalesceKey` (review item 8) is non-nil only for telemetry (session,
-  /// country, app version): a newer telemetry mutation with the same key
-  /// *replaces* the queued one (each carries a full snapshot, so only the
-  /// latest matters), and telemetry is always what gets evicted when the
-  /// queue is full - a user-initiated mutation (login, tags, subscription)
-  /// is never dropped to make room for telemetry.
+  /// `coalesceKey` (review item 8) is non-nil for telemetry (session,
+  /// country, profile fields, permission status) and for email/phone: a newer
+  /// mutation with the same key *replaces* the queued one (each carries the
+  /// full latest value, so only it matters). Coalesced entries are bounded by
+  /// their distinct keys, so - as on Android - they never count against
+  /// `maxPendingMutations` and are never evicted; the cap applies only to
+  /// uncoalesced calls (login, tags, subscription), oldest dropped first.
   private struct PendingMutation {
     let description: String
     let coalesceKey: String?
@@ -410,82 +411,88 @@ public class NottiCore {
 
   /// The backend does not support clearing `external_user_id` server-side
   /// (spec Edge Case) - only the SDK's locally-held association is cleared.
+  /// The user's `email`/`phone` (PII) ARE cleared server-side, through the
+  /// same durable path as `clearEmail`/`clearPhone`: held nil persisted now,
+  /// `{email: null}`/`{phone: null}` enqueued, and a clear that fails or runs
+  /// before `initialize` is re-sent at the next registration. Runs on
+  /// `workQueue` like every mutation, so a `login` queued before this
+  /// `logout` still lands first.
   public func logout() {
     workQueue.async { [weak self] in
-      self?.deviceStore.setExternalUserId(nil)
+      guard let self = self else { return }
+      self.deviceStore.setExternalUserId(nil)
+      self.clearEmailOnQueue()
+      self.clearPhoneOnQueue()
     }
   }
 
   public func setSubscription(_ enabled: Bool) {
+    // DPF-14 records when the unsubscribe was detected (this call), not when
+    // the possibly-queued PATCH eventually runs.
+    let detectedAtMs = nowMs()
     workQueue.async { [weak self] in
       guard let self = self, let client = self.apiClient else { return }
       self.performOrQueue(client, description: "setSubscription") { [weak self] client, deviceId, token in
         guard let self = self else { return }
-        let wasSubscribed = self.deviceStore.getSubscribed()
+        // Tri-state: nil = never acknowledged locally. The backend registers
+        // devices subscribed by default, so unknown counts as subscribed and
+        // only a known `false` (false->false) is not a transition.
+        let wasSubscribed = self.deviceStore.getSubscribedIfKnown()
         // DPF-14 app-driven path: a real true->false transition records the
         // most-recent unsubscribe timestamp and sends it in the SAME PATCH as
         // `subscribed` so the two writes are atomic - a failed PATCH leaves
         // both unsynced (subscribed stays true locally, so a retry re-runs the
-        // whole transition) instead of stranding a server-side `subscribed:
-        // false` with `last_unsubscribed_at` never written.
+        // whole transition, re-sending the persisted stamp) instead of
+        // stranding a server-side `subscribed: false` with
+        // `last_unsubscribed_at` never written.
         var extraFields: [String: Any] = [:]
-        if !enabled && wasSubscribed {
-          let now = self.nowMs()
-          self.deviceStore.setLastUnsubscribedAtMs(now)
-          extraFields["last_unsubscribed_at"] = Self.formatIsoUtc(now)
+        var stampMs: Int64?
+        if enabled {
+          // Re-subscribed before the opt-out was acked: that transition is moot.
+          self.deviceStore.setPendingUnsubscribeAtMs(nil)
+        } else if wasSubscribed != false {
+          let stamp = self.deviceStore.getPendingUnsubscribeAtMs() ?? detectedAtMs
+          self.deviceStore.setPendingUnsubscribeAtMs(stamp)
+          self.deviceStore.setLastUnsubscribedAtMs(stamp)
+          stampMs = stamp
+          extraFields["last_unsubscribed_at"] = Self.formatIsoUtc(stamp)
         }
-        self.patchSubscribed(
+        let acked = self.patchSubscribed(
           client, deviceId: deviceId, token: token, enabled,
           logContext: "setSubscription", extraFields: extraFields
         )
+        if acked && stampMs != nil {
+          self.deviceStore.setPendingUnsubscribeAtMs(nil)
+        }
       }
     }
   }
 
   /// First-class device email (DPF-17): persists the held value locally, then
-  /// enqueues a coalesced PATCH. A value equal to the currently-held value is
-  /// a no-op (DPF-20, matching `addTag` idempotence). Travels as its own PATCH
-  /// field, never merged into tags (DPF-21).
+  /// enqueues a coalesced PATCH. A no-op only when the value is both held AND
+  /// acknowledged by the backend (DPF-20, matching `addTag` idempotence) - a
+  /// set whose PATCH failed is re-sent by repeating the call. Travels as its
+  /// own PATCH field, never merged into tags (DPF-21).
   public func setEmail(_ email: String) {
     workQueue.async { [weak self] in
       guard let self = self else { return }
       // Persist the held value before the apiClient guard: a pre-init write
       // must survive to be converged by `resyncHeldEmailAndPhone` (DPF-19),
       // mirroring Android. The PATCH itself still waits for a client.
-      guard email != self.deviceStore.getEmail() else { return }
+      guard email != self.deviceStore.getEmail() || email != self.deviceStore.getLastSyncedEmail() else { return }
       self.deviceStore.setEmail(email)
       guard let client = self.apiClient else { return }
-      self.performOrQueue(client, description: "setEmail", coalesceKey: TelemetryKey.email) {
-        [weak self] client, deviceId, token in
-        let result = client.patchDevice(deviceId: deviceId, token: token, fields: ["email": email])
-        switch result {
-        case .success:
-          break // held == synced
-        case .failure(let message):
-          self?.logger("Notti.setEmail: PATCH failed (\(message)) - not retried")
-        }
-      }
+      self.enqueueEmailPatch(client, email, description: "setEmail")
     }
   }
 
-  /// Explicit clear (DPF-18): persists nil and enqueues an explicit `email: null`.
+  /// Explicit clear (DPF-18): persists nil and enqueues an explicit
+  /// `email: null` (coalesced, so it supersedes a queued set). Durable: a
+  /// clear issued before `initialize` or whose PATCH fails leaves
+  /// `lastSyncedEmail` set, and the next registration re-sends the null.
   public func clearEmail() {
     workQueue.async { [weak self] in
-      guard let self = self else { return }
-      // Persist before the apiClient guard, mirroring Android: a pre-init
-      // clear must clear any held value so it is never re-sent (DPF-18/19).
-      self.deviceStore.setEmail(nil)
-      guard let client = self.apiClient else { return }
-      self.performOrQueue(client, description: "clearEmail", coalesceKey: TelemetryKey.email) {
-        [weak self] client, deviceId, token in
-        let result = client.patchDevice(deviceId: deviceId, token: token, fields: ["email": NSNull()])
-        switch result {
-        case .success:
-          break
-        case .failure(let message):
-          self?.logger("Notti.clearEmail: PATCH failed (\(message)) - not retried")
-        }
-      }
+      self?.clearEmailOnQueue()
     }
   }
 
@@ -493,39 +500,17 @@ public class NottiCore {
   public func setPhone(_ phone: String) {
     workQueue.async { [weak self] in
       guard let self = self else { return }
-      guard phone != self.deviceStore.getPhone() else { return }
+      guard phone != self.deviceStore.getPhone() || phone != self.deviceStore.getLastSyncedPhone() else { return }
       self.deviceStore.setPhone(phone)
       guard let client = self.apiClient else { return }
-      self.performOrQueue(client, description: "setPhone", coalesceKey: TelemetryKey.phone) {
-        [weak self] client, deviceId, token in
-        let result = client.patchDevice(deviceId: deviceId, token: token, fields: ["phone": phone])
-        switch result {
-        case .success:
-          break
-        case .failure(let message):
-          self?.logger("Notti.setPhone: PATCH failed (\(message)) - not retried")
-        }
-      }
+      self.enqueuePhonePatch(client, phone, description: "setPhone")
     }
   }
 
-  /// Explicit clear (DPF-18): persists nil and enqueues an explicit `phone: null`.
+  /// Explicit clear (DPF-18); see `clearEmail` for the contract.
   public func clearPhone() {
     workQueue.async { [weak self] in
-      guard let self = self else { return }
-      // Persist before the apiClient guard, mirroring Android (DPF-18/19).
-      self.deviceStore.setPhone(nil)
-      guard let client = self.apiClient else { return }
-      self.performOrQueue(client, description: "clearPhone", coalesceKey: TelemetryKey.phone) {
-        [weak self] client, deviceId, token in
-        let result = client.patchDevice(deviceId: deviceId, token: token, fields: ["phone": NSNull()])
-        switch result {
-        case .success:
-          break
-        case .failure(let message):
-          self?.logger("Notti.clearPhone: PATCH failed (\(message)) - not retried")
-        }
-      }
+      self?.clearPhoneOnQueue()
     }
   }
 
@@ -782,6 +767,9 @@ public class NottiCore {
   private func syncPermissionStatusIfNeeded() {
     permissionStatusProvider { [weak self] status in
       guard let self = self, let status = status else { return }
+      // DPF-14 stamps the moment the change was detected (this read), not the
+      // moment a queued PATCH finally runs.
+      let detectedAtMs = self.nowMs()
       self.onWorkQueue {
         // L2-class guard (final review finding): the OS permission read is
         // async and can outlive a second `initialize()` that replaced
@@ -790,22 +778,41 @@ public class NottiCore {
         // client would PATCH the old backend/app. Android's `runOrQueue`
         // re-reads `apiClient` the same way.
         guard let client = self.apiClient else { return }
-        let previous = self.deviceStore.getLastSyncedPermissionStatus()
-        guard status != previous else { return }
-        var fields: [String: Any] = ["permission_status": status]
-        if status == "denied" && previous == "granted" {
-          let now = self.nowMs()
-          self.deviceStore.setLastUnsubscribedAtMs(now)
-          fields["last_unsubscribed_at"] = Self.formatIsoUtc(now)
-        }
+        // The diff and the unsubscribe stamp are evaluated INSIDE the mutation
+        // (at execution time), mirroring Android: a denied->granted flip queued
+        // before registration coalesces to the final status and is diffed
+        // against what the backend actually acknowledged, never sending a stale
+        // `{denied, last_unsubscribed_at}` computed at enqueue time.
         self.performOrQueue(client, description: "permission status", coalesceKey: TelemetryKey.permissionStatus) {
           [weak self] client, deviceId, token in
+          guard let self = self else { return }
+          let previous = self.deviceStore.getLastSyncedPermissionStatus()
+          if status != "denied" {
+            // Back to a non-denied state before a granted->denied sync was
+            // acked: that transition is moot, the next one gets a fresh stamp.
+            self.deviceStore.setPendingPermissionUnsubscribeAtMs(nil)
+          }
+          guard status != previous else { return }
+          var fields: [String: Any] = ["permission_status": status]
+          var stampMs: Int64?
+          if status == "denied" && previous == "granted" {
+            // Stamped once, at first detection; a retry at a later trigger
+            // re-sends the persisted value instead of a fresh `now` (DPF-14).
+            let stamp = self.deviceStore.getPendingPermissionUnsubscribeAtMs() ?? detectedAtMs
+            self.deviceStore.setPendingPermissionUnsubscribeAtMs(stamp)
+            self.deviceStore.setLastUnsubscribedAtMs(stamp)
+            stampMs = stamp
+            fields["last_unsubscribed_at"] = Self.formatIsoUtc(stamp)
+          }
           let result = client.patchDevice(deviceId: deviceId, token: token, fields: fields)
           switch result {
           case .success:
-            self?.deviceStore.setLastSyncedPermissionStatus(status)
+            self.deviceStore.setLastSyncedPermissionStatus(status)
+            if stampMs != nil {
+              self.deviceStore.setPendingPermissionUnsubscribeAtMs(nil)
+            }
           case .failure(let message):
-            self?.logger("Notti.permissionStatus: PATCH failed (\(message)) - not retried")
+            self.logger("Notti.permissionStatus: PATCH failed (\(message)) - retried on the next trigger")
           }
         }
       }
@@ -816,30 +823,78 @@ public class NottiCore {
   /// `email`/`phone` (DPF-19): when the held value is non-nil, enqueue a set
   /// unconditionally - the backend row may be fresh after a reinstall/backup-
   /// restore, so the value must converge without the integrator re-calling the
-  /// setter. A nil held value sends nothing.
+  /// setter. When the held value is nil but the backend last acknowledged a
+  /// value (a clear issued before `initialize`, or whose PATCH failed), the
+  /// explicit null is re-sent (DPF-18 durability). Both nil sends nothing.
   private func resyncHeldEmailAndPhone(_ client: NottiApiClient) {
     if let email = deviceStore.getEmail() {
-      performOrQueue(client, description: "resync email", coalesceKey: TelemetryKey.email) {
-        [weak self] client, deviceId, token in
-        let result = client.patchDevice(deviceId: deviceId, token: token, fields: ["email": email])
-        switch result {
-        case .success:
-          break
-        case .failure(let message):
-          self?.logger("Notti.resyncEmail: PATCH failed (\(message)) - not retried")
-        }
-      }
+      enqueueEmailPatch(client, email, description: "resyncEmail")
+    } else if deviceStore.getLastSyncedEmail() != nil {
+      enqueueEmailPatch(client, nil, description: "resyncEmailClear")
     }
     if let phone = deviceStore.getPhone() {
-      performOrQueue(client, description: "resync phone", coalesceKey: TelemetryKey.phone) {
-        [weak self] client, deviceId, token in
-        let result = client.patchDevice(deviceId: deviceId, token: token, fields: ["phone": phone])
-        switch result {
-        case .success:
-          break
-        case .failure(let message):
-          self?.logger("Notti.resyncPhone: PATCH failed (\(message)) - not retried")
-        }
+      enqueuePhonePatch(client, phone, description: "resyncPhone")
+    } else if deviceStore.getLastSyncedPhone() != nil {
+      enqueuePhonePatch(client, nil, description: "resyncPhoneClear")
+    }
+  }
+
+  /// workQueue-only. Local half of `clearEmail` (also used by `logout`):
+  /// persists held nil, then enqueues the explicit null when a client exists.
+  /// Before `initialize` only the local write happens; `lastSyncedEmail`
+  /// still holds the acknowledged value, so registration re-sends the clear.
+  private func clearEmailOnQueue() {
+    deviceStore.setEmail(nil)
+    guard let client = apiClient else { return }
+    enqueueEmailPatch(client, nil, description: "clearEmail")
+  }
+
+  /// workQueue-only. Phone counterpart of `clearEmailOnQueue`.
+  private func clearPhoneOnQueue() {
+    deviceStore.setPhone(nil)
+    guard let client = apiClient else { return }
+    enqueuePhonePatch(client, nil, description: "clearPhone")
+  }
+
+  private func enqueueEmailPatch(_ client: NottiApiClient, _ value: String?, description: String) {
+    enqueueContactPatch(
+      client, field: "email", value: value, description: description, coalesceKey: TelemetryKey.email,
+      setSynced: { [weak self] in self?.deviceStore.setLastSyncedEmail($0) }
+    )
+  }
+
+  private func enqueuePhonePatch(_ client: NottiApiClient, _ value: String?, description: String) {
+    enqueueContactPatch(
+      client, field: "phone", value: value, description: description, coalesceKey: TelemetryKey.phone,
+      setSynced: { [weak self] in self?.deviceStore.setLastSyncedPhone($0) }
+    )
+  }
+
+  /// workQueue-only. Coalesced `{field: value}` PATCH for email/phone; a nil
+  /// `value` is sent as an explicit JSON null (clear). On a 2xx the value
+  /// this PATCH carried is ALWAYS recorded as last-synced (mutations run
+  /// serialized in call order on `workQueue`, so the latest ack wins). Not
+  /// gated on "still held": a set acked after a newer clear was issued must
+  /// still record the set, otherwise a failing clear would leave held ==
+  /// lastSynced == nil and registration would never re-send it (parity with
+  /// Android).
+  private func enqueueContactPatch(
+    _ client: NottiApiClient,
+    field: String,
+    value: String?,
+    description: String,
+    coalesceKey: String,
+    setSynced: @escaping (String?) -> Void
+  ) {
+    performOrQueue(client, description: description, coalesceKey: coalesceKey) {
+      [weak self] client, deviceId, token in
+      let fields: [String: Any] = [field: value ?? NSNull()]
+      let result = client.patchDevice(deviceId: deviceId, token: token, fields: fields)
+      switch result {
+      case .success:
+        setSynced(value)
+      case .failure(let message):
+        self?.logger("Notti.\(description): PATCH failed (\(message)) - re-sent on the next set/registration")
       }
     }
   }
@@ -1019,7 +1074,7 @@ public class NottiCore {
     deviceStore.setSessionLastSeenAtMs(nowMs)
     startHeartbeatTimer()
     readCountryIfEnabled(nowMs: nowMs)
-    if let client = apiClient {
+    if apiClient != nil {
       syncPermissionStatusIfNeeded()
     }
   }
@@ -1237,17 +1292,16 @@ public class NottiCore {
         logger("Notti: device not registered yet - replaced the queued \(description) with the latest value")
         return
       }
-      if pendingMutations.count >= Self.maxPendingMutations {
-        if let telemetryIndex = pendingMutations.firstIndex(where: { $0.coalesceKey != nil }) {
-          let dropped = pendingMutations.remove(at: telemetryIndex)
-          logger("Notti: pending-mutation queue full - dropping queued telemetry (\(dropped.description))")
-        } else if coalesceKey != nil {
-          logger("Notti: pending-mutation queue full of user mutations - dropping telemetry (\(description))")
-          return
-        } else {
-          let dropped = pendingMutations.removeFirst()
-          logger("Notti: pending-mutation queue full - dropping the oldest queued mutation (\(dropped.description))")
-        }
+      // Mirrors Android's `runOrQueue`: coalesced entries (telemetry,
+      // email/phone set/clear) are bounded by their distinct keys, never count
+      // against the cap and are never evicted - dropping a queued email clear
+      // would silently lose a PII erasure. Only the oldest uncoalesced call
+      // makes room.
+      if coalesceKey == nil,
+        pendingMutations.filter({ $0.coalesceKey == nil }).count >= Self.maxPendingMutations,
+        let oldest = pendingMutations.firstIndex(where: { $0.coalesceKey == nil }) {
+        let dropped = pendingMutations.remove(at: oldest)
+        logger("Notti: pending-mutation queue full - dropping the oldest queued mutation (\(dropped.description))")
       }
       pendingMutations.append(mutation)
       logger("Notti: device not registered yet - queued \(description) until registration completes")
@@ -1311,6 +1365,8 @@ public class NottiCore {
     }
   }
 
+  /// Returns whether the backend acknowledged (2xx) the PATCH.
+  @discardableResult
   private func patchSubscribed(
     _ client: NottiApiClient,
     deviceId: String,
@@ -1318,7 +1374,7 @@ public class NottiCore {
     _ subscribed: Bool,
     logContext: String,
     extraFields: [String: Any] = [:]
-  ) {
+  ) -> Bool {
     var fields: [String: Any] = ["subscribed": subscribed]
     for (key, value) in extraFields {
       fields[key] = value
@@ -1327,8 +1383,23 @@ public class NottiCore {
     switch result {
     case .success:
       deviceStore.setSubscribed(subscribed)
+      return true
     case .failure(let message):
       logger("Notti.\(logContext): PATCH failed (\(message)) - not retried")
+      return false
     }
+  }
+
+  /// Normalizes an OS language code to its ISO 639-1 primary subtag
+  /// (DPF-06), matching Android: lowercased, region/script stripped
+  /// (`pt-BR`/`pt_BR` -> `pt`), and the empty / `und` (undetermined) codes
+  /// map to nil so the field is omitted rather than sent as garbage.
+  static func normalizedLanguageCode(_ raw: String?) -> String? {
+    guard let raw = raw else { return nil }
+    let primary = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+      .split(whereSeparator: { $0 == "-" || $0 == "_" })
+      .first
+      .map { $0.lowercased() } ?? ""
+    return primary.isEmpty || primary == "und" ? nil : primary
   }
 }
