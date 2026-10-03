@@ -7,6 +7,7 @@ import android.location.Geocoder
 import android.location.LocationManager
 import android.os.Build
 import android.util.Log
+import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.facebook.react.bridge.Promise
@@ -78,6 +79,13 @@ class NottiModule(reactContext: ReactApplicationContext) :
   private val eventStore = NottiModule.getEventStore(reactApplicationContext)
 
   /**
+   * Shared with [core]: the module itself also reads/writes the
+   * `permissionRequested` flag ([requestNativePermission] /
+   * [readPermissionStatus]), which is platform plumbing, not core state.
+   */
+  private val deviceStore = NottiDeviceStore(prefs)
+
+  /**
    * Shared by [NottiCore] (blocking HTTP + retry backoff) and the FCM-token
    * `Task` listener below, so neither ever runs on the main looper.
    */
@@ -97,7 +105,7 @@ class NottiModule(reactContext: ReactApplicationContext) :
 
   private val core: NottiCore by lazy {
     NottiCore(
-      deviceStore = NottiDeviceStore(prefs),
+      deviceStore = deviceStore,
       eventStore = eventStore,
       apiClientFactory = { appId, clientKey, baseUrl ->
         NottiApiClient(OkHttpClient(), baseUrl, appId, clientKey)
@@ -307,48 +315,54 @@ class NottiModule(reactContext: ReactApplicationContext) :
     null
   }
 
-  /** Reads the OS language ISO 639-1 code (DPF-06); failure resolves `null` (DPF-09). */
+  /**
+   * Reads the OS language ISO 639-1 code (DPF-06) via
+   * [NottiCore.normalizeLanguage] (primary subtag, legacy codes mapped,
+   * `und`/empty -> `null`); failure resolves `null` (DPF-09).
+   */
   private fun readLanguage(): String? = try {
-    Locale.getDefault().language
+    NottiCore.normalizeLanguage(Locale.getDefault().toLanguageTag())
   } catch (t: Throwable) {
     Log.e(NAME, "Notti: failed to read language - ${t.message}")
     null
   }
 
   /**
-   * Best-effort OS push-permission state read (DPF-10): `granted` / `denied`
-   * / `notDetermined`, or `null` on an unknown/transitional state (DPF edge
-   * case - never fabricate). Below Android 13 no runtime permission exists, so
-   * the notifications-enabled check alone maps enabled->granted / disabled->
-   * denied. On 13+ the permission exists but may be unasked: a granted
-   * `POST_NOTIFICATIONS` maps to `granted`, and a not-enabled (or denied)
-   * state maps to `denied` - `notDetermined` is only reported where the OS
-   * itself has not yet decided (enabled but permission never requested).
+   * Best-effort OS push-permission state read (DPF-10): gathers the raw OS
+   * signals and maps them through [NottiCore.mapPermissionStatus] (the
+   * branch table and its known limitation are documented there). The
+   * rationale signal needs an Activity; with none in the foreground it is
+   * passed as `null`. Any failure resolves `null` (omit - never fabricate).
    */
   private fun readPermissionStatus(callback: (String?) -> Unit) {
-    try {
+    val status = try {
       val notificationsEnabled = NotificationManagerCompat
         .from(reactApplicationContext)
         .areNotificationsEnabled()
-      if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-        callback(if (notificationsEnabled) "granted" else "denied")
-        return
-      }
-      val permissionGranted = ContextCompat.checkSelfPermission(
-        reactApplicationContext,
-        Manifest.permission.POST_NOTIFICATIONS
-      ) == PackageManager.PERMISSION_GRANTED
-      callback(
-        when {
-          permissionGranted -> "granted"
-          notificationsEnabled -> "notDetermined"
-          else -> "denied"
+      val sdkInt = Build.VERSION.SDK_INT
+      if (sdkInt < Build.VERSION_CODES.TIRAMISU) {
+        NottiCore.mapPermissionStatus(sdkInt, notificationsEnabled, false, false, null)
+      } else {
+        val permissionGranted = ContextCompat.checkSelfPermission(
+          reactApplicationContext,
+          Manifest.permission.POST_NOTIFICATIONS
+        ) == PackageManager.PERMISSION_GRANTED
+        val shouldShowRationale = reactApplicationContext.currentActivity?.let {
+          ActivityCompat.shouldShowRequestPermissionRationale(it, Manifest.permission.POST_NOTIFICATIONS)
         }
-      )
+        NottiCore.mapPermissionStatus(
+          sdkInt,
+          notificationsEnabled,
+          permissionGranted,
+          deviceStore.getPermissionRequested(),
+          shouldShowRationale
+        )
+      }
     } catch (t: Throwable) {
       Log.e(NAME, "Notti: failed to read permission status - ${t.message}")
-      callback(null)
+      null
     }
+    callback(status)
   }
 
   /**
@@ -467,6 +481,10 @@ class NottiModule(reactContext: ReactApplicationContext) :
       return
     }
 
+    // Recorded before prompting so [readPermissionStatus] can tell "never
+    // asked" (notDetermined) from "denied without rationale" (denied). Only set
+    // when the prompt is actually issued - no Activity means no prompt shown.
+    deviceStore.setPermissionRequested(true)
     val requestCode = nextPermissionRequestCode.getAndIncrement()
     activity.requestPermissions(
       arrayOf(Manifest.permission.POST_NOTIFICATIONS),

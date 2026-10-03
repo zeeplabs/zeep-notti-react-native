@@ -439,9 +439,8 @@ class NottiCoreTest {
   }
 
   @Test
-  fun `logout clears the locally held external user id without sending any PATCH`() {
-    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
-    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+  fun `logout clears the external user id locally and clears email and phone server-side`() {
+    repeat(4) { server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}""")) }
     val core = newCore()
     core.initialize("app-1", "key", validBaseUrl)
     core.login("user-42")
@@ -451,11 +450,22 @@ class NottiCoreTest {
     core.logout()
     awaitIdle()
 
-    // Only the initial register + login PATCH from setup above - logout()
-    // itself must not issue any network call (spec SDK-15: local-only clear,
-    // the backend has no support for clearing external_user_id server-side).
-    assertEquals(2, server.requestCount)
+    // Initial register + login PATCH from setup above, then logout()'s
+    // {email: null} and {phone: null} clears (LGPD: PII is cleared
+    // server-side). external_user_id itself is never sent (spec SDK-15:
+    // local-only clear, the backend cannot clear it server-side).
+    assertEquals(4, server.requestCount)
+    server.takeRequest(5, TimeUnit.SECONDS) // register
+    server.takeRequest(5, TimeUnit.SECONDS) // login
+    val bodies = (0 until 2).map {
+      JSONObject(requireNotNull(server.takeRequest(5, TimeUnit.SECONDS)).body.readUtf8())
+    }
+    assertTrue(bodies.any { it.has("email") && it.isNull("email") })
+    assertTrue(bodies.any { it.has("phone") && it.isNull("phone") })
+    assertTrue("logout never sends external_user_id: $bodies", bodies.none { it.has("external_user_id") })
     assertEquals(null, store.getExternalUserId())
+    assertNull(store.getEmail())
+    assertNull(store.getPhone())
   }
 
   @Test
@@ -468,6 +478,8 @@ class NottiCoreTest {
       MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}""")
         .setBodyDelay(300, TimeUnit.MILLISECONDS)
     )
+    // logout()'s email/phone clears.
+    repeat(2) { server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}""")) }
     val core = newCore()
     core.initialize("app-1", "key", validBaseUrl)
     awaitIdle()
@@ -478,7 +490,8 @@ class NottiCoreTest {
     core.logout()
     awaitIdle()
 
-    assertEquals(2, server.requestCount)
+    // register + login + logout's email/phone clears.
+    assertEquals(4, server.requestCount)
     assertEquals(null, store.getExternalUserId())
   }
 
@@ -1056,6 +1069,341 @@ fun `requestPermission result syncs the OS permission status`() {
 
     // Only the registration POST - null held values are never sent (DPF-19).
     assertEquals(1, server.requestCount)
+  }
+
+  // ---------------------------------------------------------------------
+  // Review fixes (device-profile-fields, PR #24)
+  // ---------------------------------------------------------------------
+
+  private fun ok() = MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}""")
+
+  /** A non-retried 4xx: a single attempt, then ApiResult.Failure. */
+  private fun rejected() = MockResponse().setResponseCode(422)
+
+  private fun nextBody(): JSONObject =
+    JSONObject(requireNotNull(server.takeRequest(5, TimeUnit.SECONDS)).body.readUtf8())
+
+  @Test
+  fun `clearEmail before initialize with a previously synced email is sent as email null at registration`() {
+    // A previous launch synced the email; this launch clears it before initialize().
+    store.setEmail("old@example.com")
+    store.setLastSyncedEmail("old@example.com")
+    val core = newCore()
+
+    core.clearEmail()
+    assertNull("the clear is held durably even before initialize", store.getEmail())
+
+    server.enqueue(ok())
+    server.enqueue(ok())
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+    awaitIdle()
+
+    // register + the owed {email: null} clear.
+    assertEquals(2, server.requestCount)
+    server.takeRequest(5, TimeUnit.SECONDS) // register
+    val clear = nextBody()
+    assertTrue(clear.has("email") && clear.isNull("email"))
+    assertNull(store.getLastSyncedEmail())
+  }
+
+  @Test
+  fun `a clear whose PATCH failed is re-sent at the next registration`() {
+    store.setEmail("old@example.com")
+    store.setLastSyncedEmail("old@example.com")
+    server.enqueue(ok()) // register
+    server.enqueue(ok()) // resync of the held email
+    server.enqueue(rejected()) // clearEmail PATCH fails
+    server.enqueue(ok()) // second register
+    server.enqueue(ok()) // re-sent clear
+    val core = newCore()
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+    awaitIdle()
+
+    core.clearEmail()
+    awaitIdle()
+    assertEquals("a failed clear is still owed", "old@example.com", store.getLastSyncedEmail())
+
+    core.onTokenRefreshed("new-fcm-token")
+    awaitIdle()
+    awaitIdle()
+
+    assertEquals(5, server.requestCount)
+    repeat(4) { server.takeRequest(5, TimeUnit.SECONDS) }
+    val resent = nextBody()
+    assertTrue(resent.has("email") && resent.isNull("email"))
+    assertNull(store.getEmail())
+    assertNull(store.getLastSyncedEmail())
+  }
+
+  @Test
+  fun `setEmail with the same value after a failed PATCH re-enqueues it`() {
+    server.enqueue(ok()) // register
+    server.enqueue(rejected()) // first setEmail fails
+    server.enqueue(ok()) // retry with the same value
+    val core = newCore()
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    core.setEmail("user@example.com")
+    awaitIdle()
+    assertNull(store.getLastSyncedEmail())
+
+    core.setEmail("user@example.com")
+    awaitIdle()
+
+    // Held == value but never acknowledged: not a no-op (F7).
+    assertEquals(3, server.requestCount)
+    server.takeRequest(5, TimeUnit.SECONDS) // register
+    server.takeRequest(5, TimeUnit.SECONDS) // failed set
+    assertEquals("user@example.com", nextBody().getString("email"))
+    assertEquals("user@example.com", store.getLastSyncedEmail())
+  }
+
+  @Test
+  fun `logout before registration supersedes a queued setEmail with the clear`() {
+    var deliverToken: ((String?) -> Unit)? = null
+    val core = newCore(tokenProvider = { cb -> deliverToken = cb })
+    core.initialize("app-1", "key", validBaseUrl)
+
+    core.setEmail("user@example.com")
+    core.setPhone("+5511999999999")
+    core.logout()
+    awaitIdle()
+
+    server.enqueue(ok()) // register
+    server.enqueue(ok()) // email clear
+    server.enqueue(ok()) // phone clear
+    requireNotNull(deliverToken)("fcm-token")
+    awaitIdle()
+    awaitIdle()
+
+    // The coalesce key makes each clear replace its queued set: the PII is
+    // never sent, only the clears (and the registration resync sends nothing,
+    // since held and last-synced are both null once the clears are acked).
+    assertEquals(3, server.requestCount)
+    server.takeRequest(5, TimeUnit.SECONDS) // register
+    val bodies = (0 until 2).map { nextBody() }
+    assertTrue(bodies.any { it.has("email") && it.isNull("email") })
+    assertTrue(bodies.any { it.has("phone") && it.isNull("phone") })
+    assertNull(store.getEmail())
+    assertNull(store.getPhone())
+  }
+
+  @Test
+  fun `a set acked after a newer clear still records lastSynced so a failed clear is re-sent at registration`() {
+    server.enqueue(ok()) // register
+    server.enqueue(ok()) // setEmail("x") - acked while the held value is already null
+    server.enqueue(rejected()) // clearEmail fails
+    server.enqueue(ok()) // second register
+    server.enqueue(ok()) // re-sent clear
+    val core = newCore()
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    core.setEmail("x@example.com")
+    core.clearEmail()
+    awaitIdle()
+
+    // The server now holds x (its set was acked, the clear was not): lastSynced
+    // must reflect that, even though the held value had already moved to null.
+    assertEquals("x@example.com", store.getLastSyncedEmail())
+
+    core.onTokenRefreshed("new-fcm-token")
+    awaitIdle()
+    awaitIdle()
+
+    assertEquals(5, server.requestCount)
+    repeat(4) { server.takeRequest(5, TimeUnit.SECONDS) }
+    assertTrue(nextBody().isNull("email"))
+    assertNull(store.getLastSyncedEmail())
+  }
+
+  @Test
+  fun `back-to-back sets converge lastSynced to the newest value`() {
+    repeat(3) { server.enqueue(ok()) }
+    val core = newCore()
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    core.setEmail("a@example.com")
+    core.setEmail("b@example.com")
+    awaitIdle()
+
+    assertEquals(3, server.requestCount)
+    assertEquals("b@example.com", store.getEmail())
+    assertEquals("b@example.com", store.getLastSyncedEmail())
+  }
+
+  @Test
+  fun `registration resync records the acknowledged held value as synced`() {
+    store.setEmail("held@example.com")
+    server.enqueue(ok())
+    server.enqueue(ok())
+    val core = newCore()
+
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+    awaitIdle()
+
+    assertEquals("held@example.com", store.getLastSyncedEmail())
+    // Held and acked: a later identical setEmail is now a true no-op.
+    core.setEmail("held@example.com")
+    awaitIdle()
+    assertEquals(2, server.requestCount)
+  }
+
+  @Test
+  fun `setSubscription false with unknown local state records last_unsubscribed_at`() {
+    server.enqueue(ok())
+    server.enqueue(ok())
+    // No subscription was ever acked on this install: the backend row
+    // defaults to subscribed = true, so this IS a transition.
+    assertNull(store.getSubscribedOrNull())
+    val core = newCore(clock = { 1_000L })
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    core.setSubscription(false)
+    awaitIdle()
+
+    server.takeRequest(5, TimeUnit.SECONDS) // register
+    val body = nextBody()
+    assertEquals(false, body.getBoolean("subscribed"))
+    assertEquals("1970-01-01T00:00:01.000Z", body.getString("last_unsubscribed_at"))
+    assertEquals(1_000L, store.getLastUnsubscribedAtMs())
+    assertEquals(false, store.getSubscribedOrNull())
+    assertNull(store.getPendingUnsubscribeAtMs())
+  }
+
+  @Test
+  fun `setSubscription false on an already unsubscribed device does not record last_unsubscribed_at`() {
+    server.enqueue(ok())
+    server.enqueue(ok())
+    store.setSubscribed(false)
+    val core = newCore(clock = { 1_000L })
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    core.setSubscription(false)
+    awaitIdle()
+
+    server.takeRequest(5, TimeUnit.SECONDS) // register
+    val body = nextBody()
+    assertEquals(false, body.getBoolean("subscribed"))
+    assertFalse("false -> false is not a transition: $body", body.has("last_unsubscribed_at"))
+    assertNull(store.getLastUnsubscribedAtMs())
+  }
+
+  @Test
+  fun `a retried setSubscription false re-sends the timestamp of the first detection`() {
+    server.enqueue(ok()) // register
+    server.enqueue(rejected()) // first unsubscribe fails
+    server.enqueue(ok()) // retry
+    store.setSubscribed(true)
+    var now = 1_000L
+    val core = newCore(clock = { now })
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    core.setSubscription(false)
+    awaitIdle()
+    assertEquals(1_000L, store.getPendingUnsubscribeAtMs())
+    assertTrue("a failed PATCH leaves the local state subscribed", store.getSubscribed())
+
+    now = 5_000L
+    core.setSubscription(false)
+    awaitIdle()
+
+    server.takeRequest(5, TimeUnit.SECONDS) // register
+    assertEquals("1970-01-01T00:00:01.000Z", nextBody().getString("last_unsubscribed_at"))
+    assertEquals("the retry reuses the persisted detection time, not a fresh now()",
+      "1970-01-01T00:00:01.000Z", nextBody().getString("last_unsubscribed_at"))
+    assertEquals(1_000L, store.getLastUnsubscribedAtMs())
+    assertNull(store.getPendingUnsubscribeAtMs())
+    assertFalse(store.getSubscribed())
+  }
+
+  @Test
+  fun `a retried granted to denied permission sync re-sends the timestamp of the first detection`() {
+    server.enqueue(ok()) // register
+    server.enqueue(rejected()) // permission_status=denied PATCH fails
+    server.enqueue(ok()) // retried at the next session start
+    store.setLastSyncedPermissionStatus("granted")
+    var now = 1_000L
+    val core = newCore(
+      permissionStatusProvider = { cb -> cb("denied") },
+      clock = { now }
+    )
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+    awaitIdle()
+    assertEquals(1_000L, store.getPendingPermissionUnsubscribeAtMs())
+    assertEquals("granted", store.getLastSyncedPermissionStatus())
+
+    now = 5_000L
+    core.onAppForegrounded()
+    awaitIdle()
+    awaitIdle()
+
+    server.takeRequest(5, TimeUnit.SECONDS) // register
+    assertEquals("1970-01-01T00:00:01.000Z", nextBody().getString("last_unsubscribed_at"))
+    val retried = nextBody()
+    assertEquals("denied", retried.getString("permission_status"))
+    assertEquals("1970-01-01T00:00:01.000Z", retried.getString("last_unsubscribed_at"))
+    assertEquals("denied", store.getLastSyncedPermissionStatus())
+    assertEquals(1_000L, store.getLastUnsubscribedAtMs())
+    assertNull(store.getPendingPermissionUnsubscribeAtMs())
+  }
+
+  @Test
+  fun `permission status mapping covers every branch`() {
+    data class Case(
+      val sdk: Int,
+      val enabled: Boolean,
+      val granted: Boolean,
+      val requested: Boolean,
+      val rationale: Boolean?,
+      val expected: String
+    )
+    val cases = listOf(
+      // API < 33: notifications-enabled alone decides.
+      Case(32, enabled = true, granted = false, requested = false, rationale = null, expected = "granted"),
+      Case(32, enabled = false, granted = false, requested = true, rationale = true, expected = "denied"),
+      Case(26, enabled = true, granted = true, requested = true, rationale = false, expected = "granted"),
+      // API >= 33, permission granted.
+      Case(33, enabled = true, granted = true, requested = true, rationale = null, expected = "granted"),
+      Case(34, enabled = false, granted = true, requested = true, rationale = false, expected = "denied"),
+      // API >= 33, not granted: rationale wins.
+      Case(33, enabled = false, granted = false, requested = false, rationale = true, expected = "denied"),
+      // Never requested by the SDK, no rationale (or no Activity) -> notDetermined.
+      Case(33, enabled = true, granted = false, requested = false, rationale = false, expected = "notDetermined"),
+      Case(33, enabled = false, granted = false, requested = false, rationale = null, expected = "notDetermined"),
+      // Requested before, no rationale -> permanently denied.
+      Case(33, enabled = false, granted = false, requested = true, rationale = false, expected = "denied"),
+      Case(35, enabled = false, granted = false, requested = true, rationale = null, expected = "denied")
+    )
+    cases.forEach { c ->
+      assertEquals(
+        "case $c",
+        c.expected,
+        NottiCore.mapPermissionStatus(c.sdk, c.enabled, c.granted, c.requested, c.rationale)
+      )
+    }
+  }
+
+  @Test
+  fun `language normalization keeps the primary subtag and maps legacy codes`() {
+    assertEquals("pt", NottiCore.normalizeLanguage("pt-BR"))
+    assertEquals("en", NottiCore.normalizeLanguage("en"))
+    assertEquals("zh", NottiCore.normalizeLanguage("zh-Hant-TW"))
+    assertEquals("he", NottiCore.normalizeLanguage("iw-IL"))
+    assertEquals("id", NottiCore.normalizeLanguage("in"))
+    assertEquals("yi", NottiCore.normalizeLanguage("ji"))
+    assertNull(NottiCore.normalizeLanguage(""))
+    assertNull(NottiCore.normalizeLanguage("und"))
+    assertNull(NottiCore.normalizeLanguage(null))
   }
 
   @Test
