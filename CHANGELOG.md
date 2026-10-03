@@ -65,6 +65,30 @@ entries once released.
 
 ### ⚠️ Breaking / attention when upgrading
 
+* **Requires `zeep-notti` backend ≥ v0.10.0** (DPROF-01..17). Older backends ignore the new device fields, but the SDK still marks them as synced on any 2xx, so static values (`device_model`, `device_os`, `sdk_version`) are not re-sent after the backend is upgraded until they change.
+* **Automatic device profile:** this release starts sending `device_os`, `device_model`, `sdk_version`, `timezone_id`, `language`, `permission_status` and `last_unsubscribed_at` to your Notti instance, with no opt-out toggle. Review your privacy labels / LGPD documentation (README "Privacy, App Store labels and LGPD").
+* **`logout()` now clears email and phone** locally and server-side (`{email: null, phone: null}`), so a previous user's contact data never stays attached to the next user on a shared device. Call `User.setEmail`/`User.setPhone` again after the next `login`.
+* **iOS privacy manifest:** `PrivacyInfo.xcprivacy` now declares Email Address and Phone Number (linked to the user, not used for tracking, App Functionality). Data is only collected if you call `User.setEmail`/`User.setPhone`.
+
+### Features
+
+* **`Notti.User.setEmail` / `clearEmail` / `setPhone` / `clearPhone`** (new JS API): first-class email and phone attributes on the device row, never merged into tags. A clear is durable: the last value acknowledged by the backend is persisted, and a clear that could not complete (called before `initialize`, offline, process killed, server error) is re-sent as an explicit `null` on the next registration.
+
+### Bug Fixes
+
+* **iOS:** coalesced mutations (telemetry and email/phone set/clear) no longer count toward the 32-entry pre-registration queue limit and are never evicted, matching Android; a full queue now drops the oldest non-coalesced mutation.
+* **Android:** `language` is normalized to the ISO 639-1 primary subtag (legacy `iw`/`in`/`ji` mapped to `he`/`id`/`yi`; empty/`und` omitted). iOS sends the primary subtag only.
+* **Android 13+:** `permission_status` no longer reports `denied` for a device that was never asked, and reports `denied` when notifications are blocked in Settings even if the runtime permission is still granted.
+* **Android and iOS:** `last_unsubscribed_at` is recorded on the first `setSubscription(false)` even when the permission was requested outside the SDK, and a retried transition re-sends the timestamp of when it was detected instead of a fresh one.
+
+### Known limitations
+
+* **Android 13+ `permission_status`:** "never asked" vs "denied" is inferred from whether the SDK's `requestPermission` ran and from `shouldShowRequestPermissionRationale`. If you request `POST_NOTIFICATIONS` through another library and the user permanently denies it, the device may report `notDetermined`.
+
+## Upgrade notes for 0.4.0 (released)
+
+### ⚠️ Breaking / attention when upgrading
+
 * **TypeScript:** `NotificationPayload.title` and `NotificationPayload.body` are now typed `string | null` (still optional). Both platforms already delivered `null` for a missing value at runtime; code comparing with `=== undefined` must switch to `== null` / `??`.
 * **iOS / CocoaPods:** `Notti.podspec` is split into subspecs `Notti/Core` (Turbo Module, `default_subspec`) and `Notti/NotificationServiceExtension`. Plain `pod 'Notti'` and autolinking keep resolving to `Core`; Podfiles that pin subspecs explicitly must include `Core` in the app target.
 * **iOS / CocoaPods:** `Notti/Core` now links `CoreLocation`. App Store Connect may warn about a missing `NSLocationWhenInUseUsageDescription` (ITMS-90683) even if country reporting is never enabled; see README.

@@ -44,13 +44,14 @@ Notti is self-hosted or SaaS per deployment. By default `initialize` targets Not
 - 🖼️ **Rich push (iOS)** — image/video/audio attachments via a Notification Service Extension helper, same setup model as OneSignal's.
 - 📈 **CTR event reporting** — `received`/`clicked` events reported automatically to Notti, with an on-disk retry queue. See [Data collected by the SDK](#data-collected-by-the-sdk).
 - 🧭 **Segment telemetry** — app version and session aggregates synced automatically; device country only after an explicit opt-in (`setLocationSharingEnabled`, default off).
+- 📇 **Device profile** — OS version, device model, SDK version, timezone, language and detailed push-permission status synced automatically; first-class email/phone via `User.setEmail`/`User.setPhone`.
 
 ## Requirements
 
 - React Native with the [New Architecture](https://reactnative.dev/architecture/landing-page) enabled (Turbo Modules).
 - Android: `minSdkVersion` compatible with `com.google.firebase:firebase-messaging` (Firebase Cloud Messaging configured in your Firebase project).
 - iOS: Push Notifications capability enabled for your app target (APNs).
-- A running [Notti](https://github.com/zeeplabs/zeep-notti) instance (self-hosted or SaaS) and an App's `appId`/`clientKey`.
+- A running [Notti](https://github.com/zeeplabs/zeep-notti) instance (self-hosted or SaaS) and an App's `appId`/`clientKey`. The device-profile fields require `zeep-notti` **v0.10.0 or later**.
 
 ## Installation
 
@@ -80,6 +81,12 @@ Notti.User.addTag('plan', 'vip');
 Notti.User.addTags({ plan: 'vip', region: 'br' });
 Notti.User.removeTag('plan');
 Notti.User.removeTags(['plan', 'region']);
+
+// First-class contact attributes (never merged into tags).
+Notti.User.setEmail('user@example.com');
+Notti.User.setPhone('+5511999999999');
+Notti.User.clearEmail();
+Notti.User.clearPhone();
 
 // Associate the device with your own user id.
 Notti.login('external-user-123');
@@ -140,8 +147,10 @@ Notti.getInitialNotificationClick().then((payload) => {
 | `Notti.requestPermission(): Promise<boolean>` | Triggers the native OS push-permission prompt. Resolves `true` immediately on Android below API 33 (no runtime permission exists there). Must be called after `initialize()` has run at least once. |
 | `Notti.User.addTag(key, value)` / `Notti.User.addTags(tags)` | Merges tag(s) into the device's tag map and persists the full resulting map server-side. |
 | `Notti.User.removeTag(key)` / `Notti.User.removeTags(keys)` | Removes tag key(s) from the device's tag map. |
+| `Notti.User.setEmail(email)` / `Notti.User.setPhone(phone)` | Sets the device's first-class `email`/`phone` attribute (personal data — see [Privacy](#privacy-app-store-labels-and-lgpd)). Not format-validated by the SDK; the backend rejects malformed values. Calling it again with the value the backend already acknowledged is a no-op. Re-sent automatically on registration so a fresh device row converges. |
+| `Notti.User.clearEmail()` / `Notti.User.clearPhone()` | Removes the value locally and sends an explicit `null` to the backend. Durable: if the clear cannot complete (called before `initialize`, offline, process killed, server error), it is re-sent on the next registration. |
 | `Notti.login(externalUserId)` | Associates the device with your own user id. |
-| `Notti.logout()` | Clears the external user id locally. Note: Notti' backend doesn't support clearing `external_user_id` server-side, so the previously-set value remains on the Device row server-side — `logout()` only affects local SDK state. |
+| `Notti.logout()` | Clears the external user id locally, and clears `email`/`phone` both locally and server-side (same durable path as `clearEmail`/`clearPhone`), so a previous user's contact data never stays on the device for the next user. Note: Notti's backend doesn't support clearing `external_user_id` server-side, so that value remains on the Device row server-side. |
 | `Notti.setSubscription(enabled)` | Enables/disables push delivery for the device without unregistering it. |
 | `Notti.setLocationSharingEnabled(enabled)` | Opt-in for reporting the device's country (ISO 3166-1 alpha-2) for segment targeting. **Default `false`.** The flag is persisted locally, so it survives restarts until you call it again. `true`: at the next session start, if the host app already holds OS location permission, the SDK reads the last cached location fix, reverse-geocodes it to a country code and sends only that code. It never prompts for permission and never runs continuous/background location. `false`: stops reading and sends an explicit `country: null` to the backend so the previously reported value is cleared, not just left stale. See [Opt-in country](#opt-in-country-setlocationsharingenabled). |
 | `Notti.getDeviceId(): string \| null` | Cached, synchronous read of the Notti-internal device id — the id your own backend needs to route notifications to this device. Returns `null` until registration assigns one; no network round-trip. Subscribe to `'deviceIdChanged'` (below) *before* calling this — registration can complete between the two calls, and there is no replay of a value already assigned. |
@@ -301,6 +310,15 @@ There is currently **no API to disable** the items in this subsection: they are 
 | App version | Read once per launch (`CFBundleShortVersionString` on iOS, `versionName` on Android); sent via device `PATCH` when it differs from the last value the backend acknowledged. Sent as an opaque string. | `app_version` |
 | Session aggregates | A session is one foreground → background/terminate cycle of the host app. On session end the SDK increments a local counter, adds the foreground duration, and issues a device `PATCH` with the cumulative snapshot. Once the device is registered, **every move to background sends one session `PATCH` right away** (iOS runs it inside an OS background task). Only before registration completes are snapshots coalesced: the queued session `PATCH` is replaced by the newer one, so a single request goes out when registration succeeds. A session left open by a force-quit/crash is closed on the next launch (see [Session heartbeat](#session-heartbeat-and-orphaned-sessions)). Non-interactive wake-ups (extensions, background fetch) do not count. | `first_session_at`, `last_session_at` (ISO-8601 UTC), `session_count`, `session_time_seconds` |
 | Notification events (CTR) | See below. | `type`, `delivery_id`, `token` |
+| Device profile | Read natively at initialize (and permission status again at each session start and after `requestPermission`); each field sent via device `PATCH` only when it differs from the last value the backend acknowledged. A field the OS can't provide is omitted, never fabricated. | `device_os`, `device_model`, `sdk_version`, `timezone_id` (IANA), `language` (ISO 639-1) |
+| Push permission status | The OS permission state, independent of `setSubscription`: `granted`, `denied`, `notDetermined`, `provisional` (iOS only). An unknown/transitional state is omitted. | `permission_status` |
+| Last unsubscribe | Timestamp of the most recent transition to unsubscribed, either `setSubscription(false)` or permission `granted` → `denied`. Never cleared by re-subscribing. | `last_unsubscribed_at` (ISO-8601 UTC) |
+
+### Set by the integrator
+
+| Data | When | Field(s) sent |
+| --- | --- | --- |
+| Email / phone | Only when you call `User.setEmail`/`User.setPhone`; cleared by `clearEmail`/`clearPhone` and by `logout()`. | `email`, `phone` |
 
 #### Notification event (CTR) reporting
 
@@ -368,7 +386,7 @@ Host-app requirements when you use country reporting:
 
 This section lists what the SDK does so you can fill in your own disclosures; it is not legal advice.
 
-- **App Store privacy "nutrition" labels** — for the data in [Data collected by the SDK](#data-collected-by-the-sdk), you will typically need to evaluate at least: **Usage Data → Product Interaction** (CTR events, session count/time, first/last session), **Identifiers → Device ID** (push token / Notti device id, and **User ID** if you call `login`), and **Location → Coarse Location** if you enable `setLocationSharingEnabled`. Whether each item is "linked to the user" depends on whether you call `login` and how you use Notti data; whether it is used for tracking depends on your own use. Google Play's Data safety form has equivalent categories (App activity, Device or other IDs, Approximate location).
+- **App Store privacy "nutrition" labels** — for the data in [Data collected by the SDK](#data-collected-by-the-sdk), you will typically need to evaluate at least: **Usage Data → Product Interaction** (CTR events, session count/time, first/last session), **Identifiers → Device ID** (push token / Notti device id, and **User ID** if you call `login`), **Contact Info → Email Address / Phone Number** if you call `User.setEmail`/`User.setPhone` (declared in the SDK's `PrivacyInfo.xcprivacy` as linked, not tracking, App Functionality), **Diagnostics / Other Data** for the device profile (OS version, model, SDK version, timezone, language, permission status), and **Location → Coarse Location** if you enable `setLocationSharingEnabled`. Whether each item is "linked to the user" depends on whether you call `login` and how you use Notti data; whether it is used for tracking depends on your own use. Google Play's Data safety form has equivalent categories (App activity, Device or other IDs, Personal info → Email address / Phone number, Approximate location).
 - **LGPD (and similar laws)** — the SDK does not collect consent and does not decide a legal basis. The automatic telemetry has no toggle in this version; country reporting requires your explicit opt-in call. The integrator is responsible for having the legal basis, consent flow, privacy notice, retention and data-subject-request process for this data **validated by its own legal/DPO team** before shipping.
 - **Data minimization in the SDK** — country only (no coordinates sent to Notti); last cached fix only (no tracking); explicit server-side clear on opt-out; CTR payloads carry only `delivery_id`, `type` and the push token.
 
@@ -377,6 +395,8 @@ This section lists what the SDK does so you can fill in your own disclosures; it
 - **No reliable acknowledgement for `app_version`.** The backend accepts the telemetry fields since `zeep-notti` v0.9.0 (DEVTEL-01..13, 2026-09-30) and persists them, but the device PATCH response does not echo `app_version` back. The SDK treats the 2xx as acknowledged and marks `app_version` as synced, so it is **not re-sent until the value changes** (tracked as TODO `segtel-app-version-ack` in the Android code and `TODO(review item 7)` in the iOS code). Session snapshots are cumulative and re-sent at every session end, so they are not affected the same way.
 - **One bad CTR event can stall the event queue.** Events are flushed in order and a flush stops at the first non-terminal failure. An event that deterministically gets `5xx` or `429` blocks the events behind it until 32 newer events push it out of the on-disk queue. There is no per-event TTL, and `Retry-After` is not honored.
 - **A pending country clear that gets a permanent `4xx` is re-sent on every trigger** (registration, app foreground, network regain), because the flag is only cleared on a 2xx.
+- **Android 13+ `permission_status` "never asked" vs "denied" is inferred.** Android does not expose "not determined" directly. The SDK reports `notDetermined` when `POST_NOTIFICATIONS` is not granted, the SDK's `requestPermission` never ran and the OS does not ask for a rationale. If you request the permission through another library and the user permanently denies it, the device may report `notDetermined`.
+- **Backends older than `zeep-notti` v0.10.0** ignore the device-profile fields, but any 2xx marks them as synced, so static values (`device_model`, `device_os`, `sdk_version`) are not re-sent after the backend is upgraded until they change.
 - **Not yet validated on real devices:** session close on cold start / process kill on both platforms; the iOS background task on a slow network; `CLLocationManager` usage without runtime warnings; the `aps-environment` value in an EAS `preview` build (see [`aps-environment` value](#aps-environment-value)).
 
 ## Forwarding events manually
@@ -511,9 +531,15 @@ Notti persists its state in `SharedPreferences` file `notti_prefs` (Android) and
 | `notti_location_sharing_enabled` | Country opt-in flag |
 | `notti_pending_country_clear` | Opt-out `country: null` clear not yet acknowledged by the backend |
 | `notti_last_synced_country` | Last country code acknowledged by the backend (only ever set after opt-in) |
+| `notti_last_synced_device_os`, `notti_last_synced_device_model`, `notti_last_synced_sdk_version`, `notti_last_synced_timezone_id`, `notti_last_synced_language`, `notti_last_synced_permission_status` | Device-profile values last acknowledged by the backend |
+| `notti_last_unsubscribed_at_ms` | Most recent unsubscribe timestamp |
+| `notti_pending_unsubscribe_at_ms`, `notti_pending_permission_unsubscribe_at_ms` | Unsubscribe timestamp (app- or permission-driven) detected but not yet acknowledged by the backend; re-sent unchanged on retry |
+| `notti_permission_requested` (Android) | Whether the SDK's `requestPermission` has run (used to infer `notDetermined`) |
+| `notti_email`, `notti_phone` | Email/phone set via `User.setEmail`/`User.setPhone` (plaintext) |
+| `notti_last_synced_email`, `notti_last_synced_phone` | Email/phone last acknowledged by the backend (drives the durable clear) |
 | `notti_pending_events` | Queued CTR events (local id, `notification_id`, `delivery_id`, `type`, creation timestamp) awaiting delivery, max 32 |
 
-There is no SDK API to wipe this local data. Uninstalling the app removes it; `logout()` only clears `notti_external_user_id`. If you need a "delete my data" flow, delete the device's data on your Notti instance (server side) and clear the keys above yourself.
+There is no SDK API to wipe this local data. Uninstalling the app removes it; `logout()` clears `notti_external_user_id`, `notti_email` and `notti_phone`. If you need a "delete my data" flow, delete the device's data on your Notti instance (server side) and clear the keys above yourself.
 
 **Device/OS backups may carry Notti's local device identity across devices.** Both stores are included in a full device backup/restore by default (Android Auto Backup, iOS device backups via Finder/iCloud). Restoring that backup onto a different physical device could carry this install's identifiers (and its session/telemetry state and pending events) onto it before Notti has re-registered in that new process, briefly aiming mutations (`login`, `addTags`, `setSubscription`, telemetry) at the *donor* device's row on your backend. If this is LGPD/PII-relevant for your app, exclude them from backup:
 - **Android**: point `android:fullBackupContent`/`android:dataExtractionRules` at rules that exclude the `notti_prefs` shared-preferences file (see [Auto Backup for Apps](https://developer.android.com/guide/topics/data/autobackup)), or set `android:allowBackup="false"` app-wide if you don't otherwise rely on backup.
