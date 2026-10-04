@@ -1104,6 +1104,7 @@ class NottiCore(
    * strings, no parsing; a `null` provider skips only that field (DPF-04/09).
    */
   private fun syncProfileFieldsIfNeeded() {
+    deviceStore.migrateProfileFieldAckIfNeeded()
     fun sync(name: String, coalesceKey: String, provider: () -> String?, synced: () -> String?, setSynced: (String) -> Unit) {
       val current = provider() ?: return
       if (current == synced()) return

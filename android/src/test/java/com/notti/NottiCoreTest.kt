@@ -614,6 +614,7 @@ class NottiCoreTest {
 
   @Test
   fun `registration success with an unchanged app version does not enqueue a PATCH`() {
+    store.migrateProfileFieldAckIfNeeded() // an install already past the 0.6.0 one-shot migration
     store.setAppVersion("1.2.3")
     server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
     val core = newCore(versionProvider = { "1.2.3" })
@@ -798,6 +799,24 @@ class NottiCoreTest {
 
     assertEquals(2, server.requestCount)
     assertNull(store.getAppVersion())
+  }
+
+  @Test
+  fun `an install upgraded from 0_5_0 re-sends profile fields it had marked synced without an ack`() {
+    // 0.5.0 marked device_os synced on a bare 2xx; the value matches the
+    // provider, so without the migration the diff would skip it forever.
+    store.setLastSyncedDeviceOs("15.0")
+    echoingBackend()
+    val core = newCore(deviceOsProvider = { "15.0" })
+
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+    awaitIdle()
+
+    assertEquals(2, server.requestCount)
+    server.takeRequest(5, TimeUnit.SECONDS) // register
+    assertEquals("15.0", JSONObject(requireNotNull(server.takeRequest(5, TimeUnit.SECONDS)).body.readUtf8()).getString("device_os"))
+    assertEquals("15.0", store.getLastSyncedDeviceOs())
   }
 
   @Test

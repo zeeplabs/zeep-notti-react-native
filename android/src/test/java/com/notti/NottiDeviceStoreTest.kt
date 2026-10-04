@@ -112,11 +112,13 @@ private class FakeSharedPreferences : SharedPreferences {
 
 class NottiDeviceStoreTest {
 
+  private lateinit var prefs: FakeSharedPreferences
   private lateinit var store: NottiDeviceStore
 
   @Before
   fun setUp() {
-    store = NottiDeviceStore(FakeSharedPreferences())
+    prefs = FakeSharedPreferences()
+    store = NottiDeviceStore(prefs)
   }
 
   @Test
@@ -257,6 +259,36 @@ class NottiDeviceStoreTest {
   // ---------------------------------------------------------------------
   // Device profile fields (device-profile-fields, T2)
   // ---------------------------------------------------------------------
+
+  @Test
+  fun `profile field ack migration clears the six last-synced values exactly once`() {
+    // Simulates an install upgraded from SDK <= 0.5.0, which marked these as
+    // synced on any 2xx (unacked).
+    store.setAppVersion("1.2.3")
+    store.setLastSyncedDeviceOs("15.0")
+    store.setLastSyncedDeviceModel("Pixel 8")
+    store.setLastSyncedSdkVersion("0.5.0")
+    store.setLastSyncedTimezoneId("America/Sao_Paulo")
+    store.setLastSyncedLanguage("pt")
+    store.setLastSyncedPermissionStatus("granted")
+
+    store.migrateProfileFieldAckIfNeeded()
+
+    assertNull(store.getAppVersion())
+    assertNull(store.getLastSyncedDeviceOs())
+    assertNull(store.getLastSyncedDeviceModel())
+    assertNull(store.getLastSyncedSdkVersion())
+    assertNull(store.getLastSyncedTimezoneId())
+    assertNull(store.getLastSyncedLanguage())
+    // Not an echo-acked field - untouched.
+    assertEquals("granted", store.getLastSyncedPermissionStatus())
+
+    // Values acked after the migration survive every later call.
+    store.setLastSyncedDeviceOs("16.0")
+    store.migrateProfileFieldAckIfNeeded()
+    NottiDeviceStore(prefs).migrateProfileFieldAckIfNeeded()
+    assertEquals("16.0", store.getLastSyncedDeviceOs())
+  }
 
   @Test
   fun `device profile fields round-trip through SharedPreferences`() {
