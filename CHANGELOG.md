@@ -90,6 +90,19 @@ entries once released.
 
 ### ⚠️ Breaking / attention when upgrading
 
+* **The notification body tap is now reported as `opened`, not `clicked`** (`.specs/features/opened-event-reporting`). `clicked` now means an action-button tap. The JS API is unchanged: `notificationClicked` and `getInitialNotificationClick()` still fire for the body tap.
+* **Analytics impact:** Notti counts a delivery as opened when it has an `opened` or `clicked` event, and as clicked only with `clicked` (open rate = opened / delivered, CTR = clicked / delivered). Devices on this version stop contributing body taps to CTR; devices on 0.5.0 or older keep reporting body taps as `clicked` (counted as both opened and clicked). Expect CTR, template CTR deltas and the per-notification CTR to drop as users update: the metric now measures action-button taps. Open rate is not affected by the change.
+* **Requires a `zeep-notti` backend that accepts `opened`** (migration `0023`, overview v3; not in v0.10.0 or older). An older backend answers `422 invalid_type`, which the SDK treats as terminal: the event is dropped and body taps are not recorded. Deploy the backend first.
+* **Android has no `clicked` source yet** (the SDK does not render action buttons), so Android CTR from this version is 0.
+
+### Features
+
+* **iOS:** a tap on an action button from a `UNNotificationCategory` the app registered is reported as `clicked` (one event, no JS event). Dismissals are still not reported.
+
+## Upgrade notes for 0.5.0 (released)
+
+### ⚠️ Breaking / attention when upgrading
+
 * **Requires `zeep-notti` backend ≥ v0.10.0** (DPROF-01..17). Older backends ignore the new device fields, but the SDK still marks them as synced on any 2xx, so static values (`device_model`, `device_os`, `sdk_version`) are not re-sent after the backend is upgraded until they change.
 * **Automatic device profile:** this release starts sending `device_os`, `device_model`, `sdk_version`, `timezone_id`, `language`, `permission_status` and `last_unsubscribed_at` to your Notti instance, with no opt-out toggle. Review your privacy labels / LGPD documentation (README "Privacy, App Store labels and LGPD").
 * **`logout()` now clears email and phone** locally and server-side (two device PATCHes, `{email: null}` and `{phone: null}`), so a previous user's contact data never stays attached to the next user on a shared device. Call `User.setEmail`/`User.setPhone` again after the next `login`.
