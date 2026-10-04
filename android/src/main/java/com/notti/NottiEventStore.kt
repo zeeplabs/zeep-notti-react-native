@@ -24,8 +24,9 @@ data class PendingEvent(
  *
  * - [RECEIVED]: the notification arrived while the app was in the foreground.
  * - [OPENED]: the user tapped the notification body (the app was opened from it).
- * - [CLICKED]: the user tapped an action button. Android has no SDK-rendered
- *   action buttons yet, so nothing on this platform reports it today.
+ * - [CLICKED]: the user tapped the notification body (sent together with
+ *   [OPENED]) or an action button. Android has no SDK-rendered action
+ *   buttons yet, so here it always comes from the body tap.
  *
  * The backend counts a delivery as opened when it has an `opened` or a
  * `clicked` event, and as clicked only with a `clicked` event
