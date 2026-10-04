@@ -109,6 +109,24 @@ class NottiCoreTest {
     permissionStatusProvider = permissionStatusProvider
   )
 
+  /**
+   * Answers like the real backend: registration returns the device, and a
+   * PATCH returns the stored device echoing every field it just applied
+   * (`token` excluded) - the echo the profile-field sync relies on as its ack.
+   */
+  private fun echoingBackend() {
+    server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+      override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest): MockResponse {
+        val echo = JSONObject().put("id", "device-1").put("tags", JSONObject())
+        if (request.method == "PATCH") {
+          val sent = JSONObject(request.body.clone().readUtf8())
+          sent.keys().forEach { key -> if (key != "token") echo.put(key, sent.get(key)) }
+        }
+        return MockResponse().setResponseCode(200).setBody(echo.toString())
+      }
+    }
+  }
+
   @Test
   fun `initialize with blank appId logs and does not call the API client`() {
     val logs = mutableListOf<String>()
@@ -577,8 +595,7 @@ class NottiCoreTest {
 
   @Test
   fun `registration success with a version provider diff enqueues a PATCH with the current app version`() {
-    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
-    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    echoingBackend()
     val core = newCore(versionProvider = { "1.2.3" })
 
     core.initialize("app-1", "key", validBaseUrl)
@@ -623,10 +640,7 @@ class NottiCoreTest {
 
   @Test
   fun `a bumped app version between two registrations enqueues a PATCH with the new value`() {
-    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
-    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
-    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
-    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    echoingBackend()
     var currentVersion = "1.2.3"
     val core = newCore(versionProvider = { currentVersion })
 
@@ -658,7 +672,7 @@ class NottiCoreTest {
 
   @Test
   fun `registration success with profile providers enqueues a PATCH with all six fields`() {
-    repeat(7) { server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}""")) }
+    echoingBackend()
     val core = newCore(
       versionProvider = { "1.2.3" },
       deviceOsProvider = { "15.0" },
@@ -695,7 +709,7 @@ class NottiCoreTest {
 
   @Test
   fun `only a changed profile field is re-sent between two registrations`() {
-    repeat(10) { server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}""")) }
+    echoingBackend()
     var deviceOs = "15.0"
     var timezone = "America/Sao_Paulo"
     val core = newCore(
@@ -743,6 +757,50 @@ class NottiCoreTest {
   }
 
   @Test
+  fun `a PATCH ack that does not echo the field leaves it unsynced and re-sends it on the next registration`() {
+    // Backend older than the profile-field contract: answers 2xx but ignores
+    // the field, so the echo never carries it. Treating that 2xx as synced
+    // would stop the SDK from ever sending the value again.
+    repeat(4) { server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}""")) }
+    val logs = mutableListOf<String>()
+    val core = newCore(versionProvider = { "1.2.3" }, logs = logs)
+
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+    awaitIdle()
+    assertNull(store.getAppVersion())
+
+    core.onTokenRefreshed("new-fcm-token")
+    awaitIdle()
+    awaitIdle()
+
+    // register + PATCH, then register + the same PATCH again.
+    assertEquals(4, server.requestCount)
+    server.takeRequest(5, TimeUnit.SECONDS) // first register
+    server.takeRequest(5, TimeUnit.SECONDS) // first PATCH
+    server.takeRequest(5, TimeUnit.SECONDS) // second register
+    val resent = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+    assertEquals("PATCH", resent.method)
+    assertEquals("1.2.3", JSONObject(resent.body.readUtf8()).getString("app_version"))
+    assertNull(store.getAppVersion())
+    assertTrue(logs.any { it.contains("Notti.app_version") && it.contains("not echoed") })
+  }
+
+  @Test
+  fun `a PATCH ack echoing a different value does not mark the field synced`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{},"app_version":"1.0.0"}"""))
+    val core = newCore(versionProvider = { "1.2.3" })
+
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+    awaitIdle()
+
+    assertEquals(2, server.requestCount)
+    assertNull(store.getAppVersion())
+  }
+
+  @Test
   fun `a null profile provider omits that field without crashing`() {
     server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
     server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
@@ -768,7 +826,7 @@ class NottiCoreTest {
 
   @Test
   fun `sdk_version passed through initialize reaches the payload`() {
-    repeat(4) { server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}""")) }
+    echoingBackend()
     val core = newCore(deviceOsProvider = { "15.0" }, timezoneProvider = { "UTC" })
 
     // The package version is forwarded by the JS facade as the 4th arg.

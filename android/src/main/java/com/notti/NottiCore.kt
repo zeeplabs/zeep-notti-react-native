@@ -1110,12 +1110,16 @@ class NottiCore(
       mutate(name, coalesceKey) { client, deviceId, token ->
         val result = client.patchDevice(deviceId, token, mapOf(name to current))
         when (result) {
-          // Same ack caveat as the pre-generalization app_version sync: a 2xx
-          // is treated as "synced", but a backend that predates the companion
-          // spec answers 200 and silently ignores the field (additive fields
-          // are ignored server-side) - the value is then marked synced and not
-          // re-sent until the next real change.
-          is ApiResult.Success -> setSynced(current)
+          // The echoed device is the ack: a backend that predates the field
+          // answers 2xx but ignores it (additive fields are ignored
+          // server-side), so a bare 2xx must not mark it synced. Unechoed or
+          // different -> left unsynced and re-sent on the next registration.
+          is ApiResult.Success ->
+            if (result.response.profileFields[name] == current) {
+              setSynced(current)
+            } else {
+              logger("Notti.$name: PATCH accepted but value not echoed by the backend - re-sent on next registration")
+            }
           is ApiResult.Failure -> logger("Notti.$name: PATCH failed (${result.message}) - not retried")
         }
       }
