@@ -88,16 +88,14 @@ entries once released.
 
 ## [Unreleased]
 
-### ⚠️ Breaking / attention when upgrading
-
-* **The notification body tap is now reported as `opened`, not `clicked`** (`.specs/features/opened-event-reporting`). `clicked` now means an action-button tap. The JS API is unchanged: `notificationClicked` and `getInitialNotificationClick()` still fire for the body tap.
-* **Analytics impact:** Notti counts a delivery as opened when it has an `opened` or `clicked` event, and as clicked only with `clicked` (open rate = opened / delivered, CTR = clicked / delivered). Devices on this version stop contributing body taps to CTR; devices on 0.5.0 or older keep reporting body taps as `clicked` (counted as both opened and clicked). Expect CTR, template CTR deltas and the per-notification CTR to drop as users update: the metric now measures action-button taps. Open rate is not affected by the change.
-* **Requires a `zeep-notti` backend that accepts `opened`** (migration `0023`, overview v3; not in v0.10.0 or older). An older backend answers `422 invalid_type`, which the SDK treats as terminal: the event is dropped and body taps are not recorded. Deploy the backend first.
-* **Android has no `clicked` source yet** (the SDK does not render action buttons), so Android CTR from this version is 0.
-
 ### Features
 
-* **iOS:** a tap on an action button from a `UNNotificationCategory` the app registered is reported as `clicked` (one event, no JS event). Dismissals are still not reported.
+* **`opened` event:** a tap on the notification body (warm or cold start) now reports `opened` **and** `clicked` for the delivery (`.specs/features/opened-event-reporting`). CTR keeps its meaning: body taps are still clicks, exactly as in 0.5.0. With Notti's current formulas (opened = `opened` or `clicked`) open rate equals CTR; the `opened` rows let Notti tell body taps from action-button taps. SDK 0.5.0 and older send only `clicked` on a body tap, which Notti already counts as opened. JS API unchanged (`notificationClicked` / `getInitialNotificationClick()` still fire for the body tap).
+* **iOS:** a tap on an action button from a `UNNotificationCategory` the app registered is reported as `clicked` only (no JS event). Dismissals are still not reported.
+
+### Notes
+
+* Requires `zeep-notti` **v0.11.0 or later** to record `opened`. An older backend answers `422` to `opened` and the SDK drops that event; the `clicked` of the same tap is still recorded.
 
 ## Upgrade notes for 0.5.0 (released)
 

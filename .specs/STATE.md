@@ -19,12 +19,12 @@
 - **Status**: active-confirmed by spike (T2, 2026-09-05) — Swift Turbo Module bridging works via an Obj-C++ `getTurboModule:`/`moduleName` shim (`ios/Notti.mm`) delegating into a plain Swift class exposed through CocoaPods' auto-generated `Notti-Swift.h`, confirmed by a real `pod install` + Xcode build succeeding in this repo. Not an officially-documented Meta pattern (`reactnative.dev`'s Turbo Native Modules docs show Obj-C++ only, Context7 MCP unavailable in this environment) — corroborated by independent 2025 community write-ups and by this repo's own passing build. Full detail in `design.md`'s "iOS APNs delegate hooks" component.
 
 ### AD-003
-- **Decision**: Engagement event types follow `zeep-notti` AD-023 / overview v3 D3. Body tap (default action) → `opened`; action-button tap → `clicked` (iOS category actions today, Android once `notification-action-buttons` ships); dismiss → nothing. A body tap whose custom `data` carries a URL is still `opened` only (no first-class launch URL in the backend contract). JS event names unchanged (`notificationClicked` still means body tap).
-- **Reason**: Backend counts opened = `opened` OR `clicked`, clicked = `clicked`, per delivery (`EXISTS`). Reporting the body tap as `clicked` made open rate == CTR.
-- **Trade-off**: CTR drops for devices on the new SDK (Android has no `clicked` source yet); older SDKs keep sending `clicked` for body taps, so fleets are mixed during rollout. Backends without migration `0023` reject `opened` with 422 (terminal, event dropped) — backend must ship first.
+- **Decision**: Engagement event types (product decision 2026-10-04, option B). Body tap (default action, warm or cold start, with or without a URL in `data`) → one `opened` + one `clicked`; iOS action-button tap (host-registered category) → `clicked` only; dismiss → nothing; no `notification_id`/`delivery_id` → nothing. JS event names unchanged (`notificationClicked` still means body tap).
+- **Reason**: Keeps CTR semantics identical to SDK <= 0.5.0 on both platforms (Android has no other `clicked` source) while collecting `opened` rows, so the backend can later tell body taps (`opened` + `clicked`) from action-button taps (`clicked` alone).
+- **Trade-off**: Under the current backend formulas (opened = `opened` OR `clicked`) open rate equals CTR for this SDK too; they only diverge after a backend formula change. Revisit when Android action buttons or a first-class launch URL exist (narrowing `clicked` then changes CTR's meaning). Backend v0.11.0 (migration `0023`) ships before this SDK; an older backend drops only the `opened` (422, terminal).
 - **Scope**: `.specs/features/opened-event-reporting/`, `NottiPushDelegate.swift`, `NottiActivityLifecycleListener.kt`, `NottiEventType` (both platforms).
 - **Date**: 2026-10-04
-- **Status**: active
+- **Status**: active (supersedes the option A draft of the same day)
 
 ## Pre-release review v0.3.0..HEAD (rule changes)
 
@@ -47,9 +47,9 @@ Status: implementado nas duas plataformas (Android + iOS), com testes unitários
 ## Handoff
 
 - **Feature**: opened-event-reporting
-- **Phase / Task**: Specify (+ inline design) → Tasks T1-T3 → Execute done on branch `feat/opened-event`. Android 209 JVM tests, iOS 205 XCTest, JS gates green. PR open, not merged, no version bump.
-- **Next step**: review/merge PR; release only after the `zeep-notti` release with migration `0023`; manual device check of `opened`/`clicked` rows.
-- **Blockers**: none in the SDK. Open product item: per-notification `AggregateMetrics` CTR (backend) will drop with this SDK; AD-023 calls it "unchanged".
+- **Phase / Task**: Specify (+ inline design) → Tasks T1-T3 → Execute done on branch `feat/opened-event`. Android 209 JVM tests, iOS 206 XCTest (after T4), JS gates green. PR open, not merged, no version bump.
+- **Next step**: review/merge PR #25; release after `zeep-notti` v0.11.0; manual device check of `opened`/`clicked` rows.
+- **Blockers**: none. Option B (T4) keeps CTR unchanged; open rate == CTR until the backend changes its formulas.
 
 ## Handoff (previous: ctr-event-reporting)
 

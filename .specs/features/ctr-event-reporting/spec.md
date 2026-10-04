@@ -117,7 +117,7 @@ on both platforms, in every app state a receive/click can happen in
 
 | Requirement ID | Story | Phase | Status |
 | --- | --- | --- | --- |
-| SDKCTR-01 | P1: Automatic click reporting (basic report) — type changed to `opened` by `opened-event-reporting` (SDKOPEN-01) | Implemented, superseded | T4/T8 |
+| SDKCTR-01 | P1: Automatic click reporting (basic report) — body tap now reports `opened` in addition to `clicked` (`opened-event-reporting` SDKOPEN-01/03) | Implemented, extended | T4/T8 |
 | SDKCTR-02 | P1: Automatic click reporting (cold start) | Implemented | T4/T8 |
 | SDKCTR-03 | P1: Automatic click reporting (exclude non-default action) — iOS custom action now reports `clicked`; dismiss still excluded (`opened-event-reporting` D2) | Implemented, superseded | T8 |
 | SDKCTR-04 | P1: Automatic click reporting (skip when ids absent) | Implemented | T4/T8 |

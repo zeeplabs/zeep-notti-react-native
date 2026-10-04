@@ -51,7 +51,7 @@ Notti is self-hosted or SaaS per deployment. By default `initialize` targets Not
 - React Native with the [New Architecture](https://reactnative.dev/architecture/landing-page) enabled (Turbo Modules).
 - Android: `minSdkVersion` compatible with `com.google.firebase:firebase-messaging` (Firebase Cloud Messaging configured in your Firebase project).
 - iOS: Push Notifications capability enabled for your app target (APNs).
-- A running [Notti](https://github.com/zeeplabs/zeep-notti) instance (self-hosted or SaaS) and an App's `appId`/`clientKey`. The device-profile fields require `zeep-notti` **v0.10.0 or later**. The `opened` event requires a `zeep-notti` release that includes migration `0023` (overview v3; not in v0.10.0 or older); see [Notification event reporting](#notification-event-ctr-reporting).
+- A running [Notti](https://github.com/zeeplabs/zeep-notti) instance (self-hosted or SaaS) and an App's `appId`/`clientKey`. The device-profile fields require `zeep-notti` **v0.10.0 or later**. The `opened` event requires `zeep-notti` **v0.11.0 or later**; see [Notification event reporting](#notification-event-ctr-reporting).
 
 ## Installation
 
@@ -325,14 +325,22 @@ There is currently **no API to disable** the items in this subsection: they are 
 The SDK reports three event types to `POST {baseUrl}/v1/apps/{appId}/notifications/{notification_id}/events`, authenticated with the client key and the device's current push token:
 
 - `received` — the notification arrived through the same hook that emits `notificationReceived` (foreground). Notifications displayed by the OS while the app is backgrounded or killed are **not** reported as `received`.
-- `opened` — the user tapped the notification body (default action) while the app was in the foreground, background, or killed (cold start). One event per tap. This is the tap that also fires `notificationClicked` / `getInitialNotificationClick()` in JS: the JS event name did not change, only the reported type. A body tap is `opened` even when your custom `data` carries a URL or deep link: the SDK does not know which custom key is a link and does not open it.
-- `clicked` — the user tapped an action button. **iOS:** a button from a `UNNotificationCategory` your app registered (selected by the push's `category`); no JS event is emitted for it. **Android:** the SDK does not render action buttons yet, so nothing reports `clicked` on Android.
+- `opened` and `clicked` — the user tapped the notification body (default action) while the app was in the foreground, background, or killed (cold start). Each tap reports **one `opened` and one `clicked`** for that delivery, also when your custom `data` carries a URL or deep link. This is the tap that also fires `notificationClicked` / `getInitialNotificationClick()` in JS (JS names unchanged).
+- `clicked` only — **iOS:** the user tapped an action button from a `UNNotificationCategory` your app registered (selected by the push's `category`); no JS event is emitted for it. **Android:** the SDK does not render action buttons.
 
-Dismissals are not reported. No other event types exist (no `delivered`, `dismissed`). Events are only reported when the push's `data` carries both `notification_id` and `delivery_id` (set by the Notti backend); other pushes are skipped silently.
+| Gesture | Events reported |
+| --- | --- |
+| Notification arrives, app in foreground | `received` |
+| Body tap (warm or cold start, with or without URL in `data`) | `opened` + `clicked` |
+| iOS action button | `clicked` |
+| Dismiss | none |
+| Push without `notification_id`/`delivery_id` (or iOS local notification) | none |
 
-How Notti uses them: a delivered notification counts as **opened** when it has an `opened` or a `clicked` event, and as **clicked** only with a `clicked` event. Open rate = opened / delivered; CTR = clicked / delivered. Duplicate events for the same delivery do not change either rate.
+Events are only reported when the push's `data` carries both `notification_id` and `delivery_id` (set by the Notti backend); other pushes are skipped silently.
 
-> **Upgrading from 0.5.0 or older:** those versions report the body tap as `clicked`, so their taps count toward both open rate and CTR. From this version the body tap counts toward open rate only, and CTR only counts action-button taps (iOS). Expect CTR to drop in the Notti dashboard as users update the app; it is a change in what CTR measures, not a drop in engagement. Your Notti backend must accept `opened` first: an older backend answers `422` and the SDK drops the event (terminal `4xx`), so body taps would not be recorded at all.
+How Notti uses them: a delivered notification counts as **opened** when it has an `opened` or a `clicked` event, and as **clicked** only with a `clicked` event. Open rate = opened / delivered; CTR = clicked / delivered. Duplicate events for the same delivery do not change either rate. Since every reported tap includes a `clicked`, CTR keeps the same meaning as in 0.5.0 and older, and open rate equals CTR under these formulas; the `opened` rows let Notti tell body taps from action-button taps.
+
+> **Upgrading from 0.5.0 or older:** those versions send only `clicked` on a body tap, which Notti already counts as opened, so metrics stay comparable across versions. Your Notti backend must be v0.11.0 or later to accept `opened`: an older backend answers `422` and the SDK drops that `opened` event (the `clicked` of the same tap is still recorded).
 
 Delivery guarantees, as implemented:
 
@@ -402,8 +410,7 @@ This section lists what the SDK does so you can fill in your own disclosures; it
 - **A pending country clear that gets a permanent `4xx` is re-sent on every trigger** (registration, app foreground, network regain), because the flag is only cleared on a 2xx.
 - **Android 13+ `permission_status` "never asked" vs "denied" is inferred.** Android does not expose "not determined" directly. The SDK reports `notDetermined` when `POST_NOTIFICATIONS` is not granted, the SDK's `requestPermission` never ran and the OS does not ask for a rationale. If you request the permission through another library and the user permanently denies it, the device may report `notDetermined`. When no Activity is available to ask for the rationale (e.g. a background registration), an undecidable state is omitted instead of guessed. If the user dismisses the SDK's permission dialog without choosing, the device reports `denied`.
 - **Backends older than `zeep-notti` v0.10.0** ignore the device-profile fields, but any 2xx marks them as synced, so static values (`device_model`, `device_os`, `sdk_version`) are not re-sent after the backend is upgraded until they change.
-- **Backends without the `opened` event** (`zeep-notti` up to v0.10.0) reject it with `422`; the SDK treats that as terminal and drops the event, so body taps are lost. Deploy the backend release with overview v3 before shipping this SDK version.
-- **No `clicked` source on Android** until the SDK renders action buttons; Android CTR from this SDK version is 0.
+- **Backends older than `zeep-notti` v0.11.0** reject `opened` with `422`; the SDK treats that as terminal and drops the `opened` event (the `clicked` of the same tap is still recorded).
 - **Not yet validated on real devices:** session close on cold start / process kill on both platforms; the iOS background task on a slow network; `CLLocationManager` usage without runtime warnings; the `aps-environment` value in an EAS `preview` build (see [`aps-environment` value](#aps-environment-value)).
 
 ## Forwarding events manually

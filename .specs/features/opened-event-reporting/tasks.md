@@ -19,6 +19,7 @@ for the event type strings.
 T1 (Android) ─┐
               ├──→ T3 (docs)
 T2 (iOS)    ──┘
+T4 (option B, both platforms + docs) after T1-T3
 ```
 
 T1 and T2 never touch the same file.
@@ -67,4 +68,16 @@ CHANGELOG `[Unreleased]` (archive 0.5.0 notes first, same convention as 0.4.0);
 spec where their rule changed; STATE.md decision entry.
 **Requirement**: SDKOPEN-11
 **Done when**: docs reviewed; JS sanity gate green.
+**Status**: Done
+
+### T4: Option B — body tap reports `opened` + `clicked`
+
+**What**: Product decision after T1-T3: the body tap enqueues `opened` and
+`clicked` (one of each) on both platforms; iOS action button stays `clicked`
+only; dismiss nothing. Spec D1/D3, analytics impact, SDKOPEN-03/04, AD-003,
+README and CHANGELOG rewritten accordingly.
+**Where**: `NottiActivityLifecycleListener.kt`, `NottiPushDelegate.swift`,
+`NottiEventStore.kt`/`.swift` (docs), listener/delegate tests, docs.
+**Requirement**: SDKOPEN-03, SDKOPEN-04
+**Done when**: Android and iOS gates green, JS sanity green.
 **Status**: Done
