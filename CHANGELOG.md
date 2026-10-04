@@ -1,5 +1,30 @@
 # Changelog
 
+# [0.5.0](https://github.com/zeeplabs/zeep-notti-react-native/compare/v0.4.0...v0.5.0) (2026-10-04)
+
+
+### Bug Fixes
+
+* address follow-up review findings on unsubscribe stamps and permission status ([29caa6c](https://github.com/zeeplabs/zeep-notti-react-native/commit/29caa6cce0beb13a14ad84c495526080ccce68b8))
+* **android:** address device-profile-fields pre-release review findings ([030708f](https://github.com/zeeplabs/zeep-notti-react-native/commit/030708f39a8f8c687667015f1ccb94662d0d8b4d))
+* **ios,android:** close cross-platform review gaps ([292e129](https://github.com/zeeplabs/zeep-notti-react-native/commit/292e129e896c1b4739fcbe55ed5839de8d0ae942))
+* **ios:** address device-profile-fields pre-release review findings ([3f4a26f](https://github.com/zeeplabs/zeep-notti-react-native/commit/3f4a26fa31a5be40dc83d7f47cd6d77985296928))
+* **ios:** re-read apiClient in async permission sync after re-initialize ([511ada4](https://github.com/zeeplabs/zeep-notti-react-native/commit/511ada4da4dd46ebd7dff5d9b34b028b0c8fce1e))
+
+
+### Features
+
+* add device-profile-fields spec, design and tasks ([14666dd](https://github.com/zeeplabs/zeep-notti-react-native/commit/14666ddfd890f884a054b95910266e8f6bfd1196))
+* **android:** add device-profile fields to NottiDeviceStore ([16d63b2](https://github.com/zeeplabs/zeep-notti-react-native/commit/16d63b269e2a88ca78130b4688c5f1cb114916cb))
+* **android:** add first-class email/phone set and clear ([1759316](https://github.com/zeeplabs/zeep-notti-react-native/commit/17593161519fb8c082d2ef819748c40ffdf03c84))
+* **android:** sync device profile fields via generalized PATCH ([15b3313](https://github.com/zeeplabs/zeep-notti-react-native/commit/15b3313beaea0da3f52ef41863522a9029675d88))
+* **android:** sync permission status and last-unsubscribe timestamp ([461d223](https://github.com/zeeplabs/zeep-notti-react-native/commit/461d2234620ebafd0c1216f7a8f02bfb0e5e5019))
+* **ios:** add device-profile fields to NottiDeviceStore ([1bb0353](https://github.com/zeeplabs/zeep-notti-react-native/commit/1bb03532450155b7330693ef0eae08249728b6c2))
+* **ios:** add first-class email/phone set and clear ([7e5c598](https://github.com/zeeplabs/zeep-notti-react-native/commit/7e5c598a531eacb4193d66e6ba44b515ddf90328))
+* **ios:** sync device profile fields via generalized PATCH ([5d04c21](https://github.com/zeeplabs/zeep-notti-react-native/commit/5d04c218ca097b701e818e2ce7d6b03b154b4626))
+* **ios:** sync permission status and last-unsubscribe timestamp ([a958356](https://github.com/zeeplabs/zeep-notti-react-native/commit/a958356aa45b89b9434d791205f7d068c0c8d352))
+* **js:** add email/phone setters and thread sdk_version through initialize ([c6fc3f5](https://github.com/zeeplabs/zeep-notti-react-native/commit/c6fc3f59902e85291ed6967c3a4d0220b5b75808))
+
 # [0.4.0](https://github.com/zeeplabs/zeep-notti-react-native/compare/v0.3.0...v0.4.0) (2026-10-02)
 
 
