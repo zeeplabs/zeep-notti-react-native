@@ -72,6 +72,7 @@ class NottiDeviceStore(private val prefs: SharedPreferences) {
     private const val KEY_PERMISSION_REQUESTED = "notti_permission_requested"
     private const val KEY_PENDING_UNSUBSCRIBE_AT_MS = "notti_pending_unsubscribe_at_ms"
     private const val KEY_PENDING_PERMISSION_UNSUBSCRIBE_AT_MS = "notti_pending_permission_unsubscribe_at_ms"
+    private const val KEY_PROFILE_FIELD_ACK_MIGRATED = "notti_profile_field_ack_migrated"
 
     /**
      * Pure merge of the current tag map against an add map and/or a remove
@@ -242,6 +243,28 @@ class NottiDeviceStore(private val prefs: SharedPreferences) {
   }
 
   // --- device profile field accessors (device-profile-fields) ---
+
+  /**
+   * One-shot upgrade step for the echo-based profile-field ack (0.6.0). SDK
+   * <= 0.5.0 marked the six read-once fields synced on any 2xx, even when the
+   * backend ignored them; with an unchanged value the diff would then never
+   * re-send them. Clearing their last-synced values once makes the next
+   * registration re-send each (at most six PATCHes, once per install) and ack
+   * it against the echo. A fresh install has nothing to clear.
+   */
+  fun migrateProfileFieldAckIfNeeded() {
+    if (prefs.getBoolean(KEY_PROFILE_FIELD_ACK_MIGRATED, false)) return
+    prefs.edit()
+      .remove(KEY_APP_VERSION)
+      .remove(KEY_LAST_SYNCED_DEVICE_OS)
+      .remove(KEY_LAST_SYNCED_DEVICE_MODEL)
+      .remove(KEY_LAST_SYNCED_SDK_VERSION)
+      .remove(KEY_LAST_SYNCED_TIMEZONE_ID)
+      .remove(KEY_LAST_SYNCED_LANGUAGE)
+      .putBoolean(KEY_PROFILE_FIELD_ACK_MIGRATED, true)
+      .apply()
+  }
+
 
   fun getLastSyncedDeviceOs(): String? = prefs.getString(KEY_LAST_SYNCED_DEVICE_OS, null)
 
