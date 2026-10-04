@@ -39,7 +39,7 @@ Status: implementado nas duas plataformas (Android + iOS), com testes unitários
 
 ## Known limitations (abertas)
 
-- **Backend aceita os campos desde `zeep-notti` v0.9.0** (DEVTEL-01..13 implementados e verificados 2026-09-30, na main). Limitação restante: o response do `PATCH /devices` não ecoa `app_version`, então o SDK não tem ack confiável e marca `app_version` como sincronizado a qualquer 2xx, não reenviando até o valor mudar. TODO `segtel-app-version-ack` (Android `NottiCore`; no iOS a mesma nota é `TODO(review item 7)`). Decisão pendente: backend ecoar `app_version` no response ou SDK reenviar a cada registro.
+- **Backend aceita os campos desde `zeep-notti` v0.9.0** (DEVTEL-01..13 implementados e verificados 2026-09-30, na main). Limitação restante: o SDK marca `app_version` (e os demais campos de perfil) como sincronizado a qualquer 2xx, sem ack, e não reenvia até o valor mudar. Correção de premissa (2026-10-04): o backend **já ecoa** o device completo no response do `PATCH /devices` (`toDeviceResponse`, `internal/api/devices_handlers.go`, desde #79 / v0.9.0), incluindo `app_version`; o SDK é que só lê `id`/`tags` (`parseDeviceResponse`). TODO `segtel-app-version-ack` (Android `NottiCore`; no iOS `TODO(review item 7)`). Decisão pendente: usar o eco como ack (marcar sincronizado só se o valor ecoado == enviado) vs. reenviar a cada registro (registro roda a cada foreground → +1 PATCH por abertura de app).
 - **Fila de eventos CTR com head-of-line blocking:** flush em ordem para no primeiro erro não terminal; evento com `5xx`/`429` determinístico bloqueia a fila até ser expulso por 32 eventos novos. Sem TTL por evento, sem honrar `Retry-After`.
 - **Clear de country com 4xx permanente** (401/403/404) fica pendente e é reenviado a cada gatilho (registro, foreground, rede); agora gera log distinto, sem dado pessoal, nas duas plataformas.
 - **Validações pendentes em device real:** fechamento de sessão em cold start/kill nas duas plataformas; background task do iOS com rede lenta; `CLLocationManager` sem warning de runtime; valor de `aps-environment` em build EAS `preview`.
@@ -47,8 +47,8 @@ Status: implementado nas duas plataformas (Android + iOS), com testes unitários
 ## Handoff
 
 - **Feature**: opened-event-reporting
-- **Phase / Task**: Specify (+ inline design) → Tasks T1-T3 → Execute done on branch `feat/opened-event`. Android 209 JVM tests, iOS 206 XCTest (after T4), JS gates green. PR open, not merged, no version bump.
-- **Next step**: review/merge PR #25; release after `zeep-notti` v0.11.0; manual device check of `opened`/`clicked` rows.
+- **Phase / Task**: Specify (+ inline design) → Tasks T1-T4 → Execute done. Android 209 JVM tests, iOS 206 XCTest, JS gates green. PR #25 merged to `main` 2026-10-04 (rebase, head `fcb1b04`). No version bump yet.
+- **Next step**: release (version bump) only after `zeep-notti` v0.11.0 is deployed (migration `0023`); manual device check of `opened`/`clicked` rows.
 - **Blockers**: none. Option B (T4) keeps CTR unchanged; open rate == CTR until the backend changes its formulas.
 
 ## Handoff (previous: ctr-event-reporting)
@@ -77,10 +77,10 @@ Status: implementado nas duas plataformas (Android + iOS), com testes unitários
 - **Uncommitted files**: none (`example/node_modules` is an untracked local symlink workaround; `example/ios/Podfile.lock`/`example/ios/NottiExample/Info.plist` regenerate with environment-local path/flag noise on `pod install`/`react-native build-ios` in this sandbox — both reverted via `git checkout` after each gate run before committing, not meant to be committed)
 - **Branch**: feat/sdk-core-v1
 
-## Feature: device-profile-fields (2026-10-02) — Spec + Design + Tasks (DRAFT, execution pending)
+## Feature: device-profile-fields (2026-10-02) — DONE, released in v0.5.0 (PR #24)
 
 OneSignal-parity device/user profile fields. SDK-side producer for the backend companion spec `device-profile-fields` in `zeep-notti`. 21 requirements (`DPF-01..21`).
 
 **Scope**: P1 `device_os`/`device_model`/`sdk_version` + P2 `timezone_id`/`language` (native capture at init, `syncAppVersionIfNeeded` generalized into `syncProfileFieldsIfNeeded`, diff-and-enqueue per field). P3 two-axis `permission_status` (OS enum: granted/denied/notDetermined/provisional, async provider, triggers at registration/requestPermission/session-start) + `last_unsubscribed_at` (true→false / granted→denied, never cleared on re-subscribe). P4 first-class `email`/`phone` via JS `User.setEmail/clearEmail/setPhone/clearPhone`, explicit-null clear, never merged into tags.
 
-**State**: `spec.md` (DPF-01..21), `design.md` (generalized sync loop + 5 new providers; `permissionStatusProvider` async; P4 JS surface; `sdk_version` threaded from JS `initialize` — the two deliberate JS-visible additions), `tasks.md` (T1 JS Spec+facade → Android T2-T5 / iOS T6-T9 platform-parallel → T10 cross-platform review). **Not executed** — gates green required before Execute. Backend spec/design/tasks live in `zeep-notti`.
+**State**: `spec.md` (DPF-01..21), `design.md` (generalized sync loop + 5 new providers; `permissionStatusProvider` async; P4 JS surface; `sdk_version` threaded from JS `initialize` — the two deliberate JS-visible additions), `tasks.md` (T1 JS Spec+facade → Android T2-T5 / iOS T6-T9 platform-parallel → T10 cross-platform review). Executed and released in v0.5.0 (all 82 tasks done, two pre-release review rounds; follow-up fixes `29caa6c`). Backend spec/design/tasks live in `zeep-notti`.

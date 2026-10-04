@@ -1,7 +1,7 @@
 # CTR Event Reporting Tasks
 
 **Design**: `.specs/features/ctr-event-reporting/design.md`
-**Status**: Complete — all T1-T9 done, commits `cabfb88`→`3f1c938`, gates green (Android 106 JVM tests, iOS 109 XCTest, JS typecheck/lint/test clean, `src/` untouched). Next: independent Verifier.
+**Status**: Complete — all T1-T9 done, commits `cabfb88`→`3f1c938`, gates green (Android 106 JVM tests, iOS 109 XCTest, JS typecheck/lint/test clean, `src/` untouched). Independent Verifier ran: 13/14 ACs first pass, SDKCTR-11 gap fixed in `aed1512` and re-verified — READY. Shipped in v0.4.0.
 
 ---
 
@@ -60,13 +60,13 @@ iOS:     T5 ──→ T6 ──→ T7 ──→ T8
 - Skill: NONE
 
 **Done when**:
-- [ ] `PendingEvent(id, notificationId, deliveryId, type, createdAtMs)` data class defined
-- [ ] `NottiEventStore(prefs: SharedPreferences)` (constructor-injected, matching `NottiDeviceStore`'s testability pattern) with `enqueue(notificationId, deliveryId, type): PendingEvent`, `all(): List<PendingEvent>`, `remove(id: String)`
-- [ ] Queue capped at 32 entries (mirrors `NottiCore.MAX_PENDING_MUTATIONS`), oldest dropped first when full
-- [ ] No import of `NottiCore`, `NottiApiClient`, or `NottiDeviceStore` anywhere in this file (design's hard constraint — verify by inspection, not just tests)
-- [ ] Unit test: `enqueue` then `all()` returns the record; `remove` then `all()` no longer contains it; enqueue past the cap drops the oldest; a fresh `NottiEventStore` over the same `SharedPreferences` instance sees previously enqueued (unremoved) events (proves actual persistence, not just in-memory state)
-- [ ] Gate check passes: `cd example/android && ./gradlew :react-native-notti:testDebugUnitTest`
-- [ ] Test count: 4 new tests pass (no silent deletions)
+- [x] `PendingEvent(id, notificationId, deliveryId, type, createdAtMs)` data class defined
+- [x] `NottiEventStore(prefs: SharedPreferences)` (constructor-injected, matching `NottiDeviceStore`'s testability pattern) with `enqueue(notificationId, deliveryId, type): PendingEvent`, `all(): List<PendingEvent>`, `remove(id: String)`
+- [x] Queue capped at 32 entries (mirrors `NottiCore.MAX_PENDING_MUTATIONS`), oldest dropped first when full
+- [x] No import of `NottiCore`, `NottiApiClient`, or `NottiDeviceStore` anywhere in this file (design's hard constraint — verify by inspection, not just tests)
+- [x] Unit test: `enqueue` then `all()` returns the record; `remove` then `all()` no longer contains it; enqueue past the cap drops the oldest; a fresh `NottiEventStore` over the same `SharedPreferences` instance sees previously enqueued (unremoved) events (proves actual persistence, not just in-memory state)
+- [x] Gate check passes: `cd example/android && ./gradlew :react-native-notti:testDebugUnitTest`
+- [x] Test count: 4 new tests pass (no silent deletions)
 
 **Tests**: unit
 **Gate**: quick
@@ -88,15 +88,15 @@ iOS:     T5 ──→ T6 ──→ T7 ──→ T8
 - Skill: NONE
 
 **Done when**:
-- [ ] `executeWithRetry` generalized to `private fun <T> executeWithRetry(request: Request, parseSuccess: (String) -> T?): EventCallResult<T>` (or equivalent — exact naming at implementation time), with `createOrUpdateDevice`/`patchDevice` updated to use it unchanged in behavior
-- [ ] `sealed class EventResult { object Success : EventResult(); data class Failure(val message: String) : EventResult() }` added
-- [ ] `fun reportEvent(notificationId: String, deliveryId: String, type: String, token: String): EventResult` — builds `{delivery_id, type, token}` body, `Authorization: Bearer $clientKey` header, POSTs to `.../notifications/$notificationId/events`, any 2xx → `Success` (body ignored)
-- [ ] Existing `createOrUpdateDevice`/`patchDevice` tests still pass unmodified (proves the generic refactor didn't change their behavior)
-- [ ] Unit test: 503 response → 5 attempts with 2s/4s/8s/16s/32s backoff (injectable `sleeper`, same pattern as existing `NottiApiClientTest.kt`), final `Failure`
-- [ ] Unit test: 403/404/422 → 1 attempt, immediate `Failure`, no retry
-- [ ] Unit test: 200/201 → `Success`, regardless of body content (even empty body)
-- [ ] Gate check passes: `cd example/android && ./gradlew :react-native-notti:testDebugUnitTest`
-- [ ] Test count: 3 new tests pass, all pre-existing `NottiApiClientTest.kt` tests still pass (no silent deletions)
+- [x] `executeWithRetry` generalized to `private fun <T> executeWithRetry(request: Request, parseSuccess: (String) -> T?): EventCallResult<T>` (or equivalent — exact naming at implementation time), with `createOrUpdateDevice`/`patchDevice` updated to use it unchanged in behavior
+- [x] `sealed class EventResult { object Success : EventResult(); data class Failure(val message: String) : EventResult() }` added
+- [x] `fun reportEvent(notificationId: String, deliveryId: String, type: String, token: String): EventResult` — builds `{delivery_id, type, token}` body, `Authorization: Bearer $clientKey` header, POSTs to `.../notifications/$notificationId/events`, any 2xx → `Success` (body ignored)
+- [x] Existing `createOrUpdateDevice`/`patchDevice` tests still pass unmodified (proves the generic refactor didn't change their behavior)
+- [x] Unit test: 503 response → 5 attempts with 2s/4s/8s/16s/32s backoff (injectable `sleeper`, same pattern as existing `NottiApiClientTest.kt`), final `Failure`
+- [x] Unit test: 403/404/422 → 1 attempt, immediate `Failure`, no retry
+- [x] Unit test: 200/201 → `Success`, regardless of body content (even empty body)
+- [x] Gate check passes: `cd example/android && ./gradlew :react-native-notti:testDebugUnitTest`
+- [x] Test count: 3 new tests pass, all pre-existing `NottiApiClientTest.kt` tests still pass (no silent deletions)
 
 **Tests**: unit
 **Gate**: quick
@@ -118,16 +118,16 @@ iOS:     T5 ──→ T6 ──→ T7 ──→ T8
 - Skill: NONE
 
 **Done when**:
-- [ ] `NottiCore`'s constructor accepts a `NottiEventStore` (constructor-injected, same testability pattern as `deviceStore`/`apiClientFactory`)
-- [ ] `flushEventQueue()`: no-op if `apiClient == null` or `deviceStore.getLastToken() == null`; otherwise iterates `eventStore.all()`, calls `apiClient.reportEvent(...)` per entry, removes on `Success` or a `Failure` classified as terminal (4xx — `reportEvent`'s `EventResult.Failure` does not currently distinguish terminal-vs-retряexhausted; since `reportEvent` itself already exhausts retries internally before returning `Failure`, EVERY `Failure` from `reportEvent` at this layer means "give up for now," so `flushEventQueue` leaves it queued on any `Failure` — it does NOT need to re-distinguish 4xx vs. exhausted-5xx itself, that distinction already collapsed inside `reportEvent`)
-- [ ] Called from `registerDevice`'s `ApiResult.Success` branch, right after `flushPendingMutations()`
-- [ ] Called unconditionally at the top of `onAppForegrounded()` (before its existing registration-state guard, since a flush attempt is valid even when already `REGISTERED`)
-- [ ] Unit test: `flushEventQueue` with `apiClient == null` → no crash, no call to any mock
-- [ ] Unit test: `flushEventQueue` with a mock `NottiApiClient` returning `Success` for a queued event → `NottiEventStore.remove` called with that event's id
-- [ ] Unit test: `flushEventQueue` with `Failure` → event NOT removed
-- [ ] Unit test: `onAppForegrounded()` calls `flushEventQueue()` even when `registrationState == REGISTERED` (proves it runs outside the existing early-return guard)
-- [ ] Gate check passes: `cd example/android && ./gradlew :react-native-notti:testDebugUnitTest`
-- [ ] Test count: 4 new tests pass, all pre-existing `NottiCoreTest.kt` tests still pass (constructor signature changed — update their instantiation, not their assertions)
+- [x] `NottiCore`'s constructor accepts a `NottiEventStore` (constructor-injected, same testability pattern as `deviceStore`/`apiClientFactory`)
+- [x] `flushEventQueue()`: no-op if `apiClient == null` or `deviceStore.getLastToken() == null`; otherwise iterates `eventStore.all()`, calls `apiClient.reportEvent(...)` per entry, removes on `Success` or a `Failure` classified as terminal (4xx — `reportEvent`'s `EventResult.Failure` does not currently distinguish terminal-vs-retряexhausted; since `reportEvent` itself already exhausts retries internally before returning `Failure`, EVERY `Failure` from `reportEvent` at this layer means "give up for now," so `flushEventQueue` leaves it queued on any `Failure` — it does NOT need to re-distinguish 4xx vs. exhausted-5xx itself, that distinction already collapsed inside `reportEvent`)
+- [x] Called from `registerDevice`'s `ApiResult.Success` branch, right after `flushPendingMutations()`
+- [x] Called unconditionally at the top of `onAppForegrounded()` (before its existing registration-state guard, since a flush attempt is valid even when already `REGISTERED`)
+- [x] Unit test: `flushEventQueue` with `apiClient == null` → no crash, no call to any mock
+- [x] Unit test: `flushEventQueue` with a mock `NottiApiClient` returning `Success` for a queued event → `NottiEventStore.remove` called with that event's id
+- [x] Unit test: `flushEventQueue` with `Failure` → event NOT removed
+- [x] Unit test: `onAppForegrounded()` calls `flushEventQueue()` even when `registrationState == REGISTERED` (proves it runs outside the existing early-return guard)
+- [x] Gate check passes: `cd example/android && ./gradlew :react-native-notti:testDebugUnitTest`
+- [x] Test count: 4 new tests pass, all pre-existing `NottiCoreTest.kt` tests still pass (constructor signature changed — update their instantiation, not their assertions)
 
 **Tests**: unit
 **Gate**: quick
@@ -149,14 +149,14 @@ iOS:     T5 ──→ T6 ──→ T7 ──→ T8
 - Skill: NONE
 
 **Done when**:
-- [ ] `NottiNetworkObserver` registers a `ConnectivityManager.NetworkCallback` once from `NottiInitProvider.onCreate`, calling `NottiModule.activeCore?.flushEventQueue()` (needs a small internal accessor since `flushEventQueue` is private — either package-private or an internal wrapper, matching how `onAppForegrounded()`/`onTokenRefreshed()` are already the public-within-module surface `NottiInitProvider`/`NottiFirebaseMessagingService` call)
-- [ ] `NottiFirebaseMessagingService.onMessageReceived`: after `NottiModule.emitNotificationReceived(remoteMessage)`, parse `remoteMessage.data` for `notification_id`+`delivery_id`; if both present, call a new static helper (e.g. `NottiModule.enqueueEvent(notificationId, deliveryId, "received")`) that writes to a module-level `NottiEventStore` instance and opportunistically calls `activeCore?.flushEventQueue()`
-- [ ] `NottiActivityLifecycleListener`'s existing `parseClickIntentExtras(intent)` → `NottiNotificationClickRelay.emit(parsed)` call site: same `data`-check + enqueue, with the exclusion already implicit (custom action/dismiss actions never reach this Android code path at all — Android's launch-Intent click detection has no separate action-identifier concept the way iOS's `UNNotificationResponse` does, so SDKCTR-03 is iOS-only, confirmed in Edge Cases below)
-- [ ] `NottiEventStore` instance is a `NottiModule`-companion-held singleton (constructed once, e.g. lazily on first use, backed by the `Application` context's `SharedPreferences` — same lifetime model as `activeCore`), NOT re-created per call
-- [ ] Unit/integration test (whichever the existing `NottiFirebaseMessagingServiceTest.kt`/`NottiActivityLifecycleListenerTest.kt` pattern uses): a `RemoteMessage`/`Intent` carrying `notification_id`+`delivery_id` in its data results in a `NottiEventStore.enqueue` call; one without them does not
-- [ ] Test: `NottiNetworkObserver`'s callback invokes `flushEventQueue` (via a fake `ConnectivityManager`/ Robolectric shadow, matching whatever mocking approach the existing Android test suite already uses for Android framework classes)
-- [ ] Gate check passes: `cd example/android && ./gradlew :react-native-notti:testDebugUnitTest`
-- [ ] Test count: 3 new tests pass, all pre-existing tests in the 4 touched files still pass (no silent deletions)
+- [x] `NottiNetworkObserver` registers a `ConnectivityManager.NetworkCallback` once from `NottiInitProvider.onCreate`, calling `NottiModule.activeCore?.flushEventQueue()` (needs a small internal accessor since `flushEventQueue` is private — either package-private or an internal wrapper, matching how `onAppForegrounded()`/`onTokenRefreshed()` are already the public-within-module surface `NottiInitProvider`/`NottiFirebaseMessagingService` call)
+- [x] `NottiFirebaseMessagingService.onMessageReceived`: after `NottiModule.emitNotificationReceived(remoteMessage)`, parse `remoteMessage.data` for `notification_id`+`delivery_id`; if both present, call a new static helper (e.g. `NottiModule.enqueueEvent(notificationId, deliveryId, "received")`) that writes to a module-level `NottiEventStore` instance and opportunistically calls `activeCore?.flushEventQueue()`
+- [x] `NottiActivityLifecycleListener`'s existing `parseClickIntentExtras(intent)` → `NottiNotificationClickRelay.emit(parsed)` call site: same `data`-check + enqueue, with the exclusion already implicit (custom action/dismiss actions never reach this Android code path at all — Android's launch-Intent click detection has no separate action-identifier concept the way iOS's `UNNotificationResponse` does, so SDKCTR-03 is iOS-only, confirmed in Edge Cases below)
+- [x] `NottiEventStore` instance is a `NottiModule`-companion-held singleton (constructed once, e.g. lazily on first use, backed by the `Application` context's `SharedPreferences` — same lifetime model as `activeCore`), NOT re-created per call
+- [x] Unit/integration test (whichever the existing `NottiFirebaseMessagingServiceTest.kt`/`NottiActivityLifecycleListenerTest.kt` pattern uses): a `RemoteMessage`/`Intent` carrying `notification_id`+`delivery_id` in its data results in a `NottiEventStore.enqueue` call; one without them does not
+- [x] Test: `NottiNetworkObserver`'s callback invokes `flushEventQueue` (via a fake `ConnectivityManager`/ Robolectric shadow, matching whatever mocking approach the existing Android test suite already uses for Android framework classes)
+- [x] Gate check passes: `cd example/android && ./gradlew :react-native-notti:testDebugUnitTest`
+- [x] Test count: 3 new tests pass, all pre-existing tests in the 4 touched files still pass (no silent deletions)
 
 **Tests**: unit
 **Gate**: quick
@@ -178,13 +178,13 @@ iOS:     T5 ──→ T6 ──→ T7 ──→ T8
 - Skill: NONE
 
 **Done when**:
-- [ ] `PendingEvent: Codable { id, notificationId, deliveryId, type, createdAtMs }` defined (matches design.md's Swift shape)
-- [ ] `NottiEventStore(defaults: UserDefaults)` (constructor-injected, matching `NottiDeviceStore.swift`'s testability pattern) with `enqueue(notificationId:deliveryId:type:) -> PendingEvent`, `all() -> [PendingEvent]`, `remove(id: String)`
-- [ ] Queue capped at 32 entries, oldest dropped first
-- [ ] No import of/reference to `NottiCore`, `NottiApiClient`, or `NottiDeviceStore` in this file
-- [ ] Unit test (XCTest, mirroring `NottiDeviceStoreTests.swift`'s pattern): same 4 cases as T1 (enqueue+all, remove, cap eviction, persistence across a new store instance over the same `UserDefaults` suite)
-- [ ] Gate check passes: `xcodebuild test -workspace example/ios/NottiExample.xcworkspace -scheme NottiTests -destination 'platform=iOS Simulator,name=iPhone 17'`
-- [ ] Test count: 4 new tests pass (no silent deletions)
+- [x] `PendingEvent: Codable { id, notificationId, deliveryId, type, createdAtMs }` defined (matches design.md's Swift shape)
+- [x] `NottiEventStore(defaults: UserDefaults)` (constructor-injected, matching `NottiDeviceStore.swift`'s testability pattern) with `enqueue(notificationId:deliveryId:type:) -> PendingEvent`, `all() -> [PendingEvent]`, `remove(id: String)`
+- [x] Queue capped at 32 entries, oldest dropped first
+- [x] No import of/reference to `NottiCore`, `NottiApiClient`, or `NottiDeviceStore` in this file
+- [x] Unit test (XCTest, mirroring `NottiDeviceStoreTests.swift`'s pattern): same 4 cases as T1 (enqueue+all, remove, cap eviction, persistence across a new store instance over the same `UserDefaults` suite)
+- [x] Gate check passes: `xcodebuild test -workspace example/ios/NottiExample.xcworkspace -scheme NottiTests -destination 'platform=iOS Simulator,name=iPhone 17'`
+- [x] Test count: 4 new tests pass (no silent deletions)
 
 **Tests**: unit
 **Gate**: quick
@@ -206,15 +206,15 @@ iOS:     T5 ──→ T6 ──→ T7 ──→ T8
 - Skill: NONE
 
 **Done when**:
-- [ ] `executeWithRetry` generalized to a generic form, `createOrUpdateDevice`/`patchDevice` updated to use it unchanged in behavior
-- [ ] `enum EventResult { case success; case failure(String) }` added
-- [ ] `func reportEvent(notificationId: String, deliveryId: String, type: String, token: String) -> EventResult` — same request shape as Android's
-- [ ] Existing `createOrUpdateDevice`/`patchDevice` tests (`NottiApiClientTests.swift`) still pass unmodified
-- [ ] Unit test: 503 → 5 attempts, documented backoff (using `StubURLProtocol.swift`'s existing stubbing pattern), final `.failure`
-- [ ] Unit test: 403/404/422 → 1 attempt, immediate `.failure`
-- [ ] Unit test: 200/201 → `.success` regardless of body
-- [ ] Gate check passes: `xcodebuild test -workspace example/ios/NottiExample.xcworkspace -scheme NottiTests -destination 'platform=iOS Simulator,name=iPhone 17'`
-- [ ] Test count: 3 new tests pass, all pre-existing `NottiApiClientTests.swift` tests still pass
+- [x] `executeWithRetry` generalized to a generic form, `createOrUpdateDevice`/`patchDevice` updated to use it unchanged in behavior
+- [x] `enum EventResult { case success; case failure(String) }` added
+- [x] `func reportEvent(notificationId: String, deliveryId: String, type: String, token: String) -> EventResult` — same request shape as Android's
+- [x] Existing `createOrUpdateDevice`/`patchDevice` tests (`NottiApiClientTests.swift`) still pass unmodified
+- [x] Unit test: 503 → 5 attempts, documented backoff (using `StubURLProtocol.swift`'s existing stubbing pattern), final `.failure`
+- [x] Unit test: 403/404/422 → 1 attempt, immediate `.failure`
+- [x] Unit test: 200/201 → `.success` regardless of body
+- [x] Gate check passes: `xcodebuild test -workspace example/ios/NottiExample.xcworkspace -scheme NottiTests -destination 'platform=iOS Simulator,name=iPhone 17'`
+- [x] Test count: 3 new tests pass, all pre-existing `NottiApiClientTests.swift` tests still pass
 
 **Tests**: unit
 **Gate**: quick
@@ -236,12 +236,12 @@ iOS:     T5 ──→ T6 ──→ T7 ──→ T8
 - Skill: NONE
 
 **Done when**:
-- [ ] `NottiCore`'s initializer accepts a `NottiEventStore`
-- [ ] `flushEventQueue()` mirrors Android's T3 logic exactly (same no-op conditions, same "any Failure stays queued" reasoning — `reportEvent` already exhausted its own retries)
-- [ ] Called from the registration-success path (wherever iOS's equivalent of `registerDevice`'s success branch lives) and unconditionally from wherever `onAppForegrounded`'s iOS equivalent is (if one exists yet on iOS — confirm against current `NottiCore.swift`; if iOS has no foreground-resume method yet, this task ALSO adds the minimal equivalent, scoped only to calling `flushEventQueue`, not full registration-retry-on-foreground parity, which is out of scope here)
-- [ ] Unit tests mirroring T3's 4 cases, adapted to XCTest/the existing `NottiCoreTests.swift` mocking pattern
-- [ ] Gate check passes: `xcodebuild test -workspace example/ios/NottiExample.xcworkspace -scheme NottiTests -destination 'platform=iOS Simulator,name=iPhone 17'`
-- [ ] Test count: 4 new tests pass, all pre-existing `NottiCoreTests.swift` tests still pass
+- [x] `NottiCore`'s initializer accepts a `NottiEventStore`
+- [x] `flushEventQueue()` mirrors Android's T3 logic exactly (same no-op conditions, same "any Failure stays queued" reasoning — `reportEvent` already exhausted its own retries)
+- [x] Called from the registration-success path (wherever iOS's equivalent of `registerDevice`'s success branch lives) and unconditionally from wherever `onAppForegrounded`'s iOS equivalent is (if one exists yet on iOS — confirm against current `NottiCore.swift`; if iOS has no foreground-resume method yet, this task ALSO adds the minimal equivalent, scoped only to calling `flushEventQueue`, not full registration-retry-on-foreground parity, which is out of scope here)
+- [x] Unit tests mirroring T3's 4 cases, adapted to XCTest/the existing `NottiCoreTests.swift` mocking pattern
+- [x] Gate check passes: `xcodebuild test -workspace example/ios/NottiExample.xcworkspace -scheme NottiTests -destination 'platform=iOS Simulator,name=iPhone 17'`
+- [x] Test count: 4 new tests pass, all pre-existing `NottiCoreTests.swift` tests still pass
 
 **Tests**: unit
 **Gate**: quick
@@ -270,13 +270,13 @@ unrequested scope expansion.
 - Skill: NONE
 
 **Done when**:
-- [ ] `NottiNetworkObserver` wraps `NWPathMonitor`, calling `NottiImpl.activeCore?.flushEventQueue()` (via whatever internal-access equivalent T7 established) on a transition to `.satisfied`
-- [ ] `NottiPushDelegate.willPresent`: after the existing `NottiEventBuffer.shared.emit(.received, ...)` call, check `parsed`'s underlying data for `notification_id`+`delivery_id`; if present, enqueue + opportunistic flush
-- [ ] `NottiPushDelegate.didReceive response:`: same check, placed AFTER the existing `actionIdentifier == UNNotificationDefaultActionIdentifier` guard (`NottiPushDelegate.swift:84`) — confirms SDKCTR-03's exclusion is naturally inherited, not reimplemented
-- [ ] Unit test: `willPresent`/`didReceive` with ids present → enqueue called; without → not called; a non-default action → not called (using the existing `NottiPushDelegate` test setup, if one exists, or a new minimal one following the same fixture style as `NottiNotificationParsingTests.swift`)
-- [ ] Unit test: `NottiNetworkObserver` transitioning to satisfied triggers a flush call (mock/stub the path monitor per whatever the closest existing pattern in this codebase supports — no framework precedent for this exists yet, so this is the one genuinely new test-infrastructure piece in the whole feature)
-- [ ] Gate check passes: `xcodebuild test -workspace example/ios/NottiExample.xcworkspace -scheme NottiTests -destination 'platform=iOS Simulator,name=iPhone 17'`
-- [ ] Test count: 3 new tests pass, all pre-existing tests in touched files still pass
+- [x] `NottiNetworkObserver` wraps `NWPathMonitor`, calling `NottiImpl.activeCore?.flushEventQueue()` (via whatever internal-access equivalent T7 established) on a transition to `.satisfied`
+- [x] `NottiPushDelegate.willPresent`: after the existing `NottiEventBuffer.shared.emit(.received, ...)` call, check `parsed`'s underlying data for `notification_id`+`delivery_id`; if present, enqueue + opportunistic flush
+- [x] `NottiPushDelegate.didReceive response:`: same check, placed AFTER the existing `actionIdentifier == UNNotificationDefaultActionIdentifier` guard (`NottiPushDelegate.swift:84`) — confirms SDKCTR-03's exclusion is naturally inherited, not reimplemented
+- [x] Unit test: `willPresent`/`didReceive` with ids present → enqueue called; without → not called; a non-default action → not called (using the existing `NottiPushDelegate` test setup, if one exists, or a new minimal one following the same fixture style as `NottiNotificationParsingTests.swift`)
+- [x] Unit test: `NottiNetworkObserver` transitioning to satisfied triggers a flush call (mock/stub the path monitor per whatever the closest existing pattern in this codebase supports — no framework precedent for this exists yet, so this is the one genuinely new test-infrastructure piece in the whole feature)
+- [x] Gate check passes: `xcodebuild test -workspace example/ios/NottiExample.xcworkspace -scheme NottiTests -destination 'platform=iOS Simulator,name=iPhone 17'`
+- [x] Test count: 3 new tests pass, all pre-existing tests in touched files still pass
 
 **Tests**: unit
 **Gate**: quick
@@ -298,11 +298,11 @@ unrequested scope expansion.
 - Skill: NONE
 
 **Done when**:
-- [ ] Side-by-side read of `NottiApiClient.kt`'s and `NottiApiClient.swift`'s `reportEvent` confirms identical request shape/headers/retry classification
-- [ ] Side-by-side read of both `NottiCore.flushEventQueue` implementations confirms identical no-op conditions and removal logic
-- [ ] `git grep -n "notification_id\|delivery_id"` across `android/` and `ios/` shows the same two key names used consistently (no typo drift between platforms)
-- [ ] `pnpm typecheck && pnpm lint && pnpm test` passes (sanity check that nothing in `src/` was accidentally touched — should be a no-op run)
-- [ ] Full native gate re-run on both platforms (already green from T4/T8, this is the final confirmation after any cross-review fixes)
+- [x] Side-by-side read of `NottiApiClient.kt`'s and `NottiApiClient.swift`'s `reportEvent` confirms identical request shape/headers/retry classification
+- [x] Side-by-side read of both `NottiCore.flushEventQueue` implementations confirms identical no-op conditions and removal logic
+- [x] `git grep -n "notification_id\|delivery_id"` across `android/` and `ios/` shows the same two key names used consistently (no typo drift between platforms)
+- [x] `pnpm typecheck && pnpm lint && pnpm test` passes (sanity check that nothing in `src/` was accidentally touched — should be a no-op run)
+- [x] Full native gate re-run on both platforms (already green from T4/T8, this is the final confirmation after any cross-review fixes)
 
 **Tests**: none (review task)
 **Gate**: full (both platforms' commands + the JS sanity trio)

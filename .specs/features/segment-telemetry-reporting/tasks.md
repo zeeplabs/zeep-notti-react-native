@@ -1,7 +1,7 @@
 # Segment Telemetry Reporting Tasks
 
 **Design**: `.specs/features/segment-telemetry-reporting/design.md`
-**Status**: Complete — all T1-T10 done, commits `981bb92`→`60389ee`, gates green (Android 123 JVM tests, iOS 127 XCTest, JS 20 Jest + typecheck/lint clean). Cross-platform review found and fixed one real issue: `Notti.podspec`'s Core subspec never declared `CoreLocation` (used by `NottiImpl` for the P3 country read) — `core.frameworks = "CoreLocation"` added in `60389ee`. Next: independent Verifier.
+**Status**: Complete — all T1-T10 done, commits `981bb92`→`60389ee`, gates green (Android 123 JVM tests, iOS 127 XCTest, JS 20 Jest + typecheck/lint clean). Cross-platform review found and fixed one real issue: `Notti.podspec`'s Core subspec never declared `CoreLocation` (used by `NottiImpl` for the P3 country read) — `core.frameworks = "CoreLocation"` added in `60389ee`. Shipped in v0.4.0 after three pre-release review rounds; the formal independent Verifier (validate.md) was never run — only the traceability item below stays open.
 
 ---
 
@@ -63,11 +63,11 @@ iOS:     T6 ──→ T7 ──→ T8 ──→ T9
 - Skill: NONE
 
 **Done when**:
-- [ ] `Spec.setLocationSharingEnabled(enabled: boolean): void` declared in `src/NativeNotti.ts` (positioned with the other setters, after `setSubscription`)
-- [ ] `function setLocationSharingEnabled(enabled: boolean): void { NativeNotti.setLocationSharingEnabled(enabled); }` added to `src/index.tsx` and included on the exported `Notti` object (AD-001: thin pass-through, no business logic in TS)
-- [ ] Unit test in `src/__tests__/index.test.tsx` asserting the facade delegates to `NativeNotti.setLocationSharingEnabled` with the passed boolean (mock `NativeNotti` per the file's existing pattern)
-- [ ] Gate check passes: `pnpm typecheck && pnpm lint && pnpm test`
-- [ ] Test count: at least 1 new test passes, all pre-existing `index.test.tsx` tests still pass
+- [x] `Spec.setLocationSharingEnabled(enabled: boolean): void` declared in `src/NativeNotti.ts` (positioned with the other setters, after `setSubscription`)
+- [x] `function setLocationSharingEnabled(enabled: boolean): void { NativeNotti.setLocationSharingEnabled(enabled); }` added to `src/index.tsx` and included on the exported `Notti` object (AD-001: thin pass-through, no business logic in TS)
+- [x] Unit test in `src/__tests__/index.test.tsx` asserting the facade delegates to `NativeNotti.setLocationSharingEnabled` with the passed boolean (mock `NativeNotti` per the file's existing pattern)
+- [x] Gate check passes: `pnpm typecheck && pnpm lint && pnpm test`
+- [x] Test count: at least 1 new test passes, all pre-existing `index.test.tsx` tests still pass
 
 **Tests**: unit (Jest)
 **Gate**: quick (JS trio)
@@ -89,12 +89,12 @@ iOS:     T6 ──→ T7 ──→ T8 ──→ T9
 - Skill: NONE
 
 **Done when**:
-- [ ] `DeviceState` gains: `appVersion: String?`, `firstSessionAtMs: Long?`, `lastSessionAtMs: Long?`, `sessionCount: Int`, `sessionTimeMs: Long`, `sessionStartedAtMs: Long?`, `locationSharingEnabled: Boolean`
-- [ ] Keys added (naming matches existing `notti_*` convention) + getter/setter per field, all `prefs.edit().putX(...).apply()` style; `locationSharingEnabled` defaults to `false` when absent; numeric session fields default to 0/null appropriately
-- [ ] `getState()` returns the extended `DeviceState` with all new fields populated
-- [ ] Unit tests: round-trip each new field (set → get); a fresh `NottiDeviceStore` over the same `SharedPreferences` sees persisted values (proves real persistence); `locationSharingEnabled` absent → `false`; numeric session defaults (0/null)
-- [ ] Gate check passes: `cd example/android && ./gradlew :react-native-notti:testDebugUnitTest`
-- [ ] Test count: new tests pass, all pre-existing `NottiDeviceStoreTest.kt` tests still pass (constructor/getState call sites across the suite may need updating — that's expected, assertions unchanged)
+- [x] `DeviceState` gains: `appVersion: String?`, `firstSessionAtMs: Long?`, `lastSessionAtMs: Long?`, `sessionCount: Int`, `sessionTimeMs: Long`, `sessionStartedAtMs: Long?`, `locationSharingEnabled: Boolean`
+- [x] Keys added (naming matches existing `notti_*` convention) + getter/setter per field, all `prefs.edit().putX(...).apply()` style; `locationSharingEnabled` defaults to `false` when absent; numeric session fields default to 0/null appropriately
+- [x] `getState()` returns the extended `DeviceState` with all new fields populated
+- [x] Unit tests: round-trip each new field (set → get); a fresh `NottiDeviceStore` over the same `SharedPreferences` sees persisted values (proves real persistence); `locationSharingEnabled` absent → `false`; numeric session defaults (0/null)
+- [x] Gate check passes: `cd example/android && ./gradlew :react-native-notti:testDebugUnitTest`
+- [x] Test count: new tests pass, all pre-existing `NottiDeviceStoreTest.kt` tests still pass (constructor/getState call sites across the suite may need updating — that's expected, assertions unchanged)
 
 **Tests**: unit
 **Gate**: quick
@@ -116,16 +116,16 @@ iOS:     T6 ──→ T7 ──→ T8 ──→ T9
 - Skill: NONE
 
 **Done when**:
-- [ ] `NottiCore` constructor gains `versionProvider: () -> String?` (defaulting to `{ null }` so existing tests instantiate unchanged — the default returns null → sync is a no-op)
-- [ ] `syncAppVersionIfNeeded()`: reads `versionProvider()`; if `null`, returns without enqueueing (SEGTEL edge: no crash, no registration block); if it differs from `deviceStore.getAppVersion()`, `mutate("appVersion") { ... patchDevice(deviceId, token, mapOf("app_version" to current)) ... on Success -> deviceStore.setAppVersion(current) }`
-- [ ] Called from `registerDevice`'s `ApiResult.Success` branch, right after `flushPendingMutations()` (SEGTEL-02: "device registration or next mutation-queue flush")
-- [ ] `NottiModule`'s `core` lazy passes a real `versionProvider` using `reactApplicationContext.packageManager.getPackageInfo(packageName, 0).versionName` (wrap in try/catch → `null` on failure; SDK must never crash here)
-- [ ] Unit test: versionProvider returns `"1.2.3"` and store `appVersion` is `null` → a PATCH with `app_version = "1.2.3"` is enqueued/executed, and on Success `setAppVersion("1.2.3")`
-- [ ] Unit test: versionProvider returns `"1.2.3"` and store `appVersion` already `"1.2.3"` → NO PATCH (diff-and-enqueue: no-op on equal)
-- [ ] Unit test: versionProvider returns `null` → no PATCH, no crash
-- [ ] Unit test: bump mocked version between two flows → second sync enqueues a PATCH with the NEW value (proves diff, not always-send)
-- [ ] Gate check passes: `cd example/android && ./gradlew :react-native-notti:testDebugUnitTest`
-- [ ] Test count: 4 new tests pass, all pre-existing `NottiCoreTest.kt` tests still pass
+- [x] `NottiCore` constructor gains `versionProvider: () -> String?` (defaulting to `{ null }` so existing tests instantiate unchanged — the default returns null → sync is a no-op)
+- [x] `syncAppVersionIfNeeded()`: reads `versionProvider()`; if `null`, returns without enqueueing (SEGTEL edge: no crash, no registration block); if it differs from `deviceStore.getAppVersion()`, `mutate("appVersion") { ... patchDevice(deviceId, token, mapOf("app_version" to current)) ... on Success -> deviceStore.setAppVersion(current) }`
+- [x] Called from `registerDevice`'s `ApiResult.Success` branch, right after `flushPendingMutations()` (SEGTEL-02: "device registration or next mutation-queue flush")
+- [x] `NottiModule`'s `core` lazy passes a real `versionProvider` using `reactApplicationContext.packageManager.getPackageInfo(packageName, 0).versionName` (wrap in try/catch → `null` on failure; SDK must never crash here)
+- [x] Unit test: versionProvider returns `"1.2.3"` and store `appVersion` is `null` → a PATCH with `app_version = "1.2.3"` is enqueued/executed, and on Success `setAppVersion("1.2.3")`
+- [x] Unit test: versionProvider returns `"1.2.3"` and store `appVersion` already `"1.2.3"` → NO PATCH (diff-and-enqueue: no-op on equal)
+- [x] Unit test: versionProvider returns `null` → no PATCH, no crash
+- [x] Unit test: bump mocked version between two flows → second sync enqueues a PATCH with the NEW value (proves diff, not always-send)
+- [x] Gate check passes: `cd example/android && ./gradlew :react-native-notti:testDebugUnitTest`
+- [x] Test count: 4 new tests pass, all pre-existing `NottiCoreTest.kt` tests still pass
 
 **Tests**: unit
 **Gate**: quick
@@ -147,17 +147,17 @@ iOS:     T6 ──→ T7 ──→ T8 ──→ T9
 - Skill: NONE
 
 **Done when**:
-- [ ] `NottiForegroundObserver` gains `override fun onStop(owner: LifecycleOwner)` calling `NottiModule.activeCore?.onAppBackgrounded()` (the missing background hook; zero-integration, mirrors `onStart`)
-- [ ] `NottiCore.onAppBackgrounded()` added — dispatches `handleSessionEnd(System.currentTimeMillis())` on the core executor
-- [ ] `handleSessionStart(nowMs)` called at the top of `onAppForegrounded()` (before existing flush/retry logic): (1) if `sessionStartedAtMs != null` → close the missed session via `handleSessionEnd(nowMs)` using the stored start (unclean-kill estimate, SEGTEL-08); (2) if `firstSessionAtMs == null` → set it to `nowMs`; (3) `setSessionStartedAtMs(nowMs)`
-- [ ] `handleSessionEnd(nowMs)`: if `sessionStartedAtMs == null` → no-op (no active session, excludes widget/background-fetch); else `count += 1`, `sessionTimeMs += nowMs - startedAt`, `lastSessionAtMs = nowMs`, `sessionStartedAtMs = null`, persist all, then enqueue a session PATCH **capturing a snapshot** of `{first_session_at, last_session_at, session_count, session_time_seconds}` computed at enqueue time (edge case: no double-count if a new session starts mid-flush)
-- [ ] ISO-8601 helper: `internal fun formatIsoUtc(epochMs: Long): String` using `SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)` + UTC `TimeZone` (NO `java.time` — minSdk 24, no desugaring); `session_time_seconds = sessionTimeMs / 1000`
-- [ ] Unit test: foreground → start session; background after ~30s → `sessionCount` +1, `sessionTime` ~30s, `lastSessionAt` set; snapshot PATCH enqueued with all four fields
-- [ ] Unit test: process kill simulated — session started (no background), then a fresh `handleSessionStart` → missed session counted once (count +1, time += now − old start), then a new session starts
-- [ ] Unit test: `handleSessionEnd` with no active session (`sessionStartedAtMs == null`) → no-op, no PATCH
-- [ ] Unit test: session-start with `firstSessionAtMs == null` sets it; a later session does NOT overwrite it
-- [ ] Gate check passes: `cd example/android && ./gradlew :react-native-notti:testDebugUnitTest`
-- [ ] Test count: 4 new tests pass, all pre-existing tests still pass
+- [x] `NottiForegroundObserver` gains `override fun onStop(owner: LifecycleOwner)` calling `NottiModule.activeCore?.onAppBackgrounded()` (the missing background hook; zero-integration, mirrors `onStart`)
+- [x] `NottiCore.onAppBackgrounded()` added — dispatches `handleSessionEnd(System.currentTimeMillis())` on the core executor
+- [x] `handleSessionStart(nowMs)` called at the top of `onAppForegrounded()` (before existing flush/retry logic): (1) if `sessionStartedAtMs != null` → close the missed session via `handleSessionEnd(nowMs)` using the stored start (unclean-kill estimate, SEGTEL-08); (2) if `firstSessionAtMs == null` → set it to `nowMs`; (3) `setSessionStartedAtMs(nowMs)`
+- [x] `handleSessionEnd(nowMs)`: if `sessionStartedAtMs == null` → no-op (no active session, excludes widget/background-fetch); else `count += 1`, `sessionTimeMs += nowMs - startedAt`, `lastSessionAtMs = nowMs`, `sessionStartedAtMs = null`, persist all, then enqueue a session PATCH **capturing a snapshot** of `{first_session_at, last_session_at, session_count, session_time_seconds}` computed at enqueue time (edge case: no double-count if a new session starts mid-flush)
+- [x] ISO-8601 helper: `internal fun formatIsoUtc(epochMs: Long): String` using `SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)` + UTC `TimeZone` (NO `java.time` — minSdk 24, no desugaring); `session_time_seconds = sessionTimeMs / 1000`
+- [x] Unit test: foreground → start session; background after ~30s → `sessionCount` +1, `sessionTime` ~30s, `lastSessionAt` set; snapshot PATCH enqueued with all four fields
+- [x] Unit test: process kill simulated — session started (no background), then a fresh `handleSessionStart` → missed session counted once (count +1, time += now − old start), then a new session starts
+- [x] Unit test: `handleSessionEnd` with no active session (`sessionStartedAtMs == null`) → no-op, no PATCH
+- [x] Unit test: session-start with `firstSessionAtMs == null` sets it; a later session does NOT overwrite it
+- [x] Gate check passes: `cd example/android && ./gradlew :react-native-notti:testDebugUnitTest`
+- [x] Test count: 4 new tests pass, all pre-existing tests still pass
 
 **Tests**: unit
 **Gate**: quick
@@ -179,17 +179,17 @@ iOS:     T6 ──→ T7 ──→ T8 ──→ T9
 - Skill: NONE
 
 **Done when**:
-- [ ] `NottiCore` constructor gains `hasLocationPermission: () -> Boolean = { false }` and `countryProvider: (callback: (String?) -> Unit) -> Unit = { cb -> cb(null) }` (defaults keep existing tests compiling; a no-op provider returns null → omit)
-- [ ] `fun setLocationSharingEnabled(enabled: Boolean)`: persists `deviceStore.setLocationSharingEnabled(enabled)`; if `enabled == false`, enqueues a PATCH `{country: null}` immediately (SEGTEL-13 clear, not just stop-sending); if `true`, no immediate read
-- [ ] `NottiModule` overrides the codegen `setLocationSharingEnabled(Boolean)` delegating to `core.setLocationSharingEnabled(...)`
-- [ ] In `handleSessionStart`, AFTER session bookkeeping: if `deviceStore.getLocationSharingEnabled() && hasLocationPermission()` → `countryProvider { country -> dispatch { if (deviceStore.getLocationSharingEnabled()) { if (country != null) mutate PATCH {country} } } }` (re-check flag at callback time; null/revoked → omit silently, no prompt, no error — SEGTEL-11/12/14)
-- [ ] `NottiModule` provides real providers: `hasLocationPermission` via `ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PERMISSION_GRANTED`; `countryProvider` does last-known-location + `Geocoder` reverse-geocode → ISO 3166-1 alpha-2 `countryCode`, all on a background thread, `null` on any failure
-- [ ] Unit test: opt-in `false` + permission granted (mocked) → no `country` ever in a payload
-- [ ] Unit test: opt-in `true` + permission granted + provider returns `"BR"` → session-start enqueues PATCH `{country: "BR"}`
-- [ ] Unit test: toggle `true` then `false` → a PATCH `{country: null}` is enqueued (explicit clear mutation)
-- [ ] Unit test: opt-in `true` but provider returns `null` (permission revoked/read failed) → no country field, no crash
-- [ ] Gate check passes: `cd example/android && ./gradlew :react-native-notti:testDebugUnitTest`
-- [ ] Test count: 4 new tests pass, all pre-existing tests still pass
+- [x] `NottiCore` constructor gains `hasLocationPermission: () -> Boolean = { false }` and `countryProvider: (callback: (String?) -> Unit) -> Unit = { cb -> cb(null) }` (defaults keep existing tests compiling; a no-op provider returns null → omit)
+- [x] `fun setLocationSharingEnabled(enabled: Boolean)`: persists `deviceStore.setLocationSharingEnabled(enabled)`; if `enabled == false`, enqueues a PATCH `{country: null}` immediately (SEGTEL-13 clear, not just stop-sending); if `true`, no immediate read
+- [x] `NottiModule` overrides the codegen `setLocationSharingEnabled(Boolean)` delegating to `core.setLocationSharingEnabled(...)`
+- [x] In `handleSessionStart`, AFTER session bookkeeping: if `deviceStore.getLocationSharingEnabled() && hasLocationPermission()` → `countryProvider { country -> dispatch { if (deviceStore.getLocationSharingEnabled()) { if (country != null) mutate PATCH {country} } } }` (re-check flag at callback time; null/revoked → omit silently, no prompt, no error — SEGTEL-11/12/14)
+- [x] `NottiModule` provides real providers: `hasLocationPermission` via `ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PERMISSION_GRANTED`; `countryProvider` does last-known-location + `Geocoder` reverse-geocode → ISO 3166-1 alpha-2 `countryCode`, all on a background thread, `null` on any failure
+- [x] Unit test: opt-in `false` + permission granted (mocked) → no `country` ever in a payload
+- [x] Unit test: opt-in `true` + permission granted + provider returns `"BR"` → session-start enqueues PATCH `{country: "BR"}`
+- [x] Unit test: toggle `true` then `false` → a PATCH `{country: null}` is enqueued (explicit clear mutation)
+- [x] Unit test: opt-in `true` but provider returns `null` (permission revoked/read failed) → no country field, no crash
+- [x] Gate check passes: `cd example/android && ./gradlew :react-native-notti:testDebugUnitTest`
+- [x] Test count: 4 new tests pass, all pre-existing tests still pass
 
 **Tests**: unit
 **Gate**: quick
@@ -211,12 +211,12 @@ iOS:     T6 ──→ T7 ──→ T8 ──→ T9
 - Skill: NONE
 
 **Done when**:
-- [ ] `DeviceState` gains the same 7 fields as T2 (`appVersion: String?`, `firstSessionAtMs/lastSessionAtMs/sessionStartedAtMs: Int64?`, `sessionCount: Int`, `sessionTimeMs: Int64`, `locationSharingEnabled: Bool`)
-- [ ] Keys + getters/setters per field, `UserDefaults` style matching existing; `locationSharingEnabled` default `false`; numeric defaults 0/nil
-- [ ] `getState()` extended
-- [ ] Unit tests mirroring T2's (round-trip, real persistence across a new store instance over the same suite, defaults)
-- [ ] Gate check passes: `xcodebuild test -workspace example/ios/NottiExample.xcworkspace -scheme NottiTests -destination 'platform=iOS Simulator,name=iPhone 17'`
-- [ ] Test count: new tests pass, all pre-existing `NottiDeviceStoreTests.swift` tests still pass
+- [x] `DeviceState` gains the same 7 fields as T2 (`appVersion: String?`, `firstSessionAtMs/lastSessionAtMs/sessionStartedAtMs: Int64?`, `sessionCount: Int`, `sessionTimeMs: Int64`, `locationSharingEnabled: Bool`)
+- [x] Keys + getters/setters per field, `UserDefaults` style matching existing; `locationSharingEnabled` default `false`; numeric defaults 0/nil
+- [x] `getState()` extended
+- [x] Unit tests mirroring T2's (round-trip, real persistence across a new store instance over the same suite, defaults)
+- [x] Gate check passes: `xcodebuild test -workspace example/ios/NottiExample.xcworkspace -scheme NottiTests -destination 'platform=iOS Simulator,name=iPhone 17'`
+- [x] Test count: new tests pass, all pre-existing `NottiDeviceStoreTests.swift` tests still pass
 
 **Tests**: unit
 **Gate**: quick
@@ -238,13 +238,13 @@ iOS:     T6 ──→ T7 ──→ T8 ──→ T9
 - Skill: NONE
 
 **Done when**:
-- [ ] `NottiCore` init gains `versionProvider: () -> String?` (default `{ nil }`)
-- [ ] `syncAppVersionIfNeeded()` mirrors Android: nil → no-op; differs from stored `appVersion` → `performOrQueue` PATCH `["app_version": current]`, on success `setAppVersion(current)`
-- [ ] Called from the iOS registration-success path (wherever `registerDevice`'s success branch persists the response), right after `flushPendingMutations`
-- [ ] `NottiImpl` passes a real `versionProvider` reading `CFBundleShortVersionString` (fails → nil, never crash)
-- [ ] Unit tests mirroring T3's 4 cases (diff triggers PATCH, equal no-op, nil no-op, bump re-syncs) using the existing `NottiCoreTests.swift` mocking pattern
-- [ ] Gate check passes: `xcodebuild test -workspace example/ios/NottiExample.xcworkspace -scheme NottiTests -destination 'platform=iOS Simulator,name=iPhone 17'`
-- [ ] Test count: 4 new tests pass, all pre-existing `NottiCoreTests.swift` tests still pass
+- [x] `NottiCore` init gains `versionProvider: () -> String?` (default `{ nil }`)
+- [x] `syncAppVersionIfNeeded()` mirrors Android: nil → no-op; differs from stored `appVersion` → `performOrQueue` PATCH `["app_version": current]`, on success `setAppVersion(current)`
+- [x] Called from the iOS registration-success path (wherever `registerDevice`'s success branch persists the response), right after `flushPendingMutations`
+- [x] `NottiImpl` passes a real `versionProvider` reading `CFBundleShortVersionString` (fails → nil, never crash)
+- [x] Unit tests mirroring T3's 4 cases (diff triggers PATCH, equal no-op, nil no-op, bump re-syncs) using the existing `NottiCoreTests.swift` mocking pattern
+- [x] Gate check passes: `xcodebuild test -workspace example/ios/NottiExample.xcworkspace -scheme NottiTests -destination 'platform=iOS Simulator,name=iPhone 17'`
+- [x] Test count: 4 new tests pass, all pre-existing `NottiCoreTests.swift` tests still pass
 
 **Tests**: unit
 **Gate**: quick
@@ -266,13 +266,13 @@ iOS:     T6 ──→ T7 ──→ T8 ──→ T9
 - Skill: NONE
 
 **Done when**:
-- [ ] `observeAppBackground()` added on `UIApplication.didEnterBackgroundNotification` → `handleAppDidEnterBackground()` → `handleSessionEnd(now)` on the workQueue (mirrors `observeAppForeground`; removed in `deinit`)
-- [ ] `handleAppDidBecomeActive()` calls `handleSessionStart(now)` before its existing flush/retry logic (unclean-kill estimate via stale `sessionStartedAtMs`, set `firstSessionAt` once, open new session)
-- [ ] `handleSessionEnd(now)`: no-op if no active session; else aggregate (count+1, time += now − startedAt, lastSessionAt = now, clear startedAt, persist) + enqueue snapshot PATCH of the four fields (captured at enqueue time)
-- [ ] ISO-8601 helper matching Android's shape (`yyyy-MM-dd'T'HH:mm:ss.SSS'Z'`, UTC, `en_US_POSIX`); `session_time_seconds = sessionTimeMs / 1000`
-- [ ] Unit tests mirroring T4's 4 cases (session lifecycle, unclean-kill estimate, no-active-session no-op, first-session-set-once)
-- [ ] Gate check passes: `xcodebuild test -workspace example/ios/NottiExample.xcworkspace -scheme NottiTests -destination 'platform=iOS Simulator,name=iPhone 17'`
-- [ ] Test count: 4 new tests pass, all pre-existing `NottiCoreTests.swift` tests still pass
+- [x] `observeAppBackground()` added on `UIApplication.didEnterBackgroundNotification` → `handleAppDidEnterBackground()` → `handleSessionEnd(now)` on the workQueue (mirrors `observeAppForeground`; removed in `deinit`)
+- [x] `handleAppDidBecomeActive()` calls `handleSessionStart(now)` before its existing flush/retry logic (unclean-kill estimate via stale `sessionStartedAtMs`, set `firstSessionAt` once, open new session)
+- [x] `handleSessionEnd(now)`: no-op if no active session; else aggregate (count+1, time += now − startedAt, lastSessionAt = now, clear startedAt, persist) + enqueue snapshot PATCH of the four fields (captured at enqueue time)
+- [x] ISO-8601 helper matching Android's shape (`yyyy-MM-dd'T'HH:mm:ss.SSS'Z'`, UTC, `en_US_POSIX`); `session_time_seconds = sessionTimeMs / 1000`
+- [x] Unit tests mirroring T4's 4 cases (session lifecycle, unclean-kill estimate, no-active-session no-op, first-session-set-once)
+- [x] Gate check passes: `xcodebuild test -workspace example/ios/NottiExample.xcworkspace -scheme NottiTests -destination 'platform=iOS Simulator,name=iPhone 17'`
+- [x] Test count: 4 new tests pass, all pre-existing `NottiCoreTests.swift` tests still pass
 
 **Tests**: unit
 **Gate**: quick
@@ -294,15 +294,15 @@ iOS:     T6 ──→ T7 ──→ T8 ──→ T9
 - Skill: NONE
 
 **Done when**:
-- [ ] `Notti.mm` exposes `setLocationSharingEnabled:` delegating to `NottiImpl` (same 1-line delegation as `setSubscription:`)
-- [ ] `NottiImpl.setLocationSharingEnabled(_:)` → `NottiCore.setLocationSharingEnabled(_:)`
-- [ ] `NottiCore` init gains `hasLocationPermission: () -> Bool = { false }` and `countryProvider: (@escaping (String?) -> Void) -> Void = { $0(nil) }`
-- [ ] `NottiCore.setLocationSharingEnabled(_ enabled: Bool)`: persist flag; `false` → immediate `performOrQueue` PATCH `["country": NSNull()]` (clear); `true` → no immediate read
-- [ ] In `handleSessionStart`, after bookkeeping: if flag on && `hasLocationPermission()` → `countryProvider { country in onWorkQueue { if flag still on { if let country → PATCH {country} } } }`
-- [ ] `NottiImpl` provides real providers: `hasLocationPermission` via `CLLocationManager.authorizationStatus` ∈ {`.authorizedWhenInUse`, `.authorizedAlways`}; `countryProvider` via cached `location` + `CLGeocoder` → `isoCountryCode`, nil on any failure, never prompts
-- [ ] Unit tests mirroring T5's 4 cases (off+granted → no country; on+granted+`BR` → PATCH; on→off → `{country: null}` clear; on+provider-nil → omit, no crash)
-- [ ] Gate check passes: `xcodebuild test -workspace example/ios/NottiExample.xcworkspace -scheme NottiTests -destination 'platform=iOS Simulator,name=iPhone 17'`
-- [ ] Test count: 4 new tests pass, all pre-existing tests in touched files still pass
+- [x] `Notti.mm` exposes `setLocationSharingEnabled:` delegating to `NottiImpl` (same 1-line delegation as `setSubscription:`)
+- [x] `NottiImpl.setLocationSharingEnabled(_:)` → `NottiCore.setLocationSharingEnabled(_:)`
+- [x] `NottiCore` init gains `hasLocationPermission: () -> Bool = { false }` and `countryProvider: (@escaping (String?) -> Void) -> Void = { $0(nil) }`
+- [x] `NottiCore.setLocationSharingEnabled(_ enabled: Bool)`: persist flag; `false` → immediate `performOrQueue` PATCH `["country": NSNull()]` (clear); `true` → no immediate read
+- [x] In `handleSessionStart`, after bookkeeping: if flag on && `hasLocationPermission()` → `countryProvider { country in onWorkQueue { if flag still on { if let country → PATCH {country} } } }`
+- [x] `NottiImpl` provides real providers: `hasLocationPermission` via `CLLocationManager.authorizationStatus` ∈ {`.authorizedWhenInUse`, `.authorizedAlways`}; `countryProvider` via cached `location` + `CLGeocoder` → `isoCountryCode`, nil on any failure, never prompts
+- [x] Unit tests mirroring T5's 4 cases (off+granted → no country; on+granted+`BR` → PATCH; on→off → `{country: null}` clear; on+provider-nil → omit, no crash)
+- [x] Gate check passes: `xcodebuild test -workspace example/ios/NottiExample.xcworkspace -scheme NottiTests -destination 'platform=iOS Simulator,name=iPhone 17'`
+- [x] Test count: 4 new tests pass, all pre-existing tests in touched files still pass
 
 **Tests**: unit
 **Gate**: quick
@@ -324,11 +324,11 @@ iOS:     T6 ──→ T7 ──→ T8 ──→ T9
 - Skill: NONE
 
 **Done when**:
-- [ ] Side-by-side read confirms identical PATCH payload keys on both platforms: `app_version`, `first_session_at`, `last_session_at`, `session_count`, `session_time_seconds`, `country` (and `country: null` for clear)
-- [ ] Both platforms diff-and-enqueue version the same way; session snapshot is captured at enqueue time (not flush) on both
-- [ ] Both platforms' opt-in semantics match: default off, clear-on-disable, permission check-only, omit-not-error
-- [ ] `git grep -n "session_time_seconds\|setLocationSharingEnabled\|app_version"` across `android/`/`ios/`/`src/` shows consistent key/method names (no typo drift)
-- [ ] Full native gate re-run on both platforms + `pnpm typecheck && pnpm lint && pnpm test` (already green from prior tasks; final confirmation after cross-review fixes)
+- [x] Side-by-side read confirms identical PATCH payload keys on both platforms: `app_version`, `first_session_at`, `last_session_at`, `session_count`, `session_time_seconds`, `country` (and `country: null` for clear)
+- [x] Both platforms diff-and-enqueue version the same way; session snapshot is captured at enqueue time (not flush) on both
+- [x] Both platforms' opt-in semantics match: default off, clear-on-disable, permission check-only, omit-not-error
+- [x] `git grep -n "session_time_seconds\|setLocationSharingEnabled\|app_version"` across `android/`/`ios/`/`src/` shows consistent key/method names (no typo drift)
+- [x] Full native gate re-run on both platforms + `pnpm typecheck && pnpm lint && pnpm test` (already green from prior tasks; final confirmation after cross-review fixes)
 - [ ] Requirement traceability in `spec.md`: SEGTEL-01..15 all → Implemented (Verifier pending)
 
 **Tests**: none (review task)
