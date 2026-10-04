@@ -88,20 +88,33 @@ entries once released.
 
 ## [Unreleased]
 
+## Upgrade notes for 0.6.0
+
+### ⚠️ Attention when upgrading
+
+* **Requires `zeep-notti` backend ≥ v0.11.0** to record `opened` (see Notes below).
+* **iOS CTR step-up for apps with notification categories:** taps on action buttons were not reported in 0.5.0 and are now reported as `clicked`, which Notti counts as clicked and opened. Apps that register `UNNotificationCategory` actions will see CTR and open rate rise after the upgrade; this is a reporting change, not a behavior change of users. Account for it when comparing against pre-0.6.0 data.
+* **One-time profile re-sync:** on the first registration after the upgrade, each install re-sends `app_version`, `device_os`, `device_model`, `sdk_version`, `timezone_id` and `language` once (at most six device `PATCH`es, once per install). This repairs installs where 0.5.0 marked a field synced against a backend that had ignored it (the 0.5.0 note below).
+
 ### Features
 
 * **`opened` event:** a tap on the notification body (warm or cold start) now reports `opened` **and** `clicked` for the delivery (`.specs/features/opened-event-reporting`). CTR keeps its meaning: body taps are still clicks, exactly as in 0.5.0. With Notti's current formulas (opened = `opened` or `clicked`) open rate equals CTR; the `opened` rows let Notti tell body taps from action-button taps. SDK 0.5.0 and older send only `clicked` on a body tap, which Notti already counts as opened. JS API unchanged (`notificationClicked` / `getInitialNotificationClick()` still fire for the body tap).
 * **iOS:** a tap on an action button from a `UNNotificationCategory` the app registered is reported as `clicked` only (no JS event). Dismissals are still not reported.
 
+### Bug Fixes
+
+* **Profile fields are acknowledged by the backend echo** (Android and iOS): `app_version`, `device_os`, `device_model`, `sdk_version`, `timezone_id` and `language` are marked synced only when the `PATCH /devices` response echoes the exact value sent. Previously any 2xx counted, so a backend that ignored a field never received it again. A field that is not echoed (older backend) is re-sent on the next registration (app launch, token refresh, or retry after a failed registration).
+
 ### Notes
 
 * Requires `zeep-notti` **v0.11.0 or later** to record `opened`. An older backend answers `422` to `opened` and the SDK drops that event; the `clicked` of the same tap is still recorded.
+* A body tap now writes two events to the on-disk queue (`opened` + `clicked`), so the 32-event cap holds 16 offline body taps instead of 32. When the cap is exceeded the oldest event is dropped, which can leave a `clicked` without its `opened`; Notti already counts `clicked` as opened, so rates are unaffected.
 
 ## Upgrade notes for 0.5.0 (released)
 
 ### ⚠️ Breaking / attention when upgrading
 
-* **Requires `zeep-notti` backend ≥ v0.10.0** (DPROF-01..17). Older backends ignore the new device fields, but the SDK still marks them as synced on any 2xx, so static values (`device_model`, `device_os`, `sdk_version`) are not re-sent after the backend is upgraded until they change.
+* **Requires `zeep-notti` backend ≥ v0.10.0** (DPROF-01..17). Older backends ignore the new device fields, but the SDK still marks them as synced on any 2xx, so static values (`device_model`, `device_os`, `sdk_version`) are not re-sent after the backend is upgraded until they change. *Fixed in 0.6.0: echo-based ack plus a one-time re-sync on upgrade.*
 * **Automatic device profile:** this release starts sending `device_os`, `device_model`, `sdk_version`, `timezone_id`, `language`, `permission_status` and `last_unsubscribed_at` to your Notti instance, with no opt-out toggle. Review your privacy labels / LGPD documentation (README "Privacy, App Store labels and LGPD").
 * **`logout()` now clears email and phone** locally and server-side (two device PATCHes, `{email: null}` and `{phone: null}`), so a previous user's contact data never stays attached to the next user on a shared device. Call `User.setEmail`/`User.setPhone` again after the next `login`.
 * **iOS privacy manifest:** `PrivacyInfo.xcprivacy` now declares Email Address and Phone Number (linked to the user, not used for tracking, App Functionality). Data is only collected if you call `User.setEmail`/`User.setPhone`, but Xcode's privacy report lists the entries for every app embedding the SDK; adjust your own nutrition label to your actual use.
