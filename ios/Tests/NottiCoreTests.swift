@@ -820,6 +820,30 @@ final class NottiCoreTests: XCTestCase {
     XCTAssertTrue(eventStore.all().isEmpty)
   }
 
+  func test_aQueuedOpenedEventIsFlushedWithTypeOpenedAndRemovedOn2xx() {
+    // SDKOPEN-09: `opened` rides the same write-ahead queue and flush path as
+    // received/clicked; the stored type is sent as is.
+    let eventStore = NottiEventStore(defaults: defaults)
+    let core = newCore(eventStore: eventStore)
+
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    _ = eventStore.enqueue(notificationId: "n-1", deliveryId: "d-1", type: NottiEventType.opened)
+    StubURLProtocol.enqueue(.status(201)) // event report
+    core.onNetworkAvailable()
+    drain(core)
+
+    let requests = StubURLProtocol.recordedRequests()
+    XCTAssertEqual(requests.count, 2)
+    XCTAssertEqual(requests[1].url?.path, "/v1/apps/app-1/notifications/n-1/events")
+    let body = try! JSONSerialization.jsonObject(with: bodyData(requests[1])) as! [String: Any]
+    XCTAssertEqual(body["type"] as? String, "opened")
+    XCTAssertEqual(body["delivery_id"] as? String, "d-1")
+    XCTAssertTrue(eventStore.all().isEmpty)
+  }
+
   func test_onNetworkAvailableFlushesAQueuedEventAfterRegistration() {
     // T8: the network observer (and the push delegate's opportunistic flush)
     // trigger `onNetworkAvailable`; it must hop onto the work queue and drain

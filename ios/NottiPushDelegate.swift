@@ -69,7 +69,7 @@ public class NottiPushDelegate: NSObject, UNUserNotificationCenterDelegate {
         identifier: notification.request.identifier,
         payload: parsed.toEventPayload()
       )
-      enqueueIfReportable(parsed, type: "received")
+      enqueueIfReportable(parsed, type: NottiEventType.received)
     }
     // `.list` was missing: without it, a notification presented in the
     // foreground never lands in Notification Center afterwards.
@@ -82,27 +82,35 @@ public class NottiPushDelegate: NSObject, UNUserNotificationCenterDelegate {
     withCompletionHandler completionHandler: @escaping () -> Void
   ) {
     let userInfo = response.notification.request.content.userInfo
-    // A8 (found in pre-release review): a custom action button or the
-    // dismiss action (`UNNotificationDismissActionIdentifier`, delivered
-    // when the category sets `customDismissAction`) both reached here
-    // indistinguishable from a real tap. Only the default tap-to-open action
-    // is reported as `notificationClicked`.
-    guard response.actionIdentifier == UNNotificationDefaultActionIdentifier,
-      Self.isRemotePush(userInfo)
-    else {
+    guard Self.isRemotePush(userInfo) else {
       completionHandler()
       return
     }
-    let parsed = parseUserInfo(userInfo)
-    // Cold launch from a tap fires this before the RN bridge (and therefore
-    // the Codegen emitter) exists — `NottiEventBuffer` holds the payload
-    // until the TurboModule attaches its emitter, then replays it once.
-    NottiEventBuffer.shared.emit(
-      .clicked,
-      identifier: response.notification.request.identifier,
-      payload: parsed.toEventPayload()
-    )
-    enqueueIfReportable(parsed, type: "clicked")
+    switch response.actionIdentifier {
+    case UNNotificationDefaultActionIdentifier:
+      let parsed = parseUserInfo(userInfo)
+      // Cold launch from a tap fires this before the RN bridge (and therefore
+      // the Codegen emitter) exists — `NottiEventBuffer` holds the payload
+      // until the TurboModule attaches its emitter, then replays it once.
+      NottiEventBuffer.shared.emit(
+        .clicked,
+        identifier: response.notification.request.identifier,
+        payload: parsed.toEventPayload()
+      )
+      // A body tap is `opened`, never `clicked`, even when `data` carries a
+      // URL: `clicked` is reserved for action buttons (opened-event-reporting
+      // D1). The JS event name stays `notificationClicked` (D4).
+      enqueueIfReportable(parsed, type: NottiEventType.opened)
+    case UNNotificationDismissActionIdentifier:
+      // Delivered only when the category sets `customDismissAction`; a
+      // dismissal is not engagement and is never reported.
+      break
+    default:
+      // A button from a category the host app registered (`aps.category`).
+      // Reported as `clicked` only: the backend already counts a clicked
+      // delivery as opened (D2). No JS event, as before (A8).
+      enqueueIfReportable(parseUserInfo(userInfo), type: NottiEventType.clicked)
+    }
     completionHandler()
   }
 

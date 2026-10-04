@@ -102,9 +102,11 @@ final class NottiPushDelegateTests: XCTestCase {
     XCTAssertTrue(NottiImpl.eventStore.all().isEmpty)
   }
 
-  // MARK: - didReceive (clicked) / SDKCTR-03
+  // MARK: - didReceive: body tap (opened) / action button (clicked)
 
-  func test_didReceiveDefaultActionWithIdsEnqueuesAClickedEvent() {
+  func test_didReceiveDefaultActionWithIdsEnqueuesOneOpenedEventAndNoClicked() {
+    // SDKOPEN-01/03: the body tap is `opened`; `clicked` is reserved for
+    // action buttons.
     let response = makeResponse(
       userInfo: makeRemoteUserInfo(notificationId: "n-1", deliveryId: "d-1"),
       actionIdentifier: UNNotificationDefaultActionIdentifier
@@ -115,23 +117,98 @@ final class NottiPushDelegateTests: XCTestCase {
     XCTAssertEqual(events.count, 1)
     XCTAssertEqual(events.first?.notificationId, "n-1")
     XCTAssertEqual(events.first?.deliveryId, "d-1")
-    XCTAssertEqual(events.first?.type, "clicked")
+    XCTAssertEqual(events.first?.type, "opened")
   }
 
-  func test_didReceiveCustomActionSkipsEnqueueEvenWithIds() {
-    // SDKCTR-03: only the default tap-to-open action is reportable; a custom
-    // action button reaching the delegate must never enqueue, even when the
-    // payload carries both ids.
+  func test_didReceiveDefaultActionWithAURLInDataStillEnqueuesOnlyOpened() {
+    // SDKOPEN-03 / D1: a URL in custom data is integrator-owned, not a backend
+    // CTA field, so the tap stays an open.
+    var userInfo = makeRemoteUserInfo(notificationId: "n-1", deliveryId: "d-1")
+    userInfo["url"] = "https://example.com/promo"
+    userInfo["deep_link"] = "app://orders/42"
+    awaitDidReceive(makeResponse(userInfo: userInfo, actionIdentifier: UNNotificationDefaultActionIdentifier))
+
+    XCTAssertEqual(NottiImpl.eventStore.all().map(\.type), ["opened"])
+  }
+
+  func test_didReceiveDefaultActionStillBuffersTheJSClickForAColdStart() {
+    // SDKOPEN-02/10: no TurboModule or JS listener exists on a cold start; the
+    // event is queued natively and the payload stays available to
+    // getInitialNotificationClick() under the unchanged JS event name.
+    let response = makeResponse(
+      userInfo: makeRemoteUserInfo(notificationId: "n-1", deliveryId: "d-1"),
+      actionIdentifier: UNNotificationDefaultActionIdentifier
+    )
+    awaitDidReceive(response)
+
+    XCTAssertEqual(NottiImpl.eventStore.all().map(\.type), ["opened"])
+    XCTAssertNotNil(NottiEventBuffer.shared.takeInitialClick())
+  }
+
+  func test_eachDefaultActionResponseEnqueuesItsOwnOpenedEvent() {
+    // SDKOPEN-04: one `didReceive` per tap, one event per `didReceive`.
+    awaitDidReceive(makeResponse(
+      userInfo: makeRemoteUserInfo(notificationId: "n-1", deliveryId: "d-1"),
+      actionIdentifier: UNNotificationDefaultActionIdentifier
+    ))
+    awaitDidReceive(makeResponse(
+      userInfo: makeRemoteUserInfo(notificationId: "n-2", deliveryId: "d-2"),
+      actionIdentifier: UNNotificationDefaultActionIdentifier
+    ))
+
+    let events = NottiImpl.eventStore.all()
+    XCTAssertEqual(events.map(\.deliveryId), ["d-1", "d-2"])
+    XCTAssertEqual(events.map(\.type), ["opened", "opened"])
+  }
+
+  func test_didReceiveCustomActionEnqueuesOneClickedEventAndNoOpened() {
+    // SDKOPEN-05 / D2: a category action button is `clicked` only; the
+    // backend already counts a clicked delivery as opened.
     let response = makeResponse(
       userInfo: makeRemoteUserInfo(notificationId: "n-1", deliveryId: "d-1"),
       actionIdentifier: "CUSTOM_ACTION"
     )
     awaitDidReceive(response)
 
+    let events = NottiImpl.eventStore.all()
+    XCTAssertEqual(events.count, 1)
+    XCTAssertEqual(events.first?.notificationId, "n-1")
+    XCTAssertEqual(events.first?.deliveryId, "d-1")
+    XCTAssertEqual(events.first?.type, "clicked")
+  }
+
+  func test_didReceiveCustomActionDoesNotEmitTheJSClickEvent() {
+    // SDKOPEN-07: the JS `notificationClicked` event stays body-tap only.
+    awaitDidReceive(makeResponse(
+      userInfo: makeRemoteUserInfo(notificationId: "n-1", deliveryId: "d-1"),
+      actionIdentifier: "CUSTOM_ACTION"
+    ))
+
+    XCTAssertNil(NottiEventBuffer.shared.takeInitialClick())
+  }
+
+  func test_didReceiveCustomActionWithoutIdsSkipsEnqueue() {
+    // SDKOPEN-08.
+    awaitDidReceive(makeResponse(
+      userInfo: makeRemoteUserInfo(notificationId: nil, deliveryId: nil),
+      actionIdentifier: "CUSTOM_ACTION"
+    ))
+
+    XCTAssertTrue(NottiImpl.eventStore.all().isEmpty)
+  }
+
+  func test_didReceiveCustomActionForANonRemotePushSkipsEnqueueEvenWithIds() {
+    // SDKOPEN-08: a local notification's action is not this SDK's event.
+    awaitDidReceive(makeResponse(
+      userInfo: ["notification_id": "n-1", "delivery_id": "d-1"],
+      actionIdentifier: "CUSTOM_ACTION"
+    ))
+
     XCTAssertTrue(NottiImpl.eventStore.all().isEmpty)
   }
 
   func test_didReceiveDismissActionSkipsEnqueueEvenWithIds() {
+    // SDKOPEN-06.
     let response = makeResponse(
       userInfo: makeRemoteUserInfo(notificationId: "n-1", deliveryId: "d-1"),
       actionIdentifier: UNNotificationDismissActionIdentifier

@@ -186,7 +186,7 @@ public class NottiApiClient {
   /// Reports a single push-notification lifecycle event (design.md offline
   /// event queue flush — `NottiEventStore`'s `PendingEvent` maps onto
   /// `notificationId`/`deliveryId`/`type`; `token` is the push token of the
-  /// device that received/clicked). Fire-and-forget like `patchDevice`: a
+  /// device that received/opened/clicked). Fire-and-forget like `patchDevice`: a
   /// REST backend is free to acknowledge the event with `204 No Content`, an
   /// empty `200` or a bare `{"ok":true}`, so any 2xx is a success and the
   /// body is ignored. Shares `executeWithRetry`'s policy — 4xx terminal
