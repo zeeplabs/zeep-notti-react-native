@@ -3,7 +3,7 @@ import Foundation
 /// A single push-notification lifecycle event queued for later reporting to
 /// the backend (design.md offline event queue). `id` is a locally generated
 /// UUID used only to address the record within the queue — it is never sent
-/// to the backend. `type` is "received" or "clicked".
+/// to the backend. `type` is one of `NottiEventType`.
 public struct PendingEvent: Codable {
   public let id: String
   public let notificationId: String
@@ -24,6 +24,21 @@ public struct PendingEvent: Codable {
     self.type = type
     self.createdAtMs = createdAtMs
   }
+}
+
+/// Event types accepted by `POST .../notifications/{id}/events`.
+///
+/// - `received`: the notification arrived while the app was in the foreground.
+/// - `opened`: the user tapped the notification body (the app was opened from it).
+/// - `clicked`: the user tapped an action button.
+///
+/// The backend counts a delivery as opened when it has an `opened` or a
+/// `clicked` event, and as clicked only with a `clicked` event
+/// (`.specs/features/opened-event-reporting/spec.md`).
+public enum NottiEventType {
+  public static let received = "received"
+  public static let opened = "opened"
+  public static let clicked = "clicked"
 }
 
 /// UserDefaults-backed disk queue of `PendingEvent` records waiting to be
