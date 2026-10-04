@@ -48,7 +48,8 @@ Status: implementado nas duas plataformas (Android + iOS), com testes unitários
 
 - **Feature**: opened-event-reporting
 - **Phase / Task**: Specify (+ inline design) → Tasks T1-T4 → Execute done. Android 209 JVM tests, iOS 206 XCTest, JS gates green. PR #25 merged to `main` 2026-10-04 (rebase, head `fcb1b04`). No version bump yet.
-- **Next step**: release (version bump) only after `zeep-notti` v0.11.0 is deployed (migration `0023`); manual device check of `opened`/`clicked` rows.
+- **Released**: v0.6.0 on 2026-10-04 (npm `latest`), together with the profile-field echo ack (#26) and the pre-release review fixes (#27), after `zeep-notti` v0.11.0 shipped.
+- **Next step**: manual device checks (9 scenarios from the 0.6.0 pre-release review): `opened`/`clicked` pair per body tap, Android `singleTask` warm start and Recents relaunch, iOS cold start and action buttons, one-time profile re-sync on a device upgraded from 0.5.0.
 - **Blockers**: none. Option B (T4) keeps CTR unchanged; open rate == CTR until the backend changes its formulas.
 
 ## Handoff (previous: ctr-event-reporting)
