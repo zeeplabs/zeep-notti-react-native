@@ -54,7 +54,7 @@ class NottiFirebaseMessagingService : FirebaseMessagingService() {
     val notificationId = data["notification_id"]
     val deliveryId = data["delivery_id"]
     if (!notificationId.isNullOrBlank() && !deliveryId.isNullOrBlank()) {
-      NottiModule.enqueueEvent(notificationId, deliveryId, "received")
+      NottiModule.enqueueEvent(notificationId, deliveryId, NottiEventType.RECEIVED)
     }
   }
 }

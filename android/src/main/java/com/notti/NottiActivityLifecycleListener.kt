@@ -132,17 +132,18 @@ class NottiActivityLifecycleListener : Application.ActivityLifecycleCallbacks {
     // this runs before the lazy TurboModule is ever constructed (P3-AC7).
     NottiNotificationClickRelay.emit(parsed)
 
-    // Event reporting - the "clicked" detection site (T4). Enqueued after the
-    // click is emitted/buffered, into the process-wide companion store (this
-    // hook runs before the lazy module exists on a cold start), with an
-    // opportunistic flush if the core is already live. Android click detection
-    // has no custom-action concept (SDKCTR-03's exclusion is iOS-only), so any
-    // click carrying the SDK's ids is reported. A click without both ids is
-    // not an event-reporting notification and is skipped silently.
+    // Event reporting: a tap on the notification body is reported as
+    // `opened`, never `clicked`, even when `data` carries a URL - `clicked` is
+    // reserved for action buttons (opened-event-reporting D1). Enqueued after
+    // the click is emitted/buffered, into the process-wide companion store
+    // (this hook runs before the lazy module exists on a cold start), with an
+    // opportunistic flush if the core is already live. The handledIntents and
+    // restore/Recents guards above keep it to one event per tap. A click
+    // without both ids is not an event-reporting notification and is skipped.
     val notificationId = parsed.data["notification_id"]
     val deliveryId = parsed.data["delivery_id"]
     if (!notificationId.isNullOrBlank() && !deliveryId.isNullOrBlank()) {
-      NottiModule.enqueueEvent(notificationId, deliveryId, "clicked")
+      NottiModule.enqueueEvent(notificationId, deliveryId, NottiEventType.OPENED)
     }
   }
 }

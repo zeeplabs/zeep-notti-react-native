@@ -134,7 +134,7 @@ class NottiApiClient(
   }
 
   /**
-   * Reports a single push-notification event (e.g. "received" or "clicked")
+   * Reports a single push-notification event ([NottiEventType])
    * to `POST /v1/apps/{app_id}/notifications/{notification_id}/events`.
    *
    * The request body carries the event's `delivery_id`, `type` and the
