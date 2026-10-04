@@ -11,7 +11,20 @@ import org.json.JSONException
 import org.json.JSONObject
 import java.io.IOException
 
-data class DeviceResponse(val id: String, val tags: Map<String, String>)
+/**
+ * `profileFields` holds the read-once profile fields the backend echoed back
+ * (only the [PROFILE_FIELD_KEYS] present as non-blank strings). It is the
+ * SDK's ack that a PATCHed value was actually stored: a backend that ignores
+ * an unknown field still answers 2xx, but never echoes it.
+ */
+data class DeviceResponse(
+  val id: String,
+  val tags: Map<String, String>,
+  val profileFields: Map<String, String> = emptyMap()
+)
+
+/** Device fields the SDK syncs once per registration and acks via the echo. */
+val PROFILE_FIELD_KEYS = listOf("app_version", "device_os", "device_model", "sdk_version", "timezone_id", "language")
 
 sealed class ApiResult {
   data class Success(val response: DeviceResponse) : ApiResult()
@@ -362,6 +375,9 @@ class NottiApiClient(
     } else {
       fallbackTags ?: emptyMap()
     }
-    return DeviceResponse(id = id, tags = tags)
+    val profileFields = PROFILE_FIELD_KEYS.mapNotNull { key ->
+      (json.opt(key) as? String)?.takeIf { it.isNotBlank() }?.let { key to it }
+    }.toMap()
+    return DeviceResponse(id = id, tags = tags, profileFields = profileFields)
   }
 }

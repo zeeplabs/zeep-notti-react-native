@@ -135,6 +135,55 @@ class NottiApiClientTest {
   }
 
   @Test
+  fun `patchDevice ack exposes the echoed profile fields`() {
+    // The backend answers PATCH with the full stored device; the six read-once
+    // profile fields are the SDK's only server-side ack that a value landed.
+    server.enqueue(
+      MockResponse().setResponseCode(200).setBody(
+        """{"id":"device-1","tags":{},"app_version":"1.2.3","device_os":"15.0","device_model":"Pixel 8",""" +
+          """"sdk_version":"0.5.0","timezone_id":"America/Sao_Paulo","language":"pt","country":"BR"}"""
+      )
+    )
+
+    val result = client.patchDevice(deviceId = "device-1", token = "fcm-token", fields = mapOf("app_version" to "1.2.3"))
+
+    assertTrue("expected a Success, got $result", result is ApiResult.Success)
+    assertEquals(
+      mapOf(
+        "app_version" to "1.2.3",
+        "device_os" to "15.0",
+        "device_model" to "Pixel 8",
+        "sdk_version" to "0.5.0",
+        "timezone_id" to "America/Sao_Paulo",
+        "language" to "pt"
+      ),
+      (result as ApiResult.Success).response.profileFields
+    )
+  }
+
+  @Test
+  fun `patchDevice ack without a device body has no echoed profile fields`() {
+    server.enqueue(MockResponse().setResponseCode(204))
+
+    val result = client.patchDevice(deviceId = "device-1", token = "fcm-token", fields = mapOf("app_version" to "1.2.3"))
+
+    assertTrue("expected a Success, got $result", result is ApiResult.Success)
+    assertEquals(emptyMap<String, String>(), (result as ApiResult.Success).response.profileFields)
+  }
+
+  @Test
+  fun `patchDevice ack skips non-string and blank echoed profile fields`() {
+    server.enqueue(
+      MockResponse().setResponseCode(200)
+        .setBody("""{"id":"device-1","app_version":123,"device_os":"","language":null,"timezone_id":"UTC"}""")
+    )
+
+    val result = client.patchDevice(deviceId = "device-1", token = "fcm-token", fields = mapOf("timezone_id" to "UTC"))
+
+    assertEquals(mapOf("timezone_id" to "UTC"), (result as ApiResult.Success).response.profileFields)
+  }
+
+  @Test
   fun `patchDevice ack with an explicit empty tags object clears the cache`() {
     // Unlike an absent "tags" key above, an explicit "{}" is the server's
     // authoritative answer and must be honored, not treated as "no info".
