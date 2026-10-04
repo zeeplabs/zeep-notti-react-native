@@ -9,7 +9,7 @@ import java.util.UUID
  * A single push-notification event record queued for reporting to the
  * backend. `id` is a local UUID assigned at enqueue time and never sent to
  * the backend - it only identifies the record inside the local queue so it
- * can be removed once reported. `type` is "received" or "clicked".
+ * can be removed once reported. `type` is one of [NottiEventType].
  */
 data class PendingEvent(
   val id: String,
@@ -20,6 +20,24 @@ data class PendingEvent(
 )
 
 /**
+ * Event types accepted by `POST .../notifications/{id}/events`.
+ *
+ * - [RECEIVED]: the notification arrived while the app was in the foreground.
+ * - [OPENED]: the user tapped the notification body (the app was opened from it).
+ * - [CLICKED]: the user tapped an action button. Android has no SDK-rendered
+ *   action buttons yet, so nothing on this platform reports it today.
+ *
+ * The backend counts a delivery as opened when it has an `opened` or a
+ * `clicked` event, and as clicked only with a `clicked` event
+ * (`.specs/features/opened-event-reporting/spec.md`).
+ */
+object NottiEventType {
+  const val RECEIVED = "received"
+  const val OPENED = "opened"
+  const val CLICKED = "clicked"
+}
+
+/**
  * Persisted disk queue of [PendingEvent] records, backed by
  * [SharedPreferences]. Mirrors [NottiDeviceStore]'s persistence style: the
  * whole queue is encoded as a JSON array under a single key and rewritten
@@ -27,7 +45,7 @@ data class PendingEvent(
  * for a bounded list.
  *
  * This store is a standalone primitive that must be usable before
- * [NottiCore] exists - event reporting (received/clicked) queues offline
+ * [NottiCore] exists - event reporting (received/opened/clicked) queues offline
  * without depending on `NottiCore`, `NottiApiClient`, or
  * `NottiDeviceStore`. The reporting task composes this store with the rest
  * of the SDK.

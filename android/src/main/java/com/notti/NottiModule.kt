@@ -583,7 +583,7 @@ class NottiModule(reactContext: ReactApplicationContext) :
     }
 
     /**
-     * Detection-site entry point (T4). Enqueues a received/clicked event into
+     * Detection-site entry point (T4). Enqueues a received/opened/clicked event into
      * the process-wide [eventStore], then opportunistically asks the live core
      * (if one exists) to flush it - a no-op on a cold start, where the core is
      * not constructed yet and the flush is simply deferred to the next

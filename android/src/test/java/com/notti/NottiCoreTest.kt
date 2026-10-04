@@ -2793,6 +2793,28 @@ fun `requestPermission result syncs the OS permission status`() {
   }
 
   @Test
+  fun `a queued opened event is flushed with type opened and removed on 2xx`() {
+    // SDKOPEN-09: `opened` rides the same write-ahead queue and flush path
+    // as received/clicked; the stored type is sent as is.
+    val eventStore = NottiEventStore(prefs)
+    eventStore.enqueue("notification-1", "delivery-1", NottiEventType.OPENED)
+    val core = newCore(eventStore = eventStore)
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
+    server.enqueue(MockResponse().setResponseCode(201))
+
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    requireNotNull(server.takeRequest(5, TimeUnit.SECONDS)) // registration
+    val report = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+    assertEquals("/v1/apps/app-1/notifications/notification-1/events", report.path)
+    val body = JSONObject(report.body.readUtf8())
+    assertEquals("opened", body.getString("type"))
+    assertEquals("delivery-1", body.getString("delivery_id"))
+    assertTrue(eventStore.all().isEmpty())
+  }
+
+  @Test
   fun `flushEventQueue keeps the event when reportEvent fails`() {
     val eventStore = NottiEventStore(prefs)
     val queued = eventStore.enqueue("notification-1", "delivery-1", "received")
