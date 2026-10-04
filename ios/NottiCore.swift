@@ -739,8 +739,16 @@ public class NottiCore {
         [weak self] client, deviceId, token in
         let result = client.patchDevice(deviceId: deviceId, token: token, fields: [name: current])
         switch result {
-        case .success:
-          setSynced(current)
+        // The echoed device is the ack: a backend that predates the field
+        // answers 2xx but ignores it (additive fields are ignored
+        // server-side), so a bare 2xx must not mark it synced. Unechoed or
+        // different -> left unsynced and re-sent on the next registration.
+        case .success(let device):
+          if device.profileFields[name] == current {
+            setSynced(current)
+          } else {
+            self?.logger("Notti.\(name): PATCH accepted but value not echoed by the backend - re-sent on next registration")
+          }
         case .failure(let message):
           self?.logger("Notti.\(name): PATCH failed (\(message)) - not retried")
         }

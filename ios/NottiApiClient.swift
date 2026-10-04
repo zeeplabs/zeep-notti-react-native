@@ -1,9 +1,17 @@
 import Foundation
 
+/// `profileFields` holds the read-once profile fields the backend echoed back
+/// (only the `profileFieldKeys` present as non-empty strings). It is the SDK's
+/// ack that a PATCHed value was actually stored: a backend that ignores an
+/// unknown field still answers 2xx, but never echoes it.
 public struct DeviceResponse {
   public let id: String
   public let tags: [String: String]
+  public var profileFields: [String: String] = [:]
 }
+
+/// Device fields the SDK syncs once per registration and acks via the echo.
+let profileFieldKeys = ["app_version", "device_os", "device_model", "sdk_version", "timezone_id", "language"]
 
 public enum ApiResult {
   case success(DeviceResponse)
@@ -388,6 +396,10 @@ public class NottiApiClient {
     } else {
       tags = fallbackTags ?? [:]
     }
-    return DeviceResponse(id: id, tags: tags)
+    var profileFields: [String: String] = [:]
+    for key in profileFieldKeys {
+      if let value = json[key] as? String, !value.isEmpty { profileFields[key] = value }
+    }
+    return DeviceResponse(id: id, tags: tags, profileFields: profileFields)
   }
 }
