@@ -1204,6 +1204,7 @@ final class NottiCoreTests: XCTestCase {
   }
 
   func test_appVersionEqualToTheLastSyncedValueDoesNotPatchAgain() {
+    store.migrateProfileFieldAckIfNeeded() // an install already past the 0.6.0 one-shot migration
     store.setAppVersion("1.2.3")
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration only
     let core = newCore(versionProvider: { "1.2.3" })
@@ -1343,6 +1344,22 @@ final class NottiCoreTests: XCTestCase {
 
     XCTAssertEqual(StubURLProtocol.recordedRequests().count, 2)
     XCTAssertNil(store.getAppVersion())
+  }
+
+  func test_anInstallUpgradedFrom050ResendsProfileFieldsItHadMarkedSyncedWithoutAnAck() {
+    // 0.5.0 marked device_os synced on a bare 2xx; the value matches the
+    // provider, so without the migration the diff would skip it forever.
+    store.setLastSyncedDeviceOs("18.0")
+    StubURLProtocol.enqueue(.echoDevice()) // registration
+    StubURLProtocol.enqueue(.echoDevice()) // device_os PATCH
+    let core = newCore(deviceOsProvider: { "18.0" })
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertEqual(bodies.count, 1)
+    XCTAssertEqual(bodies[0]["device_os"] as? String, "18.0")
+    XCTAssertEqual(store.getLastSyncedDeviceOs(), "18.0")
   }
 
   func test_aNilProfileProviderOmitsThatFieldWithoutCrashing() {

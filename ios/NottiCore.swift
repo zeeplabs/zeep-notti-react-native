@@ -726,6 +726,7 @@ public class NottiCore {
   /// PATCH, persisting on Success. A nil provider skips only that field
   /// (DPF-04/09) - no crash, no registration block. Opaque strings, no parsing.
   private func syncProfileFieldsIfNeeded(_ client: NottiApiClient) {
+    deviceStore.migrateProfileFieldAckIfNeeded()
     func sync(
       _ name: String,
       coalesceKey: String,
