@@ -126,6 +126,42 @@ final class NottiApiClientTests: XCTestCase {
     XCTAssertEqual(response.tags, ["plan": "vip"])
   }
 
+  func test_patchDeviceAckExposesTheEchoedProfileFields() {
+    // The backend answers PATCH with the full stored device; the six read-once
+    // profile fields are the SDK's only server-side ack that a value landed.
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{},"app_version":"1.2.3","device_os":"18.0","device_model":"iPhone17,1","sdk_version":"0.5.0","timezone_id":"America/Sao_Paulo","language":"pt","country":"BR"}"#))
+
+    let result = client.patchDevice(deviceId: "device-1", token: "apns-token", fields: ["app_version": "1.2.3"])
+
+    guard case .success(let response) = result else { return XCTFail("expected success") }
+    XCTAssertEqual(response.profileFields, [
+      "app_version": "1.2.3",
+      "device_os": "18.0",
+      "device_model": "iPhone17,1",
+      "sdk_version": "0.5.0",
+      "timezone_id": "America/Sao_Paulo",
+      "language": "pt",
+    ])
+  }
+
+  func test_patchDeviceAckWithoutADeviceBodyHasNoEchoedProfileFields() {
+    StubURLProtocol.enqueue(.status(204))
+
+    let result = client.patchDevice(deviceId: "device-1", token: "apns-token", fields: ["app_version": "1.2.3"])
+
+    guard case .success(let response) = result else { return XCTFail("expected success") }
+    XCTAssertEqual(response.profileFields, [:])
+  }
+
+  func test_patchDeviceAckSkipsNonStringAndBlankEchoedProfileFields() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","app_version":123,"device_os":"","language":null,"timezone_id":"UTC"}"#))
+
+    let result = client.patchDevice(deviceId: "device-1", token: "apns-token", fields: ["timezone_id": "UTC"])
+
+    guard case .success(let response) = result else { return XCTFail("expected success") }
+    XCTAssertEqual(response.profileFields, ["timezone_id": "UTC"])
+  }
+
   func test_5xxResponseRetriesThenSucceedsWithoutExhaustingTheCap() {
     StubURLProtocol.enqueue(.status(500))
     StubURLProtocol.enqueue(.status(503))

@@ -11,9 +11,16 @@ final class StubURLProtocol: URLProtocol {
     let body: Data?
     let error: Error?
     let delayMs: Int
+    /// Answer like the real backend's PATCH: a device whose fields echo the
+    /// request body (`token` excluded). Overrides `body`.
+    var echoDevice: Bool = false
 
     static func status(_ code: Int, body: String = "", delayMs: Int = 0) -> StubResponse {
       StubResponse(statusCode: code, body: body.data(using: .utf8), error: nil, delayMs: delayMs)
+    }
+
+    static func echoDevice() -> StubResponse {
+      StubResponse(statusCode: 200, body: nil, error: nil, delayMs: 0, echoDevice: true)
     }
 
     static func networkError() -> StubResponse {
@@ -51,8 +58,13 @@ final class StubURLProtocol: URLProtocol {
   override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
   override func startLoading() {
+    // URLSession hands the body over as a one-shot stream; materialize it so
+    // both the echo below and tests reading `recordedRequests()` can see it.
+    let sentBody = Self.readBody(request)
+    var recordedRequest = request
+    recordedRequest.httpBody = sentBody
     Self.lock.lock()
-    Self.recorded.append(request)
+    Self.recorded.append(recordedRequest)
     Self.lock.unlock()
 
     guard let stub = Self.dequeue() else {
@@ -76,11 +88,32 @@ final class StubURLProtocol: URLProtocol {
       headerFields: nil
     )!
     client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-    if let body = stub.body {
+    if stub.echoDevice {
+      var echo: [String: Any] = ["id": "device-1", "tags": [String: String]()]
+      if let sent = try? JSONSerialization.jsonObject(with: sentBody) as? [String: Any] {
+        for (key, value) in sent where key != "token" { echo[key] = value }
+      }
+      client?.urlProtocol(self, didLoad: try! JSONSerialization.data(withJSONObject: echo))
+    } else if let body = stub.body {
       client?.urlProtocol(self, didLoad: body)
     }
     client?.urlProtocolDidFinishLoading(self)
   }
 
   override func stopLoading() {}
+
+  private static func readBody(_ request: URLRequest) -> Data {
+    if let body = request.httpBody { return body }
+    guard let stream = request.httpBodyStream else { return Data() }
+    stream.open()
+    defer { stream.close() }
+    var data = Data()
+    var buffer = [UInt8](repeating: 0, count: 1024)
+    while stream.hasBytesAvailable {
+      let read = stream.read(&buffer, maxLength: buffer.count)
+      if read <= 0 { break }
+      data.append(buffer, count: read)
+    }
+    return data
+  }
 }

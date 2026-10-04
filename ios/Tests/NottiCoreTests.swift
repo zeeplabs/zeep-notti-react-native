@@ -1189,8 +1189,8 @@ final class NottiCoreTests: XCTestCase {
   // MARK: - App version sync (T7, SEGTEL-01/02/03/04)
 
   func test_appVersionDiffOnRegistrationEnqueuesAPatchWithTheVersion() {
-    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
-    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // app_version PATCH
+    StubURLProtocol.enqueue(.echoDevice()) // registration
+    StubURLProtocol.enqueue(.echoDevice()) // app_version PATCH
     let core = newCore(versionProvider: { "1.2.3" })
     core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
     drain(core)
@@ -1226,10 +1226,10 @@ final class NottiCoreTests: XCTestCase {
 
   func test_aBumpedVersionBetweenTwoRegistrationsResyncsWithTheNewValue() {
     var currentVersion: String? = "1.2.3"
-    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration 1
-    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // app_version 1.2.3
-    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration 2 (token refresh)
-    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // app_version 2.0.0
+    StubURLProtocol.enqueue(.echoDevice()) // registration 1
+    StubURLProtocol.enqueue(.echoDevice()) // app_version 1.2.3
+    StubURLProtocol.enqueue(.echoDevice()) // registration 2 (token refresh)
+    StubURLProtocol.enqueue(.echoDevice()) // app_version 2.0.0
     let core = newCore(versionProvider: { currentVersion })
     core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
     drain(core)
@@ -1249,8 +1249,8 @@ final class NottiCoreTests: XCTestCase {
   // MARK: - Device profile fields (T7, DPF-01..09)
 
   func test_registrationWithProfileProvidersPatchesAllSixFields() {
-    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
-    for _ in 0..<6 { StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) } // six PATCHes
+    StubURLProtocol.enqueue(.echoDevice()) // registration
+    for _ in 0..<6 { StubURLProtocol.enqueue(.echoDevice()) } // six PATCHes
     let core = newCore(
       versionProvider: { "1.2.3" },
       deviceOsProvider: { "18.0" },
@@ -1278,10 +1278,10 @@ final class NottiCoreTests: XCTestCase {
   }
 
   func test_onlyAChangedProfileFieldIsResentBetweenTwoRegistrations() {
-    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration 1
-    for _ in 0..<6 { StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) } // six PATCHes
-    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration 2
-    for _ in 0..<2 { StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) } // two changed-field PATCHes
+    StubURLProtocol.enqueue(.echoDevice()) // registration 1
+    for _ in 0..<6 { StubURLProtocol.enqueue(.echoDevice()) } // six PATCHes
+    StubURLProtocol.enqueue(.echoDevice()) // registration 2
+    for _ in 0..<2 { StubURLProtocol.enqueue(.echoDevice()) } // two changed-field PATCHes
     var deviceOs: String? = "18.0"
     var timezone: String? = "America/Sao_Paulo"
     let core = newCore(
@@ -1313,6 +1313,38 @@ final class NottiCoreTests: XCTestCase {
     XCTAssertEqual(store.getLastSyncedLanguage(), "pt")
   }
 
+  func test_aPatchAckThatDoesNotEchoTheFieldLeavesItUnsyncedAndResendsOnTheNextRegistration() {
+    // Backend older than the profile-field contract: answers 2xx but ignores
+    // the field, so the echo never carries it. Treating that 2xx as synced
+    // would stop the SDK from ever sending the value again.
+    for _ in 0..<4 { StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) }
+    let logs = LogSink()
+    let core = newCore(versionProvider: { "1.2.3" }, logs: logs)
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+    XCTAssertNil(store.getAppVersion())
+
+    core.onTokenRefreshed("new-apns-token")
+    drain(core)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertEqual(bodies.count, 2, "the unacked app_version is re-sent on the second registration")
+    XCTAssertEqual(bodies[1]["app_version"] as? String, "1.2.3")
+    XCTAssertNil(store.getAppVersion())
+    XCTAssertTrue(logs.messages.contains { $0.contains("Notti.app_version") && $0.contains("not echoed") })
+  }
+
+  func test_aPatchAckEchoingADifferentValueDoesNotMarkTheFieldSynced() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{},"app_version":"1.0.0"}"#)) // PATCH
+    let core = newCore(versionProvider: { "1.2.3" })
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    XCTAssertEqual(StubURLProtocol.recordedRequests().count, 2)
+    XCTAssertNil(store.getAppVersion())
+  }
+
   func test_aNilProfileProviderOmitsThatFieldWithoutCrashing() {
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // app_version PATCH only
@@ -1332,8 +1364,8 @@ final class NottiCoreTests: XCTestCase {
   }
 
   func test_sdkVersionPassedThroughInitializeReachesThePayload() {
-    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
-    for _ in 0..<3 { StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) } // device_os + sdk_version + timezone_id
+    StubURLProtocol.enqueue(.echoDevice()) // registration
+    for _ in 0..<3 { StubURLProtocol.enqueue(.echoDevice()) } // device_os + sdk_version + timezone_id
     let core = newCore(deviceOsProvider: { "18.0" }, timezoneProvider: { "UTC" })
 
     core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl, sdkVersion: "0.5.0")
