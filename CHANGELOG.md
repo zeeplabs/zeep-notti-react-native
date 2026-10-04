@@ -88,8 +88,6 @@ entries once released.
 
 ## [Unreleased]
 
-## Upgrade notes for 0.6.0
-
 ### ⚠️ Attention when upgrading
 
 * **Requires `zeep-notti` backend ≥ v0.11.0** to record `opened` (see Notes below).
