@@ -18,6 +18,14 @@
 - **Date**: 2026-09-05
 - **Status**: active-confirmed by spike (T2, 2026-09-05) — Swift Turbo Module bridging works via an Obj-C++ `getTurboModule:`/`moduleName` shim (`ios/Notti.mm`) delegating into a plain Swift class exposed through CocoaPods' auto-generated `Notti-Swift.h`, confirmed by a real `pod install` + Xcode build succeeding in this repo. Not an officially-documented Meta pattern (`reactnative.dev`'s Turbo Native Modules docs show Obj-C++ only, Context7 MCP unavailable in this environment) — corroborated by independent 2025 community write-ups and by this repo's own passing build. Full detail in `design.md`'s "iOS APNs delegate hooks" component.
 
+### AD-003
+- **Decision**: Engagement event types follow `zeep-notti` AD-023 / overview v3 D3. Body tap (default action) → `opened`; action-button tap → `clicked` (iOS category actions today, Android once `notification-action-buttons` ships); dismiss → nothing. A body tap whose custom `data` carries a URL is still `opened` only (no first-class launch URL in the backend contract). JS event names unchanged (`notificationClicked` still means body tap).
+- **Reason**: Backend counts opened = `opened` OR `clicked`, clicked = `clicked`, per delivery (`EXISTS`). Reporting the body tap as `clicked` made open rate == CTR.
+- **Trade-off**: CTR drops for devices on the new SDK (Android has no `clicked` source yet); older SDKs keep sending `clicked` for body taps, so fleets are mixed during rollout. Backends without migration `0023` reject `opened` with 422 (terminal, event dropped) — backend must ship first.
+- **Scope**: `.specs/features/opened-event-reporting/`, `NottiPushDelegate.swift`, `NottiActivityLifecycleListener.kt`, `NottiEventType` (both platforms).
+- **Date**: 2026-10-04
+- **Status**: active
+
 ## Pre-release review v0.3.0..HEAD (rule changes)
 
 Status: implementado nas duas plataformas (Android + iOS), com testes unitários, no working tree — **ainda não commitado**; gates não reexecutados nesta passada de docs.
@@ -37,6 +45,13 @@ Status: implementado nas duas plataformas (Android + iOS), com testes unitários
 - **Validações pendentes em device real:** fechamento de sessão em cold start/kill nas duas plataformas; background task do iOS com rede lenta; `CLLocationManager` sem warning de runtime; valor de `aps-environment` em build EAS `preview`.
 
 ## Handoff
+
+- **Feature**: opened-event-reporting
+- **Phase / Task**: Specify (+ inline design) → Tasks T1-T3 → Execute done on branch `feat/opened-event`. Android 209 JVM tests, iOS 205 XCTest, JS gates green. PR open, not merged, no version bump.
+- **Next step**: review/merge PR; release only after the `zeep-notti` release with migration `0023`; manual device check of `opened`/`clicked` rows.
+- **Blockers**: none in the SDK. Open product item: per-notification `AggregateMetrics` CTR (backend) will drop with this SDK; AD-023 calls it "unchanged".
+
+## Handoff (previous: ctr-event-reporting)
 
 - **Feature**: ctr-event-reporting
 - **Phase / Task**: All 9 tasks (T1-T9) complete — Specify/Design/Tasks/Execute done. Feature implementation complete on both platforms. Independent Verifier ran: 13/14 ACs passed on first pass; found and fixed SDKCTR-11 gap (terminal 4xx events were never removed from the queue — now `EventResult.Failure.terminal` distinguishes 4xx from retry-exhausted and both `flushEventQueue`s remove on terminal). Final gates: Android 108 JVM tests, iOS 111 XCTest, JS clean, `src/` untouched.

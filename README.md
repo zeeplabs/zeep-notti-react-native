@@ -42,7 +42,7 @@ Notti is self-hosted or SaaS per deployment. By default `initialize` targets Not
 - ⚙️ **Expo config plugin included** — works in bare React Native and Expo (dev client/prebuild) with no extra native-config package.
 - 🔁 **Safe by default** — mutations (tags, subscription, login) are serialized client-side; retried with exponential backoff on transient failure.
 - 🖼️ **Rich push (iOS)** — image/video/audio attachments via a Notification Service Extension helper, same setup model as OneSignal's.
-- 📈 **CTR event reporting** — `received`/`clicked` events reported automatically to Notti, with an on-disk retry queue. See [Data collected by the SDK](#data-collected-by-the-sdk).
+- 📈 **Engagement event reporting** — `received`/`opened`/`clicked` events reported automatically to Notti (open rate and CTR), with an on-disk retry queue. See [Data collected by the SDK](#data-collected-by-the-sdk).
 - 🧭 **Segment telemetry** — app version and session aggregates synced automatically; device country only after an explicit opt-in (`setLocationSharingEnabled`, default off).
 - 📇 **Device profile** — OS version, device model, SDK version, timezone, language and detailed push-permission status synced automatically; first-class email/phone via `User.setEmail`/`User.setPhone`.
 
@@ -51,7 +51,7 @@ Notti is self-hosted or SaaS per deployment. By default `initialize` targets Not
 - React Native with the [New Architecture](https://reactnative.dev/architecture/landing-page) enabled (Turbo Modules).
 - Android: `minSdkVersion` compatible with `com.google.firebase:firebase-messaging` (Firebase Cloud Messaging configured in your Firebase project).
 - iOS: Push Notifications capability enabled for your app target (APNs).
-- A running [Notti](https://github.com/zeeplabs/zeep-notti) instance (self-hosted or SaaS) and an App's `appId`/`clientKey`. The device-profile fields require `zeep-notti` **v0.10.0 or later**.
+- A running [Notti](https://github.com/zeeplabs/zeep-notti) instance (self-hosted or SaaS) and an App's `appId`/`clientKey`. The device-profile fields require `zeep-notti` **v0.10.0 or later**. The `opened` event requires a `zeep-notti` release that includes migration `0023` (overview v3; not in v0.10.0 or older); see [Notification event reporting](#notification-event-ctr-reporting).
 
 ## Installation
 
@@ -322,12 +322,17 @@ There is currently **no API to disable** the items in this subsection: they are 
 
 #### Notification event (CTR) reporting
 
-The SDK reports two event types to `POST {baseUrl}/v1/apps/{appId}/notifications/{notification_id}/events`, authenticated with the client key and the device's current push token:
+The SDK reports three event types to `POST {baseUrl}/v1/apps/{appId}/notifications/{notification_id}/events`, authenticated with the client key and the device's current push token:
 
-- `clicked` — the user tapped the notification (default action) while the app was in the foreground, background, or killed (cold start). Custom action buttons and dismissals are **not** reported.
 - `received` — the notification arrived through the same hook that emits `notificationReceived` (foreground). Notifications displayed by the OS while the app is backgrounded or killed are **not** reported as `received`.
+- `opened` — the user tapped the notification body (default action) while the app was in the foreground, background, or killed (cold start). One event per tap. This is the tap that also fires `notificationClicked` / `getInitialNotificationClick()` in JS: the JS event name did not change, only the reported type. A body tap is `opened` even when your custom `data` carries a URL or deep link: the SDK does not know which custom key is a link and does not open it.
+- `clicked` — the user tapped an action button. **iOS:** a button from a `UNNotificationCategory` your app registered (selected by the push's `category`); no JS event is emitted for it. **Android:** the SDK does not render action buttons yet, so nothing reports `clicked` on Android.
 
-No other event types exist (no `delivered`, `dismissed`, `opened`). Events are only reported when the push's `data` carries both `notification_id` and `delivery_id` (set by the Notti backend); other pushes are skipped silently.
+Dismissals are not reported. No other event types exist (no `delivered`, `dismissed`). Events are only reported when the push's `data` carries both `notification_id` and `delivery_id` (set by the Notti backend); other pushes are skipped silently.
+
+How Notti uses them: a delivered notification counts as **opened** when it has an `opened` or a `clicked` event, and as **clicked** only with a `clicked` event. Open rate = opened / delivered; CTR = clicked / delivered. Duplicate events for the same delivery do not change either rate.
+
+> **Upgrading from 0.5.0 or older:** those versions report the body tap as `clicked`, so their taps count toward both open rate and CTR. From this version the body tap counts toward open rate only, and CTR only counts action-button taps (iOS). Expect CTR to drop in the Notti dashboard as users update the app; it is a change in what CTR measures, not a drop in engagement. Your Notti backend must accept `opened` first: an older backend answers `422` and the SDK drops the event (terminal `4xx`), so body taps would not be recorded at all.
 
 Delivery guarantees, as implemented:
 
@@ -397,13 +402,15 @@ This section lists what the SDK does so you can fill in your own disclosures; it
 - **A pending country clear that gets a permanent `4xx` is re-sent on every trigger** (registration, app foreground, network regain), because the flag is only cleared on a 2xx.
 - **Android 13+ `permission_status` "never asked" vs "denied" is inferred.** Android does not expose "not determined" directly. The SDK reports `notDetermined` when `POST_NOTIFICATIONS` is not granted, the SDK's `requestPermission` never ran and the OS does not ask for a rationale. If you request the permission through another library and the user permanently denies it, the device may report `notDetermined`. When no Activity is available to ask for the rationale (e.g. a background registration), an undecidable state is omitted instead of guessed. If the user dismisses the SDK's permission dialog without choosing, the device reports `denied`.
 - **Backends older than `zeep-notti` v0.10.0** ignore the device-profile fields, but any 2xx marks them as synced, so static values (`device_model`, `device_os`, `sdk_version`) are not re-sent after the backend is upgraded until they change.
+- **Backends without the `opened` event** (`zeep-notti` up to v0.10.0) reject it with `422`; the SDK treats that as terminal and drops the event, so body taps are lost. Deploy the backend release with overview v3 before shipping this SDK version.
+- **No `clicked` source on Android** until the SDK renders action buttons; Android CTR from this SDK version is 0.
 - **Not yet validated on real devices:** session close on cold start / process kill on both platforms; the iOS background task on a slow network; `CLLocationManager` usage without runtime warnings; the `aps-environment` value in an EAS `preview` build (see [`aps-environment` value](#aps-environment-value)).
 
 ## Forwarding events manually
 
 Both native setup paths above assume Notti owns the platform's single push hook (iOS's `UNUserNotificationCenter` delegate, Android's manifest-declared `FirebaseMessagingService`). If your app already owns that hook for another reason and can't hand it to Notti, forward events into the SDK manually instead — no delegate/manifest ownership required on either platform:
 
-**iOS** — `NottiPushDelegate.shared`'s methods are plain `public func`s, callable from inside your own delegate. Forward **both** callbacks — omitting `didReceive` silently loses every `notificationClicked` event and cold-start tap (I5, found in pre-release review):
+**iOS** — `NottiPushDelegate.shared`'s methods are plain `public func`s, callable from inside your own delegate. Forward **both** callbacks — omitting `didReceive` silently loses every `notificationClicked` event and cold-start tap (I5, found in pre-release review). Forward every `didReceive` response, including custom action buttons: the SDK reports those as `clicked`.
 
 ```swift
 func userNotificationCenter(
