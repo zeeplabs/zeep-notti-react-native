@@ -30,7 +30,8 @@ public struct PendingEvent: Codable {
 ///
 /// - `received`: the notification arrived while the app was in the foreground.
 /// - `opened`: the user tapped the notification body (the app was opened from it).
-/// - `clicked`: the user tapped an action button.
+/// - `clicked`: the user tapped the notification body (sent together with
+///   `opened`) or an action button (sent alone).
 ///
 /// The backend counts a delivery as opened when it has an `opened` or a
 /// `clicked` event, and as clicked only with a `clicked` event

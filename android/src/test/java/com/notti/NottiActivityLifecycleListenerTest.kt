@@ -256,9 +256,9 @@ class NottiActivityLifecycleListenerTest {
   }
 
   @Test
-  fun `a body tap carrying the SDK ids enqueues one opened event and no clicked event`() {
-    // SDKOPEN-01/03: the body tap is `opened`; `clicked` is reserved for
-    // action buttons.
+  fun `a body tap carrying the SDK ids enqueues exactly one opened and one clicked event`() {
+    // SDKOPEN-01/03: the body tap is reported as both `opened` and `clicked`
+    // so CTR keeps counting body taps (D1).
     val intent = Intent().apply {
       putExtra("google.message_id", "msg-1")
       putExtra("gcm.n.title", "Hello")
@@ -270,16 +270,14 @@ class NottiActivityLifecycleListenerTest {
 
     listener.onActivityResumed(activity)
 
-    val stored = store.all().single()
-    assertEquals("notif-1", stored.notificationId)
-    assertEquals("delivery-1", stored.deliveryId)
-    assertEquals("opened", stored.type)
+    val stored = store.all()
+    assertEquals(listOf("opened", "clicked"), stored.map { it.type })
+    assertTrue(stored.all { it.notificationId == "notif-1" && it.deliveryId == "delivery-1" })
   }
 
   @Test
-  fun `a body tap whose data carries a URL still enqueues only opened`() {
-    // SDKOPEN-03 / D1: a URL in custom data is integrator-owned, not a
-    // backend CTA field, so the tap stays an open.
+  fun `a body tap whose data carries a URL enqueues the same opened and clicked pair`() {
+    // SDKOPEN-03 / D1: a URL in custom data does not change the events.
     val intent = Intent().apply {
       putExtra("google.message_id", "msg-1")
       putExtra("notification_id", "notif-1")
@@ -291,11 +289,11 @@ class NottiActivityLifecycleListenerTest {
 
     NottiActivityLifecycleListener().onActivityResumed(activity)
 
-    assertEquals(listOf("opened"), store.all().map { it.type })
+    assertEquals(listOf("opened", "clicked"), store.all().map { it.type })
   }
 
   @Test
-  fun `a cold-start body tap enqueues one opened event and still buffers the click for JS`() {
+  fun `a cold-start body tap enqueues one opened and one clicked event and still buffers the click for JS`() {
     // SDKOPEN-02/10: no module or JS listener exists yet; the event is queued
     // by the native hook and the payload stays available to
     // getInitialNotificationClick().
@@ -309,13 +307,13 @@ class NottiActivityLifecycleListenerTest {
     }
     Robolectric.buildActivity(Activity::class.java, intent).create().start().resume()
 
-    assertEquals(listOf("opened"), store.all().map { it.type })
+    assertEquals(listOf("opened", "clicked"), store.all().map { it.type })
     assertEquals("Hello", NottiNotificationClickRelay.takePending()?.title)
   }
 
   @Test
-  fun `the same tap seen by onActivityCreated and onActivityResumed enqueues a single opened event`() {
-    // SDKOPEN-04: one tap, one event, even though both callbacks read the
+  fun `the same tap seen by onActivityCreated and onActivityResumed enqueues a single opened and clicked pair`() {
+    // SDKOPEN-04: one tap, one pair, even though both callbacks read the
     // same launch Intent.
     val intent = Intent().apply {
       putExtra("google.message_id", "msg-1")
@@ -329,11 +327,11 @@ class NottiActivityLifecycleListenerTest {
     listener.onActivityResumed(activity)
     listener.onActivityResumed(activity)
 
-    assertEquals(listOf("opened"), store.all().map { it.type })
+    assertEquals(listOf("opened", "clicked"), store.all().map { it.type })
   }
 
   @Test
-  fun `a second warm tap delivering a new intent enqueues a second opened event`() {
+  fun `a second warm tap delivering a new intent enqueues a second opened and clicked pair`() {
     // SDKOPEN-04: dedup is per tap (Intent instance), not per delivery.
     val activity = Robolectric.buildActivity(
       Activity::class.java,
@@ -353,8 +351,10 @@ class NottiActivityLifecycleListenerTest {
     }
     listener.onActivityResumed(activity)
 
-    assertEquals(listOf("delivery-1", "delivery-2"), store.all().map { it.deliveryId })
-    assertEquals(listOf("opened", "opened"), store.all().map { it.type })
+    assertEquals(
+      listOf("delivery-1" to "opened", "delivery-1" to "clicked", "delivery-2" to "opened", "delivery-2" to "clicked"),
+      store.all().map { it.deliveryId to it.type }
+    )
   }
 
   @Test
@@ -396,7 +396,7 @@ class NottiActivityLifecycleListenerTest {
     listener.onActivityCreated(activity, android.os.Bundle())
 
     assertTrue("a restored process must not inflate CTR with a phantom click", delivered.isEmpty())
-    assertTrue("a restored process must not report a duplicate opened event", store.all().isEmpty())
+    assertTrue("a restored process must not report duplicate opened/clicked events", store.all().isEmpty())
   }
 
   @Test
@@ -419,7 +419,7 @@ class NottiActivityLifecycleListenerTest {
     listener.onActivityCreated(activity, null)
 
     assertTrue("reopening from Recents must not inflate CTR with a phantom click", delivered.isEmpty())
-    assertTrue("reopening from Recents must not report a duplicate opened event", store.all().isEmpty())
+    assertTrue("reopening from Recents must not report duplicate opened/clicked events", store.all().isEmpty())
   }
 
   @Test
@@ -439,7 +439,7 @@ class NottiActivityLifecycleListenerTest {
     listener.onActivityCreated(activity, null)
 
     assertEquals(1, delivered.size)
-    assertEquals(listOf("opened"), store.all().map { it.type })
+    assertEquals(listOf("opened", "clicked"), store.all().map { it.type })
   }
 }
 

@@ -97,10 +97,12 @@ public class NottiPushDelegate: NSObject, UNUserNotificationCenterDelegate {
         identifier: response.notification.request.identifier,
         payload: parsed.toEventPayload()
       )
-      // A body tap is `opened`, never `clicked`, even when `data` carries a
-      // URL: `clicked` is reserved for action buttons (opened-event-reporting
-      // D1). The JS event name stays `notificationClicked` (D4).
+      // A body tap is reported as both `opened` and `clicked` (one of each),
+      // with or without a URL in `data`, so CTR keeps counting body taps
+      // (opened-event-reporting D1). The JS event name stays
+      // `notificationClicked` (D4).
       enqueueIfReportable(parsed, type: NottiEventType.opened)
+      enqueueIfReportable(parsed, type: NottiEventType.clicked)
     case UNNotificationDismissActionIdentifier:
       // Delivered only when the category sets `customDismissAction`; a
       // dismissal is not engagement and is never reported.

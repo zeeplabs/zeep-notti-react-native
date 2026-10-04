@@ -102,11 +102,11 @@ final class NottiPushDelegateTests: XCTestCase {
     XCTAssertTrue(NottiImpl.eventStore.all().isEmpty)
   }
 
-  // MARK: - didReceive: body tap (opened) / action button (clicked)
+  // MARK: - didReceive: body tap (opened + clicked) / action button (clicked)
 
-  func test_didReceiveDefaultActionWithIdsEnqueuesOneOpenedEventAndNoClicked() {
-    // SDKOPEN-01/03: the body tap is `opened`; `clicked` is reserved for
-    // action buttons.
+  func test_didReceiveDefaultActionWithIdsEnqueuesExactlyOneOpenedAndOneClicked() {
+    // SDKOPEN-01/03: the body tap is reported as both `opened` and `clicked`
+    // so CTR keeps counting body taps (D1).
     let response = makeResponse(
       userInfo: makeRemoteUserInfo(notificationId: "n-1", deliveryId: "d-1"),
       actionIdentifier: UNNotificationDefaultActionIdentifier
@@ -114,21 +114,18 @@ final class NottiPushDelegateTests: XCTestCase {
     awaitDidReceive(response)
 
     let events = NottiImpl.eventStore.all()
-    XCTAssertEqual(events.count, 1)
-    XCTAssertEqual(events.first?.notificationId, "n-1")
-    XCTAssertEqual(events.first?.deliveryId, "d-1")
-    XCTAssertEqual(events.first?.type, "opened")
+    XCTAssertEqual(events.map(\.type), ["opened", "clicked"])
+    XCTAssertTrue(events.allSatisfy { $0.notificationId == "n-1" && $0.deliveryId == "d-1" })
   }
 
-  func test_didReceiveDefaultActionWithAURLInDataStillEnqueuesOnlyOpened() {
-    // SDKOPEN-03 / D1: a URL in custom data is integrator-owned, not a backend
-    // CTA field, so the tap stays an open.
+  func test_didReceiveDefaultActionWithAURLInDataEnqueuesTheSameOpenedAndClickedPair() {
+    // SDKOPEN-03 / D1: a URL in custom data does not change the events.
     var userInfo = makeRemoteUserInfo(notificationId: "n-1", deliveryId: "d-1")
     userInfo["url"] = "https://example.com/promo"
     userInfo["deep_link"] = "app://orders/42"
     awaitDidReceive(makeResponse(userInfo: userInfo, actionIdentifier: UNNotificationDefaultActionIdentifier))
 
-    XCTAssertEqual(NottiImpl.eventStore.all().map(\.type), ["opened"])
+    XCTAssertEqual(NottiImpl.eventStore.all().map(\.type), ["opened", "clicked"])
   }
 
   func test_didReceiveDefaultActionStillBuffersTheJSClickForAColdStart() {
@@ -141,12 +138,12 @@ final class NottiPushDelegateTests: XCTestCase {
     )
     awaitDidReceive(response)
 
-    XCTAssertEqual(NottiImpl.eventStore.all().map(\.type), ["opened"])
+    XCTAssertEqual(NottiImpl.eventStore.all().map(\.type), ["opened", "clicked"])
     XCTAssertNotNil(NottiEventBuffer.shared.takeInitialClick())
   }
 
-  func test_eachDefaultActionResponseEnqueuesItsOwnOpenedEvent() {
-    // SDKOPEN-04: one `didReceive` per tap, one event per `didReceive`.
+  func test_eachDefaultActionResponseEnqueuesItsOwnOpenedAndClickedPair() {
+    // SDKOPEN-04: one `didReceive` per tap, one pair per `didReceive`.
     awaitDidReceive(makeResponse(
       userInfo: makeRemoteUserInfo(notificationId: "n-1", deliveryId: "d-1"),
       actionIdentifier: UNNotificationDefaultActionIdentifier
@@ -157,8 +154,8 @@ final class NottiPushDelegateTests: XCTestCase {
     ))
 
     let events = NottiImpl.eventStore.all()
-    XCTAssertEqual(events.map(\.deliveryId), ["d-1", "d-2"])
-    XCTAssertEqual(events.map(\.type), ["opened", "opened"])
+    XCTAssertEqual(events.map(\.deliveryId), ["d-1", "d-1", "d-2", "d-2"])
+    XCTAssertEqual(events.map(\.type), ["opened", "clicked", "opened", "clicked"])
   }
 
   func test_didReceiveCustomActionEnqueuesOneClickedEventAndNoOpened() {
@@ -185,6 +182,16 @@ final class NottiPushDelegateTests: XCTestCase {
     ))
 
     XCTAssertNil(NottiEventBuffer.shared.takeInitialClick())
+  }
+
+  func test_didReceiveDefaultActionWithoutIdsSkipsEnqueue() {
+    // SDKOPEN-08.
+    awaitDidReceive(makeResponse(
+      userInfo: makeRemoteUserInfo(notificationId: "n-1", deliveryId: nil),
+      actionIdentifier: UNNotificationDefaultActionIdentifier
+    ))
+
+    XCTAssertTrue(NottiImpl.eventStore.all().isEmpty)
   }
 
   func test_didReceiveCustomActionWithoutIdsSkipsEnqueue() {
