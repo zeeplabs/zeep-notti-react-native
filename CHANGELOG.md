@@ -1,5 +1,22 @@
 # Changelog
 
+# [0.6.0](https://github.com/zeeplabs/zeep-notti-react-native/compare/v0.5.0...v0.6.0) (2026-10-04)
+
+
+### Bug Fixes
+
+* **android:** ack profile fields only when the PATCH response echoes them ([c3a02ac](https://github.com/zeeplabs/zeep-notti-react-native/commit/c3a02aca21387fa61ba5eddc3a336673a8a58574))
+* **android:** re-sync profile fields once on upgrade from 0.5.0 ([f65247b](https://github.com/zeeplabs/zeep-notti-react-native/commit/f65247bf73cdc72d33a1902ba2d8da21d13c28b1))
+* **ios:** ack profile fields only when the PATCH response echoes them ([6c86e0e](https://github.com/zeeplabs/zeep-notti-react-native/commit/6c86e0e1c94376b14c31b4ea30056f88ba37de20))
+* **ios:** re-sync profile fields once on upgrade from 0.5.0 ([3df5b13](https://github.com/zeeplabs/zeep-notti-react-native/commit/3df5b130f7e426e936a30c9bfda45d6de8cfa4e1))
+
+
+### Features
+
+* **android:** report notification body tap as opened ([6923f96](https://github.com/zeeplabs/zeep-notti-react-native/commit/6923f96ceae662c3d4284ba51697dda465bcaa9f))
+* **ios:** report body tap as opened and action buttons as clicked ([39b8582](https://github.com/zeeplabs/zeep-notti-react-native/commit/39b8582a799c784f8ab5d02492cf2ba99471220e))
+* report body tap as both opened and clicked ([12d0d45](https://github.com/zeeplabs/zeep-notti-react-native/commit/12d0d45c981bb308694dbb2fd9eca8f5d9842aa0))
+
 # [0.5.0](https://github.com/zeeplabs/zeep-notti-react-native/compare/v0.4.0...v0.5.0) (2026-10-04)
 
 
