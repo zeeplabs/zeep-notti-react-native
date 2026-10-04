@@ -1582,6 +1582,146 @@ final class NottiCoreTests: XCTestCase {
     XCTAssertEqual(store.getLastSyncedPermissionStatus(), "granted")
   }
 
+  func test_aGrantedPermissionResultClearsAStaleUnackedUnsubscribeStamp() {
+    // A failed opt-out at T1, then a granted requestPermission re-subscribes:
+    // the T1 transition is moot, so a later opt-out at T2 must carry T2.
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    StubURLProtocol.enqueue(.status(400)) // setSubscription(false) at T1: terminal failure
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // permission-result subscribed(true)
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // setSubscription(false) at T2
+    store.setSubscribed(true)
+    let core = newCore(permissionRequester: { cb in cb(true) }, heartbeatInterval: 0)
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    core.setSubscription(false)
+    drain(core)
+    let t1 = store.getPendingUnsubscribeAtMs()
+    XCTAssertNotNil(t1)
+
+    let expectation = expectation(description: "permission callback")
+    core.requestPermission { _ in expectation.fulfill() }
+    wait(for: [expectation], timeout: 15)
+    drain(core)
+    XCTAssertNil(store.getPendingUnsubscribeAtMs(), "a granted re-subscribe makes the pending opt-out moot")
+    XCTAssertTrue(store.getSubscribed())
+
+    Thread.sleep(forTimeInterval: 0.01) // T2 must differ from T1
+    let t2Floor = Int64(Date().timeIntervalSince1970 * 1000)
+    core.setSubscription(false)
+    drain(core)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertEqual(bodies.count, 3)
+    let sent = bodies[2]["last_unsubscribed_at"] as? String
+    XCTAssertNotNil(sent)
+    XCTAssertNotEqual(sent, isoUtc(t1!), "the stale T1 stamp must not be re-sent")
+    let stamped = store.getLastUnsubscribedAtMs()
+    XCTAssertNotNil(stamped)
+    XCTAssertGreaterThanOrEqual(stamped!, t2Floor)
+    XCTAssertEqual(sent, isoUtc(stamped!))
+    XCTAssertNil(store.getPendingUnsubscribeAtMs())
+  }
+
+  func test_anUnknownPermissionReadLeavesAPendingDenialStampUntouched() {
+    // A nil (unknown / @unknown default) read is neither a reversal nor a new
+    // denial: the field is omitted and a pending granted->denied stamp stays.
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    for _ in 0..<3 { StubURLProtocol.enqueue(.status(200)) } // session telemetry
+    store.setLastSyncedPermissionStatus("granted")
+    store.setPendingPermissionUnsubscribeAtMs(1_234)
+    let core = newCore(permissionStatusProvider: { cb in cb(nil) }, heartbeatInterval: 0)
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl) // registration-success read
+    drain(core)
+    core.handleSessionStart(nowMs: 1_000) // session-start read
+    drain(core)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertFalse(bodies.contains { $0["permission_status"] != nil }, "a nil status must be omitted")
+    XCTAssertFalse(bodies.contains { $0["last_unsubscribed_at"] != nil })
+    XCTAssertEqual(store.getPendingPermissionUnsubscribeAtMs(), 1_234)
+    XCTAssertEqual(store.getLastSyncedPermissionStatus(), "granted")
+  }
+
+  func test_twoDeniedReadsBeforeRegistrationStampTheFirstDetection() {
+    // Pre-registration reads coalesce by replacing the queued closure; the
+    // stamp is persisted at the first detection, so it is never the last read.
+    var deliverToken: ((String?) -> Void)?
+    store.setLastSyncedPermissionStatus("granted")
+    let core = newCore(
+      tokenProvider: { cb in deliverToken = cb },
+      permissionStatusProvider: { cb in cb("denied") },
+      heartbeatInterval: 0
+    )
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    core.handleSessionStart(nowMs: 1_000) // first denied read
+    drain(core)
+    let first = store.getPendingPermissionUnsubscribeAtMs()
+    XCTAssertNotNil(first, "the stamp is persisted at detection, before any PATCH")
+
+    Thread.sleep(forTimeInterval: 0.01) // a second detection time would differ
+    core.handleSessionStart(nowMs: 2_000) // second denied read, coalesced
+    drain(core)
+    XCTAssertEqual(store.getPendingPermissionUnsubscribeAtMs(), first)
+
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    for _ in 0..<5 { StubURLProtocol.enqueue(.status(200)) }
+    deliverToken?("apns-token")
+    drain(core)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests()).filter { $0["permission_status"] != nil }
+    XCTAssertEqual(bodies.count, 1)
+    XCTAssertEqual(bodies[0]["permission_status"] as? String, "denied")
+    XCTAssertEqual(bodies[0]["last_unsubscribed_at"] as? String, isoUtc(first!))
+    XCTAssertEqual(store.getLastUnsubscribedAtMs(), first)
+    XCTAssertEqual(store.getLastSyncedPermissionStatus(), "denied")
+    XCTAssertNil(store.getPendingPermissionUnsubscribeAtMs(), "cleared on the 2xx")
+  }
+
+  func test_aDeniedGrantedDeniedFlipBeforeRegistrationStampsTheThirdRead() {
+    // The granted read in the middle is a reversal: it drops the first stamp,
+    // so the re-denial gets a fresh one (parity with Android).
+    var deliverToken: ((String?) -> Void)?
+    store.setLastSyncedPermissionStatus("granted")
+    var permissionStatus: String? = "denied"
+    let core = newCore(
+      tokenProvider: { cb in deliverToken = cb },
+      permissionStatusProvider: { cb in cb(permissionStatus) },
+      heartbeatInterval: 0
+    )
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    core.handleSessionStart(nowMs: 1_000) // read 1: denied
+    drain(core)
+    let first = store.getPendingPermissionUnsubscribeAtMs()
+    XCTAssertNotNil(first)
+
+    permissionStatus = "granted"
+    core.handleSessionStart(nowMs: 2_000) // read 2: granted (reversal)
+    drain(core)
+    XCTAssertNil(store.getPendingPermissionUnsubscribeAtMs(), "the reversal drops the first stamp")
+
+    Thread.sleep(forTimeInterval: 0.01) // the third detection time must differ
+    permissionStatus = "denied"
+    core.handleSessionStart(nowMs: 3_000) // read 3: denied again
+    drain(core)
+    let third = store.getPendingPermissionUnsubscribeAtMs()
+    XCTAssertNotNil(third)
+    XCTAssertNotEqual(third, first)
+
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    for _ in 0..<5 { StubURLProtocol.enqueue(.status(200)) }
+    deliverToken?("apns-token")
+    drain(core)
+
+    let bodies = patchBodies(StubURLProtocol.recordedRequests()).filter { $0["permission_status"] != nil }
+    XCTAssertEqual(bodies.count, 1)
+    XCTAssertEqual(bodies[0]["permission_status"] as? String, "denied")
+    XCTAssertEqual(bodies[0]["last_unsubscribed_at"] as? String, isoUtc(third!))
+    XCTAssertEqual(store.getLastUnsubscribedAtMs(), third)
+    XCTAssertEqual(store.getLastSyncedPermissionStatus(), "denied")
+    XCTAssertNil(store.getPendingPermissionUnsubscribeAtMs())
+  }
+
   func test_normalizedLanguageCodeKeepsOnlyTheIso6391PrimarySubtag() {
     XCTAssertEqual(NottiCore.normalizedLanguageCode("pt"), "pt")
     XCTAssertEqual(NottiCore.normalizedLanguageCode("pt-BR"), "pt")
@@ -1861,6 +2001,31 @@ final class NottiCoreTests: XCTestCase {
     XCTAssertEqual(clearAttempts, 2, "the failed clear is re-sent at registration")
     XCTAssertTrue(bodies.last?["email"] is NSNull)
     XCTAssertNil(store.getLastSyncedEmail())
+  }
+
+  func test_setEmailThenLogoutLoginAndANewEmailConvergesOnTheNewEmail() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    for _ in 0..<6 { StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) }
+    let core = newCore()
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+    core.setEmail("a@example.com")
+    drain(core)
+    XCTAssertEqual(store.getLastSyncedEmail(), "a@example.com")
+
+    core.logout()
+    core.login("u2")
+    core.setEmail("b@example.com")
+    drain(core)
+
+    let emailBodies = patchBodies(StubURLProtocol.recordedRequests()).filter { $0.keys.contains("email") }
+    XCTAssertEqual(emailBodies.last?["email"] as? String, "b@example.com")
+    let lastB = emailBodies.lastIndex { $0["email"] as? String == "b@example.com" }!
+    XCTAssertFalse(emailBodies[lastB...].contains { $0["email"] is NSNull }, "no null clear may land after b")
+    XCTAssertTrue(emailBodies[..<lastB].contains { $0["email"] is NSNull }, "logout still cleared a server-side")
+    XCTAssertEqual(store.getEmail(), "b@example.com")
+    XCTAssertEqual(store.getLastSyncedEmail(), "b@example.com")
+    XCTAssertEqual(store.getExternalUserId(), "u2")
   }
 
   func test_registrationSuccessWithNoHeldEmailOrPhoneSendsNothingForThem() {

@@ -332,7 +332,9 @@ class NottiModule(reactContext: ReactApplicationContext) :
    * signals and maps them through [NottiCore.mapPermissionStatus] (the
    * branch table and its known limitation are documented there). The
    * rationale signal needs an Activity; with none in the foreground it is
-   * passed as `null`. Any failure resolves `null` (omit - never fabricate).
+   * passed as `null`, which makes a never-requested, ungranted permission
+   * resolve `null` (can't tell `notDetermined` from denied elsewhere) instead
+   * of a guess. Any failure resolves `null` (omit - never fabricate).
    */
   private fun readPermissionStatus(callback: (String?) -> Unit) {
     val status = try {

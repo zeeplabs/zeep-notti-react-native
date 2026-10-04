@@ -380,7 +380,14 @@ public class NottiCore {
         self.onWorkQueue {
           callback(granted)
           self.performOrQueue(client, description: "permission-result subscription update") { [weak self] client, deviceId, token in
-            self?.patchSubscribed(client, deviceId: deviceId, token: token, granted, logContext: "requestPermission")
+            guard let self = self else { return }
+            if granted {
+              // Re-subscribed before a `setSubscription(false)` was acked:
+              // that transition is moot (same as `setSubscription(true)`), so
+              // a later opt-out gets a fresh stamp instead of the stale one.
+              self.deviceStore.setPendingUnsubscribeAtMs(nil)
+            }
+            self.patchSubscribed(client, deviceId: deviceId, token: token, granted, logContext: "requestPermission")
           }
           // DPF-12: the OS permission status is re-read from the OS state (not
           // inferred from the dialog bool) and diff-and-enqueued.
@@ -778,6 +785,21 @@ public class NottiCore {
         // client would PATCH the old backend/app. Android's `runOrQueue`
         // re-reads `apiClient` the same way.
         guard let client = self.apiClient else { return }
+        // DPF-14: the granted -> denied stamp is persisted HERE, at detection
+        // (the first read that shows denied after a synced granted), not in
+        // the mutation. Pre-registration reads coalesce by replacing the
+        // queued closure, so a stamp taken at execution time from the
+        // closure's own `detectedAtMs` would be the LAST read's, not the first.
+        // A later denied read keeps the persisted stamp; a non-denied read is
+        // a reversal and drops it. Only a 2xx clears it otherwise.
+        if status == "denied" {
+          if self.deviceStore.getLastSyncedPermissionStatus() == "granted",
+            self.deviceStore.getPendingPermissionUnsubscribeAtMs() == nil {
+            self.deviceStore.setPendingPermissionUnsubscribeAtMs(detectedAtMs)
+          }
+        } else {
+          self.deviceStore.setPendingPermissionUnsubscribeAtMs(nil)
+        }
         // The diff and the unsubscribe stamp are evaluated INSIDE the mutation
         // (at execution time), mirroring Android: a denied->granted flip queued
         // before registration coalesces to the final status and is diffed
@@ -796,8 +818,11 @@ public class NottiCore {
           var fields: [String: Any] = ["permission_status": status]
           var stampMs: Int64?
           if status == "denied" && previous == "granted" {
-            // Stamped once, at first detection; a retry at a later trigger
-            // re-sends the persisted value instead of a fresh `now` (DPF-14).
+            // Stamped once, at first detection (persisted above, outside the
+            // mutation); a retry at a later trigger re-sends the persisted
+            // value instead of a fresh `now` (DPF-14). `detectedAtMs` is only
+            // the fallback if the synced status changed between detection and
+            // execution.
             let stamp = self.deviceStore.getPendingPermissionUnsubscribeAtMs() ?? detectedAtMs
             self.deviceStore.setPendingPermissionUnsubscribeAtMs(stamp)
             self.deviceStore.setLastUnsubscribedAtMs(stamp)

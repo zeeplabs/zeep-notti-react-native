@@ -1365,7 +1365,7 @@ fun `requestPermission result syncs the OS permission status`() {
       val granted: Boolean,
       val requested: Boolean,
       val rationale: Boolean?,
-      val expected: String
+      val expected: String?
     )
     val cases = listOf(
       // API < 33: notifications-enabled alone decides.
@@ -1377,9 +1377,11 @@ fun `requestPermission result syncs the OS permission status`() {
       Case(34, enabled = false, granted = true, requested = true, rationale = false, expected = "denied"),
       // API >= 33, not granted: rationale wins.
       Case(33, enabled = false, granted = false, requested = false, rationale = true, expected = "denied"),
-      // Never requested by the SDK, no rationale (or no Activity) -> notDetermined.
+      // Never requested by the SDK, rationale known false (Activity present) -> notDetermined.
       Case(33, enabled = true, granted = false, requested = false, rationale = false, expected = "notDetermined"),
-      Case(33, enabled = false, granted = false, requested = false, rationale = null, expected = "notDetermined"),
+      // Never requested, no Activity to read the rationale -> can't tell: omitted (null), never fabricated.
+      Case(33, enabled = false, granted = false, requested = false, rationale = null, expected = null),
+      Case(34, enabled = true, granted = false, requested = false, rationale = null, expected = null),
       // Requested before, no rationale -> permanently denied.
       Case(33, enabled = false, granted = false, requested = true, rationale = false, expected = "denied"),
       Case(35, enabled = false, granted = false, requested = true, rationale = null, expected = "denied")
@@ -1391,6 +1393,216 @@ fun `requestPermission result syncs the OS permission status`() {
         NottiCore.mapPermissionStatus(c.sdk, c.enabled, c.granted, c.requested, c.rationale)
       )
     }
+  }
+
+  @Test
+  fun `a re-subscribe through requestPermission clears a stale pending unsubscribe stamp`() {
+    server.enqueue(ok()) // register
+    server.enqueue(rejected()) // setSubscription(false) at T1 fails -> pending = T1
+    server.enqueue(ok()) // requestPermission granted -> subscribed true acked
+    server.enqueue(ok()) // setSubscription(false) at T2
+    store.setSubscribed(true)
+    var now = 1_000L
+    val core = newCore(permissionRequester = { cb -> cb(true) }, clock = { now })
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    core.setSubscription(false)
+    awaitIdle()
+    assertEquals(1_000L, store.getPendingUnsubscribeAtMs())
+
+    core.requestPermission { }
+    awaitIdle()
+    assertNull("an acked re-subscribe makes the earlier opt-out moot", store.getPendingUnsubscribeAtMs())
+
+    now = 5_000L
+    core.setSubscription(false)
+    awaitIdle()
+
+    val bodies = drainRequests().drop(1).map { JSONObject(it.body.readUtf8()) }
+    val last = bodies.last()
+    assertEquals(false, last.getBoolean("subscribed"))
+    assertEquals("the new opt-out carries its own time, not the stale T1",
+      "1970-01-01T00:00:05.000Z", last.getString("last_unsubscribed_at"))
+    assertEquals(5_000L, store.getLastUnsubscribedAtMs())
+    assertNull(store.getPendingUnsubscribeAtMs())
+  }
+
+  @Test
+  fun `a granted requestPermission whose PATCH fails still clears the pending unsubscribe stamp`() {
+    server.enqueue(ok()) // register
+    server.enqueue(rejected()) // setSubscription(false) at T1 fails -> pending = T1
+    server.enqueue(rejected()) // requestPermission granted PATCH fails too
+    server.enqueue(ok()) // setSubscription(false) at T2
+    store.setSubscribed(true)
+    var now = 1_000L
+    val core = newCore(permissionRequester = { cb -> cb(true) }, clock = { now })
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    core.setSubscription(false)
+    awaitIdle()
+    assertEquals(1_000L, store.getPendingUnsubscribeAtMs())
+
+    core.requestPermission { }
+    awaitIdle()
+    assertNull("the grant reverted the opt-out even though its PATCH failed", store.getPendingUnsubscribeAtMs())
+
+    now = 5_000L
+    core.setSubscription(false)
+    awaitIdle()
+
+    val last = drainRequests().map { JSONObject(it.body.readUtf8()) }.last()
+    assertEquals(false, last.getBoolean("subscribed"))
+    assertEquals("1970-01-01T00:00:05.000Z", last.getString("last_unsubscribed_at"))
+    assertNull(store.getPendingUnsubscribeAtMs())
+  }
+
+  @Test
+  fun `a null permission read neither diffs nor drops a pending granted to denied stamp`() {
+    repeat(4) { server.enqueue(ok()) }
+    // A previous launch detected granted -> denied but its PATCH was never acked.
+    store.setLastSyncedPermissionStatus("granted")
+    store.setPendingPermissionUnsubscribeAtMs(1_000L)
+    store.setLastUnsubscribedAtMs(1_000L)
+    var permissionStatus: String? = null
+    var now = 3_000L
+    val core = newCore(permissionStatusProvider = { cb -> cb(permissionStatus) }, clock = { now })
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+    awaitIdle()
+
+    // Unknown read (e.g. no Activity to read the rationale): omitted, nothing touched.
+    assertEquals(1, server.requestCount)
+    assertEquals("granted", store.getLastSyncedPermissionStatus())
+    assertEquals(1_000L, store.getPendingPermissionUnsubscribeAtMs())
+
+    permissionStatus = "denied"
+    now = 9_000L
+    core.onAppForegrounded()
+    awaitIdle()
+    awaitIdle()
+
+    val permission = drainRequests().drop(1).map { JSONObject(it.body.readUtf8()) }
+      .single { it.has("permission_status") }
+    assertEquals("denied", permission.getString("permission_status"))
+    assertEquals("the original detection time survives the null read",
+      "1970-01-01T00:00:01.000Z", permission.getString("last_unsubscribed_at"))
+    assertEquals("denied", store.getLastSyncedPermissionStatus())
+    assertNull(store.getPendingPermissionUnsubscribeAtMs())
+  }
+
+  @Test
+  fun `two denied reads before registration stamp the first detection time`() {
+    repeat(6) { server.enqueue(ok()) }
+    store.setLastSyncedPermissionStatus("granted")
+    var deferredToken: ((String?) -> Unit)? = null
+    var now = 1_000L
+    val core = newCore(
+      tokenProvider = { cb -> deferredToken = cb },
+      permissionRequester = { cb -> cb(false) },
+      permissionStatusProvider = { cb -> cb("denied") },
+      clock = { now }
+    )
+    core.initialize("app-1", "key", validBaseUrl)
+
+    // Two OS reads while the token fetch is still in flight: the second one
+    // coalesces over (replaces) the queued closure of the first.
+    core.requestPermission { }
+    awaitIdle()
+    assertEquals("persisted at detection, not when the mutation runs",
+      1_000L, store.getPendingPermissionUnsubscribeAtMs())
+    now = 5_000L
+    core.requestPermission { }
+    awaitIdle()
+    assertEquals(0, server.requestCount)
+    assertEquals(1_000L, store.getPendingPermissionUnsubscribeAtMs())
+
+    now = 9_000L
+    requireNotNull(deferredToken).invoke("fcm-token")
+    awaitIdle()
+    awaitIdle()
+
+    val permission = drainRequests().drop(1).map { JSONObject(it.body.readUtf8()) }
+      .single { it.has("permission_status") }
+    assertEquals("denied", permission.getString("permission_status"))
+    assertEquals("1970-01-01T00:00:01.000Z", permission.getString("last_unsubscribed_at"))
+    assertEquals(1_000L, store.getLastUnsubscribedAtMs())
+    assertEquals("denied", store.getLastSyncedPermissionStatus())
+    assertNull(store.getPendingPermissionUnsubscribeAtMs())
+  }
+
+  @Test
+  fun `denied then granted then denied before registration stamps the third read`() {
+    repeat(6) { server.enqueue(ok()) }
+    store.setLastSyncedPermissionStatus("granted")
+    var deferredToken: ((String?) -> Unit)? = null
+    var permissionStatus: String? = "denied"
+    var now = 1_000L
+    val core = newCore(
+      tokenProvider = { cb -> deferredToken = cb },
+      permissionRequester = { cb -> cb(false) },
+      permissionStatusProvider = { cb -> cb(permissionStatus) },
+      clock = { now }
+    )
+    core.initialize("app-1", "key", validBaseUrl)
+
+    core.requestPermission { }
+    awaitIdle()
+    assertEquals(1_000L, store.getPendingPermissionUnsubscribeAtMs())
+
+    // Reversal at detection: a non-denied read drops the pending stamp.
+    permissionStatus = "granted"
+    now = 3_000L
+    core.requestPermission { }
+    awaitIdle()
+    assertNull(store.getPendingPermissionUnsubscribeAtMs())
+
+    permissionStatus = "denied"
+    now = 5_000L
+    core.requestPermission { }
+    awaitIdle()
+    assertEquals(5_000L, store.getPendingPermissionUnsubscribeAtMs())
+    assertEquals(0, server.requestCount)
+
+    now = 9_000L
+    requireNotNull(deferredToken).invoke("fcm-token")
+    awaitIdle()
+    awaitIdle()
+
+    val permission = drainRequests().drop(1).map { JSONObject(it.body.readUtf8()) }
+      .single { it.has("permission_status") }
+    assertEquals("denied", permission.getString("permission_status"))
+    assertEquals("1970-01-01T00:00:05.000Z", permission.getString("last_unsubscribed_at"))
+    assertEquals(5_000L, store.getLastUnsubscribedAtMs())
+    assertNull(store.getPendingPermissionUnsubscribeAtMs())
+  }
+
+  @Test
+  fun `setEmail after logout and a new login converges to the new email`() {
+    repeat(8) { server.enqueue(ok()) }
+    val core = newCore()
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+    core.setEmail("a@example.com")
+    awaitIdle()
+    assertEquals("a@example.com", store.getLastSyncedEmail())
+
+    core.logout()
+    core.login("u2")
+    core.setEmail("b@example.com")
+    awaitIdle()
+    awaitIdle()
+
+    val emailBodies = drainRequests().drop(1).map { JSONObject(it.body.readUtf8()) }
+      .filter { it.has("email") }
+    val lastB = emailBodies.indexOfLast { !it.isNull("email") && it.getString("email") == "b@example.com" }
+    assertTrue("b must be sent: $emailBodies", lastB >= 0)
+    assertEquals("the last email PATCH carries b: $emailBodies", lastB, emailBodies.lastIndex)
+    assertTrue("no clear after b: $emailBodies", emailBodies.drop(lastB + 1).none { it.isNull("email") })
+    assertEquals("b@example.com", store.getEmail())
+    assertEquals("b@example.com", store.getLastSyncedEmail())
+    assertEquals("u2", store.getExternalUserId())
   }
 
   @Test

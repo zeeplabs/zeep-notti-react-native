@@ -202,16 +202,27 @@ class NottiCore(
      * - API >= 33, permission granted: notifications enabled -> `granted`;
      *   disabled -> `denied` (user blocked the app in Settings after granting).
      * - API >= 33, permission not granted: [shouldShowRationale] `true` ->
-     *   `denied` (the user already said no once); else never requested by the
-     *   SDK ([permissionRequestedBefore] false) -> `notDetermined`; else `denied`
-     *   (permanently denied, the OS stops offering a rationale).
+     *   `denied` (the user already said no once); requested by the SDK before
+     *   ([permissionRequestedBefore] true) -> `denied` (permanently denied, the
+     *   OS stops offering a rationale); never requested by the SDK and
+     *   rationale known `false` (an Activity was available) -> `notDetermined`;
+     *   never requested and rationale unknown -> `null`.
      *
      * [shouldShowRationale] is `null` when no Activity was available to ask.
+     * Without it, a never-requested permission cannot be told apart from one
+     * denied through another library, so the field is omitted (`null`) rather
+     * than fabricated as `notDetermined` - the next read with an Activity in
+     * the foreground (session start, `requestPermission`) resolves it.
      *
-     * Known limitation: [permissionRequestedBefore] only tracks prompts shown by
-     * this SDK. A permission requested through another library and then
-     * permanently denied (no rationale) reads as `notDetermined`, since the OS
-     * exposes no "was ever asked" signal.
+     * Known limitations:
+     * - [permissionRequestedBefore] only tracks prompts shown by this SDK. A
+     *   permission requested through another library and then permanently
+     *   denied (no rationale) reads as `notDetermined`, since the OS exposes no
+     *   "was ever asked" signal.
+     * - A prompt shown by the SDK's `requestPermission` and dismissed without
+     *   a choice (back/outside tap) leaves the permission ungranted with no
+     *   rationale and [permissionRequestedBefore] set, so it reads as `denied`
+     *   although the user never answered - the OS does not distinguish the two.
      */
     @JvmStatic
     internal fun mapPermissionStatus(
@@ -225,8 +236,10 @@ class NottiCore(
       if (permissionGranted) return if (notificationsEnabled) "granted" else "denied"
       return when {
         shouldShowRationale == true -> "denied"
-        !permissionRequestedBefore -> "notDetermined"
-        else -> "denied"
+        permissionRequestedBefore -> "denied"
+        shouldShowRationale == false -> "notDetermined"
+        // No Activity to ask for the rationale: can't tell - omit, never fabricate.
+        else -> null
       }
     }
 
@@ -742,6 +755,11 @@ class NottiCore(
       // answers the OS prompt, without waiting on network); logging the
       // failure is the fix that fits this pass without that risk.
       mutate("requestPermission") { client, deviceId, token ->
+        // Same reversal as setSubscription(true), regardless of the PATCH
+        // outcome: an earlier opt-out whose PATCH failed was reverted by the
+        // user granting, so its stale stamp must never be re-sent by a later
+        // opt-out (iOS parity).
+        if (granted) deviceStore.setPendingUnsubscribeAtMs(null)
         val result = client.patchDevice(deviceId, token, mapOf("subscribed" to granted))
         when (result) {
           is ApiResult.Success -> deviceStore.setSubscribed(granted)
@@ -1115,9 +1133,16 @@ class NottiCore(
    * unsubscribe). Fires the async [permissionStatusProvider]; only when the
    * freshly-read status differs from the last synced one is a coalesced PATCH
    * enqueued (diff-and-enqueue, DPF-11/13). A `null`/unknown status omits the
-   * field - never fabricated (DPF edge case). A granted -> denied transition
-   * additionally persists `last_unsubscribed_at` and carries it in the same
-   * atomic request (DPF-14).
+   * field - never fabricated (DPF edge case) - and leaves every piece of
+   * pending state untouched (no diff, no clear of a pending granted -> denied
+   * stamp). A granted -> denied transition additionally persists
+   * `last_unsubscribed_at` and carries it in the same atomic request (DPF-14).
+   *
+   * The pending stamp is persisted at DETECTION time (on the executor, before
+   * the mutation is run or queued), not inside the mutation: pre-registration
+   * reads coalesce on [KEY_PERMISSION_STATUS] and replace the queued closure,
+   * so stamping inside it would record the LAST pre-registration read instead
+   * of the first detection.
    *
    * Called from three triggers: [registerDevice] success, the `requestPermission`
    * result, and each session start (catches permission changed in OS Settings
@@ -1129,22 +1154,30 @@ class NottiCore(
       val detectedAt = clock()
       dispatch("permissionStatus") {
         if (apiClient == null) return@dispatch
+        if (status != "denied") {
+          // Back to a non-denied state before a granted->denied sync was
+          // acked: that transition is moot, the next one gets a fresh stamp.
+          deviceStore.setPendingPermissionUnsubscribeAtMs(null)
+        } else if (deviceStore.getLastSyncedPermissionStatus() == "granted" &&
+          deviceStore.getPendingPermissionUnsubscribeAtMs() == null
+        ) {
+          // Stamped once at first detection ([detectedAt], captured when the
+          // OS state was read) and persisted now, so a later coalesced read
+          // or a retry at a later session start re-sends this value instead
+          // of a fresh now() (F8).
+          deviceStore.setPendingPermissionUnsubscribeAtMs(detectedAt)
+          deviceStore.setLastUnsubscribedAtMs(detectedAt)
+        }
         // Already on the executor: run/queue directly rather than through
         // [mutate], which would add a second dispatch hop.
         runOrQueue(PendingMutation("permissionStatus", KEY_PERMISSION_STATUS) { client, deviceId, token ->
           val previous = deviceStore.getLastSyncedPermissionStatus()
-          if (status != "denied") {
-            // Back to a non-denied state before a granted->denied sync was
-            // acked: that transition is moot, the next one gets a fresh stamp.
-            deviceStore.setPendingPermissionUnsubscribeAtMs(null)
-          }
           if (status == previous) return@PendingMutation
           val fields = mutableMapOf<String, Any>("permission_status" to status)
           var stamp: Long? = null
           if (status == "denied" && previous == "granted") {
-            // Stamped once at first detection ([detectedAt], captured when the
-            // OS state was read); a retry at a later session start re-sends
-            // the persisted value instead of a fresh now() (F8).
+            // Persisted at detection above; the fallback only covers a
+            // pending stamp lost between detection and this run.
             stamp = deviceStore.getPendingPermissionUnsubscribeAtMs() ?: detectedAt.also {
               deviceStore.setPendingPermissionUnsubscribeAtMs(it)
               deviceStore.setLastUnsubscribedAtMs(it)
