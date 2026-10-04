@@ -145,6 +145,35 @@ final class NottiDeviceStoreTests: XCTestCase {
 
   // MARK: - Device profile fields (T6)
 
+  func test_profileFieldAckMigrationClearsTheSixLastSyncedValuesExactlyOnce() {
+    // Simulates an install upgraded from SDK <= 0.5.0, which marked these as
+    // synced on any 2xx (unacked).
+    store.setAppVersion("1.2.3")
+    store.setLastSyncedDeviceOs("15.0")
+    store.setLastSyncedDeviceModel("iPhone15,2")
+    store.setLastSyncedSdkVersion("0.5.0")
+    store.setLastSyncedTimezoneId("America/Sao_Paulo")
+    store.setLastSyncedLanguage("pt")
+    store.setLastSyncedPermissionStatus("granted")
+
+    store.migrateProfileFieldAckIfNeeded()
+
+    XCTAssertNil(store.getAppVersion())
+    XCTAssertNil(store.getLastSyncedDeviceOs())
+    XCTAssertNil(store.getLastSyncedDeviceModel())
+    XCTAssertNil(store.getLastSyncedSdkVersion())
+    XCTAssertNil(store.getLastSyncedTimezoneId())
+    XCTAssertNil(store.getLastSyncedLanguage())
+    // Not an echo-acked field - untouched.
+    XCTAssertEqual(store.getLastSyncedPermissionStatus(), "granted")
+
+    // Values acked after the migration survive every later call.
+    store.setLastSyncedDeviceOs("16.0")
+    store.migrateProfileFieldAckIfNeeded()
+    NottiDeviceStore(defaults: defaults).migrateProfileFieldAckIfNeeded()
+    XCTAssertEqual(store.getLastSyncedDeviceOs(), "16.0")
+  }
+
   func test_deviceProfileFieldsRoundTripThroughUserDefaults() {
     store.setLastSyncedDeviceOs("15.0")
     store.setLastSyncedDeviceModel("iPhone15,2")

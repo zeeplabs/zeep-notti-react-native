@@ -114,6 +114,7 @@ public class NottiDeviceStore {
   private static let keyPhone = "notti_phone"
   private static let keyLastSyncedEmail = "notti_last_synced_email"
   private static let keyLastSyncedPhone = "notti_last_synced_phone"
+  private static let keyProfileFieldAckMigrated = "notti_profile_field_ack_migrated"
 
   private let defaults: UserDefaults
 
@@ -317,6 +318,23 @@ public class NottiDeviceStore {
 
   public func getLastSyncedDeviceOs() -> String? {
     defaults.string(forKey: Self.keyLastSyncedDeviceOs)
+  }
+
+  /// One-shot upgrade step for the echo-based profile-field ack (0.6.0). SDK
+  /// <= 0.5.0 marked the six read-once fields synced on any 2xx, even when the
+  /// backend ignored them; with an unchanged value the diff would then never
+  /// re-send them. Clearing their last-synced values once makes the next
+  /// registration re-send each (at most six PATCHes, once per install) and ack
+  /// it against the echo. A fresh install has nothing to clear.
+  public func migrateProfileFieldAckIfNeeded() {
+    guard !defaults.bool(forKey: Self.keyProfileFieldAckMigrated) else { return }
+    for key in [
+      Self.keyAppVersion, Self.keyLastSyncedDeviceOs, Self.keyLastSyncedDeviceModel,
+      Self.keyLastSyncedSdkVersion, Self.keyLastSyncedTimezoneId, Self.keyLastSyncedLanguage,
+    ] {
+      defaults.removeObject(forKey: key)
+    }
+    defaults.set(true, forKey: Self.keyProfileFieldAckMigrated)
   }
 
   public func setLastSyncedDeviceOs(_ value: String?) {
