@@ -67,8 +67,8 @@ entries once released.
 
 * **Requires `zeep-notti` backend ≥ v0.10.0** (DPROF-01..17). Older backends ignore the new device fields, but the SDK still marks them as synced on any 2xx, so static values (`device_model`, `device_os`, `sdk_version`) are not re-sent after the backend is upgraded until they change.
 * **Automatic device profile:** this release starts sending `device_os`, `device_model`, `sdk_version`, `timezone_id`, `language`, `permission_status` and `last_unsubscribed_at` to your Notti instance, with no opt-out toggle. Review your privacy labels / LGPD documentation (README "Privacy, App Store labels and LGPD").
-* **`logout()` now clears email and phone** locally and server-side (`{email: null, phone: null}`), so a previous user's contact data never stays attached to the next user on a shared device. Call `User.setEmail`/`User.setPhone` again after the next `login`.
-* **iOS privacy manifest:** `PrivacyInfo.xcprivacy` now declares Email Address and Phone Number (linked to the user, not used for tracking, App Functionality). Data is only collected if you call `User.setEmail`/`User.setPhone`.
+* **`logout()` now clears email and phone** locally and server-side (two device PATCHes, `{email: null}` and `{phone: null}`), so a previous user's contact data never stays attached to the next user on a shared device. Call `User.setEmail`/`User.setPhone` again after the next `login`.
+* **iOS privacy manifest:** `PrivacyInfo.xcprivacy` now declares Email Address and Phone Number (linked to the user, not used for tracking, App Functionality). Data is only collected if you call `User.setEmail`/`User.setPhone`, but Xcode's privacy report lists the entries for every app embedding the SDK; adjust your own nutrition label to your actual use.
 
 ### Features
 
@@ -83,7 +83,7 @@ entries once released.
 
 ### Known limitations
 
-* **Android 13+ `permission_status`:** "never asked" vs "denied" is inferred from whether the SDK's `requestPermission` ran and from `shouldShowRequestPermissionRationale`. If you request `POST_NOTIFICATIONS` through another library and the user permanently denies it, the device may report `notDetermined`.
+* **Android 13+ `permission_status`:** "never asked" vs "denied" is inferred from whether the SDK's `requestPermission` ran and from `shouldShowRequestPermissionRationale`. If you request `POST_NOTIFICATIONS` through another library and the user permanently denies it, the device may report `notDetermined`. Without an Activity (background registration) an undecidable state is omitted. Dismissing the SDK's dialog without a choice reports `denied`.
 
 ## Upgrade notes for 0.4.0 (released)
 
