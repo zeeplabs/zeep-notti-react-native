@@ -19,12 +19,6 @@
       "skillPath": "skills/github-actions/SKILL.md",
       "computedHash": "c90128be4f55bc8b6dbdcba75ba2a540f3fb89ba91be1ccbe487e01ea70be122"
     },
-    "push-notifications": {
-      "source": "dpearson2699/swift-ios-skills",
-      "sourceType": "github",
-      "skillPath": "skills/push-notifications/SKILL.md",
-      "computedHash": "7afc693b1c38505f6dd9c78048785bc7f07dcb29f5cd971e08dfe8eaeb6ec7c3"
-    },
     "react-native-best-practices": {
       "source": "callstackincubator/agent-skills",
       "sourceType": "github",

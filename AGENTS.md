@@ -119,10 +119,13 @@ working in its area:
 | `create-react-native-library` | Library structure, bob/codegen config, Turbo Module scaffolding                           |
 | `react-native-best-practices` | Native module performance, JS thread, memory, Hermes                                      |
 | `upgrading-react-native`      | Bumping React Native / the library template                                               |
-| `push-notifications`          | APNs, `UNUserNotificationCenter`, NSE, silent/rich pushes on iOS                          |
 | `swift-concurrency`           | async/await, actors, `Sendable`, Swift 6 warnings in `ios/`                               |
 | `expo-module`                 | Config plugin work (`plugin/`); the module itself is a Turbo Module, not Expo Modules API |
 | `github-actions`              | CI workflows in `.github/`                                                                |
 
 Updating third-party skills: `npx skills update -p`, then review the diff before committing (they run
 with full agent permissions). Keep `.agents/skills/` and `.claude/skills/` identical.
+
+Before adding a third-party skill, check its license: this repo is public and MIT, and vendored skills
+are redistributed with it. Only permissive licenses (MIT, Apache-2.0, BSD). Example:
+`dpearson2699/swift-ios-skills` is PolyForm Perimeter and stays out pending legal review.
