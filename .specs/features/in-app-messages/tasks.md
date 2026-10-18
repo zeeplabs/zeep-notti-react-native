@@ -4,7 +4,7 @@
 **Spec**: `.specs/features/in-app-messages/spec.md`
 **Status**: Not started (specs written 2026-10-18). 30 tasks: T1 JS facade, T2-T13 Android, T14-T25 iOS, T26-T30 docs / example / review / device validation. One task = one commit (Conventional Commits, confirm the message with the owner before committing, never `--no-verify`).
 
-Decided by Julio on 2026-10-18 and already folded in: the integrator handles links through a JS click listener (the SDK never opens a link, A9), `trackEvent` names before the `eligible` response are remembered (max 32, A14), a single-attempt pre-`eligible` flush with `eligible` called regardless and `Retry-After` clamp 1..300 s / 60 s default / 3 waits (A15), `403` keeps the queue with no forced re-registration (A16), default palette = semantic system colors with no luminance derivation (A13), image limit 5 MiB. Each task states the recommended default for the remaining Open Question it depends on (spec OQ-3); the owner can overrule before that task starts without changing the task graph.
+Decided by Julio on 2026-10-18 and already folded in: the integrator handles links through a JS click listener (the SDK never opens a link, A9), `trackEvent` names before the `eligible` response are remembered (max 32, A14), a single-attempt pre-`eligible` flush with `eligible` called regardless and `Retry-After` clamp 1..300 s / 60 s default / 3 waits (A15), `403` keeps the queue with no forced re-registration and logs a fixed "In-App inactive on this device until the next registration" warning (A16), close label from an in-code en/pt-BR table with English fallback (A18), session/selection model aligned with the iOS SDK (A17), default palette = semantic system colors with no luminance derivation (A13), image limit 5 MiB. Each task states the recommended default for decisions it depends on; the owner can overrule before that task starts without changing the task graph.
 
 ---
 
@@ -211,6 +211,7 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 - [ ] Fetch triggers only when session open + identity available + fetch `Idle`; exactly one successful `eligible` per session; no refetch on `onRegistered` repeats, token refresh or core re-creation
 - [ ] A `singleAttempt` flush runs before `eligible` (one attempt per event, strict FIFO, stop at the first failure) and `eligible` is sent **regardless** of the flush outcome; remaining events stay queued; `GaveUp(transient)` resumes once per `onNetworkAvailable` within the session, never after 401/403/422 or exhausted 429 waits
 - [ ] `eligible` 429: no call before `Retry-After` clamped to 1..300 s (60 s when absent or invalid), non-blocking wait, at most 3 waits then give up for the session; 401/403/422 stop the fetch; 408/5xx/IO backoff 2/4/8/16 s, 5 attempts; constants in one adjustable place
+- [ ] `403` on `eligible` or events logs exactly one fixed warning stating that In-App is inactive on this device until the next registration (no ids, no values, asserted on captured logger output)
 - [ ] Event flush: single-flight and coalesced (`full` and `singleAttempt` modes); strict FIFO; Recorded and 404/422 remove the head; 429 pauses on a stored deadline (same clamp, shared by later triggers, independent of the `eligible` pause); transient: `full` retries the same head with the same `event_id` (5 attempts) then stops, `singleAttempt` stops at the first failure; 401/403 stop and keep the queue with a distinct log line and no re-registration; expired events dropped before sending
 - [ ] Presenter callbacks: `onVisible` -> exactly one `impression` enqueued synchronously, then flush trigger; close -> one `click` (with `button_id`: button id, `image`, or first button id for bar body) or one `dismiss` (with reason); never both
 - [ ] Click order (SDKIAM-33): `click` enqueued, then the `ClickSink` port is called with `(messageId, buttonId, action untouched)`, then the display is closed with no `dismiss`; a second tap on a closing display is ignored; with no sink target the click is still reported and closed, and one fixed warning is logged (SDKIAM-68); the coordinator calls no URL-opening API
@@ -285,7 +286,7 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 **Depends on**: T8
 **Reuses**: touch slop/velocity from `ViewConfiguration`
 **Requirement**: SDKIAM-21, SDKIAM-22, SDKIAM-33..35, SDKIAM-39, SDKIAM-63
-**OQ default implemented**: OQ-3 (in-code en/pt-BR table for the close label, default en)
+**Decision implemented**: A18 (in-code en/pt-BR table for the close label, English fallback for any other language)
 
 **Done when**:
 - [ ] Close control -> `close_button`; `top` swipe up and `bottom` swipe down beyond the threshold -> `swipe` (and a short drag does not dismiss); `center` backdrop tap -> `outside_tap`, tap inside the card does nothing; `full` has no other dismiss gesture; back key is not handled by the view
@@ -555,7 +556,7 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 **Depends on**: T20
 **Reuses**: gesture recognizers, `UIAccessibility`
 **Requirement**: SDKIAM-21, SDKIAM-22, SDKIAM-33..35, SDKIAM-39, SDKIAM-63
-**OQ default implemented**: OQ-3
+**Decision implemented**: A18
 
 **Done when**:
 - [ ] Close -> `close_button`; `top` pan up / `bottom` pan down past threshold -> `swipe`; `center` backdrop tap -> `outside_tap`; `full` none; same tap rules for buttons, image (`image`) and bar body (first button)
@@ -676,6 +677,7 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 - [ ] Data collected table: fetch body (`device_id`, `token`), per-display events, new storage key `notti_pending_inapp_events`, and the image request to the author-chosen host (not Notti; no identifiers)
 - [ ] Privacy section: In-App events listed with the Product Interaction nature; the pending owner decision on labels referenced, not resolved; LGPD note unchanged in tone
 - [ ] Known limitations: overlay hidden under RN `<Modal>` on Android; queue/`eligible` give-up behavior; hostless-test gaps are NOT user docs
+- [ ] CHANGELOG `[Unreleased]` also states the deliberate divergence from the contract: on `403` the SDK does not re-register; In-App stays inactive on the device until the next registration (cold start or token refresh)
 - [ ] CHANGELOG `[Unreleased]`: additive note ("New: `Notti.trackEvent`, In-App messages; requires a Notti backend with In-App rich messages")
 - [ ] All examples use synthetic values (`example.invalid`)
 - [ ] Gate: `pnpm lint` (prettier on markdown if configured) and `pnpm typecheck`
