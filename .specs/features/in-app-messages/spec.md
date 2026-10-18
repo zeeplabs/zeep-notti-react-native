@@ -72,7 +72,7 @@ or an Open Question instead of inventing server behavior.
 | Live Activities, banners outside the app, push-driven in-app | Different features. |
 | Re-registering the device on `403` from In-App routes | The registration state machine owns re-registration. Decided in A16. |
 | Android `Dialog`/`PopupWindow` presentation | Discarded alternative; see `design.md`. |
-| An SDK-owned localized string table beyond the close-control label | Only the close label is SDK text. See OQ-3. |
+| An SDK-owned localized string table beyond the close-control label | Only the close label is SDK text (table in code, en and pt-BR, A18). |
 
 ---
 
@@ -86,7 +86,7 @@ Confirmed = `y (owner, date)`; otherwise `n` (recommended default, needs the own
 | A2 | `margin` absent | `true`: 16 pt inset on `top`, `bottom`, `full`; `center` ignores it | Same. | y (Julio, 2026-10-18) |
 | A3 | `button_color` / `button_text_color` set | Applies to **every** button; the absent token keeps the SDK default | Same. | y (Julio, 2026-10-18) |
 | A4 | `style: null` | All SDK defaults | Same. | y (Julio, 2026-10-18) |
-| A5 | What "session" means | The SDK's existing foreground session: opened by the process-wide `SessionGate` (Android `NottiCore.SessionGate`, `NottiCore.kt:136`; iOS `NottiCore.SessionGate`, `NottiCore.swift:88`) on app foreground, closed on app background. A JS reload while foregrounded stays in the same session. [Certo: verified in code] | Reuses the SEGTEL concept instead of a second definition; the gate is already process-wide and survives RN reload. | n |
+| A5 | What "session" means | The SDK's existing foreground session: opened by the process-wide `SessionGate` (Android `NottiCore.SessionGate`, `NottiCore.kt:136`; iOS `NottiCore.SessionGate`, `NottiCore.swift:88`) on app foreground, closed on app background. A JS reload while foregrounded stays in the same session. **Every foreground (new session) produces one `eligible`; there is no background-duration threshold** (a threshold is a future evolution in both SDKs). [Certo: verified in code] | Reuses the SEGTEL concept instead of a second definition; the gate is already process-wide and survives RN reload. | y (Julio, 2026-10-18) |
 | A6 | "Device is registered" | Registered **in this process** (registration succeeded since launch, so `device_id` and the current `token` are both fresh), not merely a cached `device_id` from a previous launch | A cached id with a rotated token would `403`. Costs at most one registration round trip of delay. | n |
 | A7 | Event-name matching | Exact, case-sensitive, no trimming/normalization. The dashboard restricts names to 1-64 chars of `[a-z0-9_.-]` (`in-app-rich-messages` spec, Story P2 AC1), so `trackEvent('Checkout_Done')` will not match `checkout_done`. README must say so. | Contract: "exact name". Normalizing silently would diverge from the contract and hide integrator mistakes. | n |
 | A8 | JS host-facing API | Exactly two additions: `trackEvent(name)` and `Notti.InAppMessages.addClickListener(handler)`; no other callbacks | Contract needs no more; the click listener replaces SDK-side link opening. | y (Julio, 2026-10-18) |
@@ -97,13 +97,13 @@ Confirmed = `y (owner, date)`; otherwise `n` (recommended default, needs the own
 | A13 | Default look | Semantic system colors that follow the system theme: Android theme attributes/colors, iOS semantic `UIColor`s. **No luminance derivation**: with only `background_color` set the text keeps its semantic default; contrast is the author's responsibility (server/dashboard only warn). | Owner decision (closes former OQ-6). | y (Julio, 2026-10-18) |
 | A14 | `trackEvent` before the `eligible` response | The SDK remembers the names tracked in this session (memory only, at most 32 distinct) and evaluates them once when the held messages arrive. | Owner decision (closes former OQ-2); 32 on both SDKs (the iOS SDK is being aligned from 50). | y (Julio, 2026-10-18) |
 | A15 | Flush before `eligible` and `429` handling | The pre-`eligible` flush is a single attempt per event (stop at the first failure) and `eligible` is called regardless; the queue is strict FIFO (cap 100, TTL 7 days), `404`/`422` drop the head. `429` on `eligible` and on `events`: `Retry-After` clamped to 1..300 s, 60 s when absent or invalid, at most 3 waits on `eligible`; events pause on a stored deadline. | Owner decision (closes former OQ-4), same model as the iOS SDK (IAM-03/04/31). Trade-off accepted: a message whose impression is still queued can be offered again by the server. | y (Julio, 2026-10-18) |
-| A16 | `403` | No retry, no forced re-registration in this feature; `eligible`: stop for the session; events: stop the flush and keep the queue (a later registration can fix the token pair). | Owner decision (closes former OQ-5); the registration paths already run at launch and on token refresh. | y (Julio, 2026-10-18) |
+| A16 | `403` | No retry, no forced re-registration in this feature; `eligible`: stop for the session; events: stop the flush and keep the queue (a later registration can fix the token pair). The SDK logs one fixed warning on `403` stating that In-App is inactive on this device until the next registration (no ids, no values). The divergence from the contract's "re-register the device" is recorded in the CHANGELOG `[Unreleased]` (SDKIAM-61, T26). | Owner decision (closes former OQ-5); the registration paths already run at launch and on token refresh. | y (Julio, 2026-10-18) |
+| A17 | Session and selection model (aligned with the iOS SDK) | Session = the existing foreground session; every foreground produces one `eligible`. Only the first renderable `session_start` message is shown; the others are neither queued nor re-fetched and stay eligible next session. `Notti.trackEvent(name)` is top level (not under `InAppMessages`). A visible message survives the background at a session turn; the next session's fetch skips that message id and drops the `session_start` candidates it would stack (held `event` messages of the old session are discarded). | Owner decision; matches `zeep-notti-ios-sdk` IAM spec (session, extra `session_start`, visible-at-session-end rows). Specified in SDKIAM-02, 08, 15 and the Edge Cases. | y (Julio, 2026-10-18) |
+| A18 | Close-control accessibility label | A small in-code table (`en`, `pt-BR`), no resource bundle; any other language falls back to English (closes former OQ-3). | Owner decision; avoids podspec `resource_bundles` and Android `res/` changes. Note: the iOS SDK design plans resource bundles for the same label; the iOS SDK is the one that differs. | y (Julio, 2026-10-18) |
 
-### Open Questions (with recommendation)
+### Open Questions
 
-| ID | Question | Recommendation | Impact if the owner decides otherwise |
-| --- | --- | --- | --- |
-| OQ-3 | Localization of the close-control accessibility label (the only SDK-owned text). | A small in-code table (`en`, `pt-BR`, default `en`) keyed by the device language, no resource bundle. Avoids a podspec `resource_bundles` change and Android `res/` additions. | Resource-based strings: podspec + `res/values*` change; same behavior. |
+None open. All former questions (OQ-1 to OQ-6) were closed by the owner on 2026-10-18; see A8, A9, A13 to A18.
 
 ---
 
@@ -241,7 +241,7 @@ Confirmed = `y (owner, date)`; otherwise `n` (recommended default, needs the own
 7. SDKIAM-46: WHEN an event is older than 7 days (by `occurred_at`) at flush time THEN the SDK SHALL drop it without sending.
 8. SDKIAM-47: WHEN the server answers `201` or `200` (`duplicate: true`) THEN the SDK SHALL remove the event from the queue.
 9. SDKIAM-48: WHEN the server answers `404` or `422` THEN the SDK SHALL remove the event without retrying.
-10. SDKIAM-49: WHEN the server answers an event `429` THEN the SDK SHALL pause the flush until `Retry-After` elapses (same clamp 1..300 s and 60 s default as SDKIAM-05; the pause is an in-memory deadline shared by later triggers, separate from the `eligible` pause) and keep the queue with the same `event_id`s; WHEN it answers `5xx`, `408` or the network fails THEN the SDK SHALL retry the same head event with the SDKIAM-06 backoff (5 attempts) and then stop the flush keeping the queue (in the pre-`eligible` single-attempt flush it stops at the first failure); WHEN it answers `401` or `403` THEN the SDK SHALL stop the flush, keep the queue (bounded by the cap of 100 and the 7-day TTL), force no re-registration (A16) and log a distinct line without identifiers. `404`/`422` drop the head (SDKIAM-48).
+10. SDKIAM-49: WHEN the server answers an event `429` THEN the SDK SHALL pause the flush until `Retry-After` elapses (same clamp 1..300 s and 60 s default as SDKIAM-05; the pause is an in-memory deadline shared by later triggers, separate from the `eligible` pause) and keep the queue with the same `event_id`s; WHEN it answers `5xx`, `408` or the network fails THEN the SDK SHALL retry the same head event with the SDKIAM-06 backoff (5 attempts) and then stop the flush keeping the queue (in the pre-`eligible` single-attempt flush it stops at the first failure); WHEN it answers `401` or `403` THEN the SDK SHALL stop the flush, keep the queue (bounded by the cap of 100 and the 7-day TTL), force no re-registration (A16) and log one fixed warning, without identifiers, saying that In-App is inactive on this device until the next registration (also for `eligible` `403`). `404`/`422` drop the head (SDKIAM-48).
 11. SDKIAM-50: THE SDK SHALL attempt a flush when: an event is enqueued; the device registration succeeds; the app comes to the foreground; the network becomes available; and before every `eligible` call (SDKIAM-03). Flushes SHALL be single-flight (no concurrent flushes).
 12. SDKIAM-51: THE in-app event queue SHALL be separate from the CTR event queue (`NottiEventStore`): a CTR event stuck on `5xx`/`429` SHALL NOT delay In-App events, and In-App events SHALL NOT evict CTR events.
 13. SDKIAM-52: THE SDK SHALL stay under the per-device limits by construction: one `eligible` per session, one in-app event request in flight at a time, no parallel flushes, and a `429` stops the queue until its `Retry-After`.
@@ -273,7 +273,7 @@ Confirmed = `y (owner, date)`; otherwise `n` (recommended default, needs the own
 1. SDKIAM-58: THE SDK SHALL expose `Notti.trackEvent(name: string): void`, forwarded to the Turbo Module (`NativeNotti.ts`), implemented natively on both platforms (AD-001), returning immediately.
 2. SDKIAM-59: WHEN `trackEvent` is called with an empty or whitespace-only name, before `initialize`, with no session open, or on a torn-down module THEN it SHALL be a safe no-op: no throw, no crash, no network call. It never returns a value or a promise.
 3. SDKIAM-60: THE SDK SHALL add no public JS API in this feature other than `trackEvent` (SDKIAM-58) and `Notti.InAppMessages.addClickListener` (SDKIAM-67): no lifecycle callbacks, no other events, no getters.
-4. SDKIAM-61: THE change SHALL be additive (no existing signature changes; minor version bump) and SHALL update the Codegen spec `src/NativeNotti.ts` (method + event emitter), `src/index.tsx`, `README.md` (API reference, a highlighted "links are yours to handle" warning, data collected, privacy, local storage keys, known limitations, smoke test) and `CHANGELOG.md` under `[Unreleased]`.
+4. SDKIAM-61: THE change SHALL be additive (no existing signature changes; minor version bump) and SHALL update the Codegen spec `src/NativeNotti.ts` (method + event emitter), `src/index.tsx`, `README.md` (API reference, a highlighted "links are yours to handle" warning, data collected, privacy, local storage keys, known limitations, smoke test) and `CHANGELOG.md` under `[Unreleased]`, including a note that on `403` the SDK deliberately does not re-register (the contract says "re-register") and In-App stays inactive on the device until the next registration.
 5. SDKIAM-62: THE Expo config plugin (`plugin/src/withNotti.ts`) and the library `AndroidManifest.xml` SHALL need no change: the UI is programmatic, no new permission or `<queries>` entry is used, and iOS needs no `Info.plist` key.
 6. SDKIAM-67: THE SDK SHALL expose `Notti.InAppMessages.addClickListener(handler: (click: NottiInAppClick) => void): EventSubscription`, delivered through a Codegen event emitter `onInAppMessageClicked` (same mechanism as `onNotificationClicked`, `NativeNotti.ts:70`). `NottiInAppClick` is `{ messageId: string; buttonId: string; action: { type: 'url' | 'deeplink'; value: string } | null }`, mirroring the iOS SDK's `NottiInAppClick` (`messageId`, `buttonId`, `action`). `buttonId` is the button's id, `image` for the image, or the first button's id for a bar body tap; `action` is `null` (never `undefined`) for an action type the SDK does not know and `value` is untouched. Multiple listeners are supported; removing the subscription stops delivery.
 7. SDKIAM-68: WHEN a click happens and no listener is subscribed (or the module was torn down) THEN the SDK SHALL still report the `click` and close the display, SHALL open nothing, SHALL NOT buffer the click for a later listener, and SHALL log one fixed warning containing no values (no ids, URLs or names).
@@ -287,7 +287,7 @@ Confirmed = `y (owner, date)`; otherwise `n` (recommended default, needs the own
 
 **Acceptance Criteria**:
 
-1. SDKIAM-63: THE close control SHALL have an accessible label ("Close", localized per OQ-3), buttons SHALL use their `label` as accessible name, the title SHALL be an accessibility heading, a `center`/`full` message SHALL be modal for VoiceOver/TalkBack (content behind it not reachable) and focus SHALL move to the message when it appears; `top`/`bottom` SHALL be announced without taking focus away from the app. An iOS accessibility escape gesture on a `center`/`full` message SHALL act as the close control (`close_button`).
+1. SDKIAM-63: THE close control SHALL have an accessible label ("Close", from an in-code table: en, pt-BR, any other language falls back to English, A18), buttons SHALL use their `label` as accessible name, the title SHALL be an accessibility heading, a `center`/`full` message SHALL be modal for VoiceOver/TalkBack (content behind it not reachable) and focus SHALL move to the message when it appears; `top`/`bottom` SHALL be announced without taking focus away from the app. An iOS accessibility escape gesture on a `center`/`full` message SHALL act as the close control (`close_button`).
 2. SDKIAM-64: THE text SHALL scale with the system font setting (Android `sp`, iOS Dynamic Type via text styles with `adjustsFontForContentSizeCategory`); contrast is not validated by the SDK (contract).
 
 ---
@@ -304,7 +304,7 @@ Confirmed = `y (owner, date)`; otherwise `n` (recommended default, needs the own
 ## Edge Cases
 
 - WHEN the response lists the same message `id` twice THEN the SDK SHALL show it at most once (SDKIAM-11 covers it by id).
-- WHEN the response contains several renderable `session_start` messages THEN only the first is shown this session; the others are not queued behind it (contract: "show the first ... right away"). They were never impressed, so the server offers them again next session. [Provável: reading of the contract, for the owner's confirmation]
+- WHEN the response contains several renderable `session_start` messages THEN only the first is shown this session; the others are not queued behind it (contract: "show the first ... right away"). They were never impressed, so the server offers them again next session (decided, A17).
 - WHEN the app is backgrounded between "selected" and "visible" (waiting for an image or for an Activity/scene to be active) THEN the SDK SHALL NOT send an impression; the pending display is dropped if the session ends before it became visible, and the message will be offered again by the server because no impression was recorded.
 - WHEN no Activity (Android) or active scene (iOS) is available when a message is ready (cold start, transition, host showing a full-screen OS UI) THEN the SDK SHALL wait for the next resumed Activity / active scene within the same session and SHALL NOT send an impression until then.
 - WHEN the process dies while a message is visible THEN the display is gone; the persisted `impression` is delivered at the next flush; no `dismiss` is invented. The next session fetches again and the server's frequency rules decide.
@@ -370,7 +370,7 @@ Confirmed = `y (owner, date)`; otherwise `n` (recommended default, needs the own
 | SDKIAM-46 | P1: Events (7-day drop) | Tasks | T3/T6, T15/T18 |
 | SDKIAM-47 | P1: Events (201/200 success) | Tasks | T4/T6, T16/T18 |
 | SDKIAM-48 | P1: Events (404/422 drop) | Tasks | T4/T6, T16/T18 |
-| SDKIAM-49 | P1: Events (429 pause, 5xx backoff, 401/403 keep queue, no re-registration, A15/A16) | Tasks | T4/T6, T16/T18 |
+| SDKIAM-49 | P1: Events (429 pause, 5xx backoff, 401/403 keep queue, no re-registration, inactive-until-registration warning, A15/A16) | Tasks | T4/T6, T16/T18 |
 | SDKIAM-50 | P1: Events (flush triggers, single-flight) | Tasks | T6/T13, T18/T25 |
 | SDKIAM-51 | P1: Events (queue separate from CTR) | Tasks | T3, T15 |
 | SDKIAM-52 | P1: Events (rate limits by construction) | Tasks | T6, T18 |
@@ -382,9 +382,9 @@ Confirmed = `y (owner, date)`; otherwise `n` (recommended default, needs the own
 | SDKIAM-58 | P1: API (`trackEvent`) | Tasks | T1, T13, T25 |
 | SDKIAM-59 | P1: API (no-op robustness) | Tasks | T1, T13, T25 |
 | SDKIAM-60 | P1: API (only `trackEvent` and the click listener) | Tasks | T1, T29 |
-| SDKIAM-61 | P1: API (additive, docs, Codegen) | Tasks | T1, T26 |
+| SDKIAM-61 | P1: API (additive, docs, Codegen, CHANGELOG note on 403 divergence) | Tasks | T1, T26 |
 | SDKIAM-62 | P1: Expo/manifest unchanged | Tasks | T29 |
-| SDKIAM-63 | P2: Accessibility (labels, modal, focus) | Tasks | T9, T21, T30 |
+| SDKIAM-63 | P2: Accessibility (labels from the in-code table, modal, focus) | Tasks | T9, T21, T30 |
 | SDKIAM-64 | P2: Accessibility (font scaling) | Tasks | T8, T20, T30 |
 | SDKIAM-65 | P1: Parity | Tasks | T29 |
 | SDKIAM-66 | P1: Native tests, explicit takeRequest timeouts | Tasks | all, T30 |

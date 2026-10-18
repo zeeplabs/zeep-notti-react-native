@@ -208,7 +208,7 @@ Logging: `"Notti.inapp: eligible failed (HTTP 429)"`, never URLs, ids or bodies 
 - **Cap**: 100 events, drop oldest (tunable; at most 3 events per display, so the cap needs ~30 un-flushed displays, i.e. weeks offline).
 - **TTL**: events older than 7 days by `occurredAtMs` are dropped at enqueue time and at flush time (contract Offline behavior).
 - **Order**: insertion order == `occurredAt` order (single main-thread writer); flush sends strictly oldest first, one request in flight.
-- **Flush** (single-flight, coalesced: a trigger during a run requests one more pass; modes `full` and `singleAttempt`, like the iOS flusher): per event, strictly FIFO: `Recorded`/`Drop` (404, 422, other terminal 4xx) -> remove the head and continue; `RateLimited` -> stop, store `pausedUntil` = now + clamp(`Retry-After`, 1..300 s; 60 s default), schedule a resume at that time; `Transient` -> `full`: retry the same head (same `event_id`) with 2/4/8/16 s, 5 attempts, then stop; `singleAttempt`: stop at the first failure; `Blocked` (401, 403) -> stop, log, no schedule, queue kept, no forced re-registration (registration success is the natural fix, A16). Triggers are the SDKIAM-50 list; a trigger that fires before `pausedUntil` is a no-op.
+- **Flush** (single-flight, coalesced: a trigger during a run requests one more pass; modes `full` and `singleAttempt`, like the iOS flusher): per event, strictly FIFO: `Recorded`/`Drop` (404, 422, other terminal 4xx) -> remove the head and continue; `RateLimited` -> stop, store `pausedUntil` = now + clamp(`Retry-After`, 1..300 s; 60 s default), schedule a resume at that time; `Transient` -> `full`: retry the same head (same `event_id`) with 2/4/8/16 s, 5 attempts, then stop; `singleAttempt`: stop at the first failure; `Blocked` (401, 403) -> stop, no schedule, queue kept, no forced re-registration (registration success is the natural fix, A16); `403` logs one fixed warning with no values: In-App is inactive on this device until the next registration. The same warning applies to `eligible` `403`. Triggers are the SDKIAM-50 list; a trigger that fires before `pausedUntil` is a no-op.
 - **Session fetch** is a `singleAttempt` flush followed by `eligible`, in one executor job, **regardless of the flush outcome** (A15). `eligible` handling: `Messages` -> done; `RateLimited` -> wait clamp(`Retry-After`, 1..300; 60 default), at most 3 waits then `GaveUp`; `Transient` -> 2/4/8/16 s, 5 attempts then `GaveUp(transient: true)`; `Terminal` (401, 403, 422, other 4xx) -> `GaveUp(transient: false)`. `GaveUp(transient: true)` is retried once per `onNetworkAvailable` (spec Edge Cases) while the session is open. Accepted trade-off: when the pre-fetch flush failed, the server may offer a message whose impression is still queued.
 
 Reuse vs separate queue is DD-2.
@@ -273,7 +273,7 @@ These follow the system light/dark theme automatically; the iOS names match the 
 
 | Aspect | Android | iOS |
 | --- | --- | --- |
-| Close label | `contentDescription` from the in-code table (OQ-3) | `accessibilityLabel` same table |
+| Close label | `contentDescription` from the in-code table (A18: `en`, `pt-BR`, English fallback) | `accessibilityLabel` same table |
 | Buttons | `contentDescription` = label; `Role.BUTTON` semantics via `AccessibilityNodeInfo` class name `Button` | `accessibilityTraits = .button`, label = text |
 | Title | `ViewCompat.setAccessibilityHeading` equivalent (`AccessibilityNodeInfo.setHeading`, API 28+; below: skip) | `.header` trait |
 | Modality (`center`/`full`) | While shown, the other children of the content view get `IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS` and their previous value is restored on removal; focus moved with `sendAccessibilityEvent(TYPE_VIEW_FOCUSED)` on the title. **Risk R3** (mutating host views). | `accessibilityViewIsModal = true` on the card container; `UIAccessibility.post(.screenChanged, argument: title)`. |
@@ -417,4 +417,4 @@ Gates: Android `cd example/android && ./gradlew :react-native-notti:testDebugUni
 
 ## Open questions
 
-Remaining open question in `spec.md`: OQ-3 (close-label localization; blocks only T9/T21's final label table). Each task states the recommended default it implements unless the owner decides first. Closed by the owner on 2026-10-18: link handling (A9), pre-response `trackEvent` (A14), default palette (A13), flush-before-`eligible` and `429` handling (A15), `403` handling (A16).
+No open questions remain in `spec.md` (all closed by the owner on 2026-10-18: A8, A9, A13 to A18).
