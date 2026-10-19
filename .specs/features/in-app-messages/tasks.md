@@ -2,9 +2,9 @@
 
 **Design**: `.specs/features/in-app-messages/design.md`
 **Spec**: `.specs/features/in-app-messages/spec.md`
-**Status**: Not started (specs written 2026-10-18). 30 tasks: T1 JS facade, T2-T13 Android, T14-T25 iOS, T26-T30 docs / example / review / device validation. One task = one commit (Conventional Commits, confirm the message with the owner before committing, never `--no-verify`).
+**Status**: Not started (specs written 2026-10-18, amended 2026-10-19). 30 tasks: T1 JS facade, T2-T13 Android, T14-T25 iOS, T26-T30 docs / example / review / device validation. One task = one commit (Conventional Commits, confirm the message with the owner before committing, never `--no-verify`).
 
-Decided by Julio on 2026-10-18 and already folded in: the integrator handles links through a JS click listener (the SDK never opens a link, A9), `trackEvent` names before the `eligible` response are remembered (max 32, A14), a single-attempt pre-`eligible` flush with `eligible` called regardless and `Retry-After` clamp 1..300 s / 60 s default / 3 waits (A15), `403` keeps the queue with no forced re-registration and logs a fixed "In-App inactive on this device until the next registration" warning (A16), close label from an in-code en/pt-BR table with English fallback (A18), session/selection model aligned with the iOS SDK (A17), default palette = semantic system colors with no luminance derivation (A13), image limit 5 MiB. Each task states the recommended default for decisions it depends on; the owner can overrule before that task starts without changing the task graph.
+Decided by Julio on 2026-10-18 and already folded in: the integrator handles links through a JS click listener (the SDK never opens a link, A9), `trackEvent` names before the `eligible` response are remembered (max 32, A14), a single-attempt pre-`eligible` flush with `eligible` called regardless and `Retry-After` clamp 1..300 s / 60 s default / 3 waits (A15; the `eligible` part is superseded by the 2026-10-19 cap below), `403` keeps the queue with no forced re-registration and logs a fixed "In-App inactive on this device until the next registration" warning (A16), close label from an in-code en/pt-BR table with English fallback (A18), session/selection model aligned with the iOS SDK (A17), default palette = semantic system colors with no luminance derivation (A13), image limit 5 MiB. Decided by Julio on 2026-10-19 and folded in: `margin` is measured from the safe-area edge and `margin: false` touches the safe-area edges on all sides (A12); the `403` warning is logged only on `403`, once per session per route, while a `401` stops the flush and the fetch for the session and logs only the generic line (A16); on Android `center`/`full` consume the system Back and bars do not intercept it (A19, DD-10); `trackEvent` names after `initialize` and before the first session are remembered via an `awaitingFirstSession` flag (A14, [Provável], to validate on device); `eligible` `429` gives up above 60 s, otherwise waits `max(1, Retry-After)` s up to 3 times (A15); a late `eligible` response is discarded (SDKIAM-15); re-`initialize` with a different config resets the engine and queue records carry `app_id` (SDKIAM-70); renderability parity with iOS IAM-16 (SDKIAM-14). Each task states the recommended default for decisions it depends on; the owner can overrule before that task starts without changing the task graph.
 
 ---
 
@@ -108,7 +108,8 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 
 **Done when**:
 - [ ] `parseEligibleResponse(body)` returns messages with: unknown fields ignored; unknown `format` -> `center`; message entries that cannot be parsed skipped without failing the rest; `messages: []` valid; non-object body -> parse failure signal
-- [ ] Non-renderable marking (SDKIAM-14): empty id, title and body both blank, unknown trigger type, `event` trigger with empty name; more than 2 buttons keeps the first 2; an unknown `action.type` keeps the message renderable and yields `action = null`; `action.value` is kept byte for byte
+- [ ] Non-renderable marking (SDKIAM-14): empty id, title and body both blank, unknown trigger type, `event` trigger with empty name; a button is kept only with a non-empty `id` and `label`, then at most the first 2 VALID buttons are kept (an invalid button is dropped without making the message non-renderable); an `image_url` that is not `https` is ignored and an `image_action` without an image is ignored too; an unknown `format` -> `center` with the rest unchanged; an unknown `action.type` keeps the message renderable and yields `action = null`; `action.value` is kept byte for byte
+- [ ] Tests for the SDKIAM-14 additions: button with empty/missing `id` or `label` dropped, three buttons with the first invalid keep the next two valid ones, `http://` and relative `image_url` ignored (no image), `image_action` with no image ignored, unknown `format` renders `center` with title, body, buttons and style unchanged
 - [ ] `parseHexColor`: `#RRGGBB` upper/lower case valid; `#RGB`, `#RRGGBBAA`, no `#`, non-hex, empty, whitespace -> `null`; never throws
 - [ ] `dismiss_after_seconds` outside 1..300, null or absent -> no timer value
 - [ ] Fixtures use only synthetic values (`example.invalid`, all-zero UUIDs, `fixture`)
@@ -128,15 +129,16 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 **Where**: `android/src/main/java/com/notti/NottiInAppEventStore.kt` (new), `android/src/test/java/com/notti/NottiInAppEventStoreTest.kt` (new)
 **Depends on**: T2 (event/outcome types)
 **Reuses**: `NottiEventStore.kt:54-160` persistence style (JSON array under one key, static lock `:77`, corruption self-heal `:111`); fake `SharedPreferences` from `NottiEventStoreTest.kt`
-**Requirement**: SDKIAM-41, SDKIAM-44, SDKIAM-45, SDKIAM-46, SDKIAM-51
+**Requirement**: SDKIAM-41, SDKIAM-44, SDKIAM-45, SDKIAM-46, SDKIAM-51, SDKIAM-70 (record/purge part)
 
 **Done when**:
-- [ ] Key `notti_pending_inapp_events` in `notti_prefs`; record `{id, eventId, messageId, type, buttonId?, reason?, occurredAtMs}`; no token, no device id stored
+- [ ] Key `notti_pending_inapp_events` in `notti_prefs`; record `{id, eventId, appId, messageId, type, buttonId?, reason?, occurredAtMs}` (`appId` = the app the event was created for); no token, no device id stored
 - [ ] `enqueue(...)` generates a UUID v4 `eventId` and persists immediately; ids are unique and stable across reads and across a new store instance over the same prefs
 - [ ] `all()` returns insertion order; `remove(id)`; expired events (> 7 days by `occurredAtMs`) are dropped at enqueue and exposed as dropped by an `expire(now)` call used at flush
 - [ ] Cap 100, oldest dropped first; corrupt blob self-heals to empty; process-wide lock
+- [ ] `purgeOtherApps(appId)` removes every record whose `appId` differs and keeps the rest in order; `all(forApp)` (or an equivalent filter) never returns another app's records (SDKIAM-45, SDKIAM-70)
 - [ ] Independent of `NottiEventStore`: filling one never evicts the other (test with both over the same prefs)
-- [ ] Unit tests for each bullet (persistence across instances, order, cap, TTL boundary at exactly 7 days, corruption, independence from CTR store)
+- [ ] Unit tests for each bullet (persistence across instances, order, cap, TTL boundary at exactly 7 days, corruption, independence from CTR store, `appId` round trip, purge of other apps with mixed records)
 - [ ] Gate: Android command
 
 **Tests**: unit
@@ -157,11 +159,11 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 **Done when**:
 - [ ] `eligible`: `POST /v1/apps/{appId}/in-app-messages/eligible`, header `Authorization: Bearer <key>`, body keys exactly `device_id` and `token`
 - [ ] `events`: `POST .../in-app-messages/{id}/events`, body `device_id`, `token`, `event_id`, `type`, plus `button_id` only for `click`, `reason` only for `dismiss`, `occurred_at` RFC3339 UTC
-- [ ] Classification: 200 -> messages; 201/200 events -> Recorded; 404/422 -> Drop; 429 -> RateLimited(seconds? integer only, else null; the coordinator applies clamp 1..300 and the 60 s default); 401/403 -> Blocked (events) / Terminal (eligible); 408, 5xx, IO error, unparseable 2xx -> Transient; other 4xx -> Drop (events) / Terminal (eligible)
+- [ ] Classification: 200 -> messages; 201/200 events -> Recorded; 404/422 -> Drop; 429 -> RateLimited(seconds? integer only, else null; the coordinator applies the events clamp 1..300 / 60 s default and the `eligible` give-up above 60 s); 401 -> Unauthorized and 403 -> Forbidden (distinct outcomes on both routes, so the coordinator logs the right line); 408, 5xx, IO error, unparseable 2xx -> Transient on both routes (`408` follows the `5xx`/network policy); other 4xx -> Drop (events) / Terminal (eligible)
 - [ ] One request per call (no internal retry or sleep); `executeWithRetry` behavior and its tests unchanged
 - [ ] `appId` containing `/`, `?`, `#` cannot rewrite the path (segment encoding)
 - [ ] No log line contains token, ids, URL or body
-- [ ] MockWebServer tests with `takeRequest(5, TimeUnit.SECONDS)`: request shape, each status class, `Retry-After: 2`, absent header, `Retry-After: 0`, `Retry-After: 9999`, `Retry-After: Wed, 21 Oct 2026 07:28:00 GMT` -> null, empty body 201, `200 {"duplicate":true}`
+- [ ] MockWebServer tests with `takeRequest(5, TimeUnit.SECONDS)`: request shape, each status class (401 and 403 asserted as different outcomes; events `408` -> Transient), `Retry-After: 2`, absent header, `Retry-After: 0`, `Retry-After: 9999`, `Retry-After: Wed, 21 Oct 2026 07:28:00 GMT` -> null, empty body 201, `200 {"duplicate":true}`
 - [ ] Gate: Android command; all pre-existing `NottiApiClientTest` tests pass unmodified
 
 **Tests**: unit (MockWebServer)
@@ -177,17 +179,20 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 **Where**: `android/src/main/java/com/notti/NottiInAppSession.kt` (new), `android/src/test/java/com/notti/NottiInAppSessionTest.kt` (new)
 **Depends on**: T2
 **Reuses**: nothing platform-specific (injectable monotonic clock)
-**Requirement**: SDKIAM-08..15, SDKIAM-36..39 (clock part), SDKIAM-40 (flag part)
-**Decision implemented**: A14 (remember pending names, max 32, replay once on arrival)
+**Requirement**: SDKIAM-08..15, SDKIAM-36..39 (clock part), SDKIAM-40 (flag part), SDKIAM-59 (engine part), SDKIAM-70 (engine part)
+**Decision implemented**: A14 (remember pending names, max 32, replay once on arrival, including the `awaitingFirstSession` window), SDKIAM-15 late response, SDKIAM-70 reset
 
 **Done when**:
 - [ ] `onSessionStarted`/`onSessionEnded` with an incrementing `sessionToken`; stale tokens rejected
 - [ ] `onFetched`: first renderable `session_start` shown, others not queued; `event` messages held in order; `Show` dropped when a display exists or the id is already in `shownIds`
-- [ ] `trackEvent`: exact case-sensitive match, oldest held, not shown twice, ignored while a display is pending/visible (held untouched), ignored with no session, pending names (max 32) replayed once after `onFetched`
+- [ ] `trackEvent`: exact case-sensitive match, oldest held, not shown twice, ignored while a display is pending/visible (held untouched), pending names (max 32) replayed once after `onFetched`
+- [ ] `awaitingFirstSession` (set by `onInitialized` when no session has opened in the process, cleared by the first `onSessionStarted`): a name reported after `onInitialized` and before the first `onSessionStarted` is remembered (same 32 cap), survives the session start and is replayed once with that first session's held messages; a name reported before `onInitialized`, or with `phase == Closed` after a session already ran, is ignored (no log of the name); `onSessionEnded` with no session open does not clear the awaiting names
+- [ ] `fetchGeneration`: an `onFetched` whose generation is stale (session ended, new session started, config changed) is discarded: no `Show`, nothing held, even when a newer session is open; held `event` messages dropped at `onSessionEnded` (SDKIAM-15)
+- [ ] `onInitialized`: same config -> state untouched; different config -> `held`, `pendingNames`, `shownIds`, `fetch` (back to `Idle`), pause deadlines and warning flags reset, `fetchGeneration` incremented, display torn down with a decision the coordinator turns into a silent teardown (no terminal outcome, no event)
 - [ ] Display states Preparing/Visible/Closed; `markVisible` returns true only once (impression decision); `markClosed` produces exactly one terminal outcome (Click | Dismiss) and never both; no terminal outcome before visible
 - [ ] Session end: held and pending names cleared; visible display kept and its id carried into the next session's `shownIds` (DD-8)
 - [ ] `DisplayClock`: running only while attached and app foreground; pause/resume preserves remaining time; fires at remaining time; value outside 1..300 -> no clock
-- [ ] Table tests for each bullet, including races (stale token after session restart, double `markVisible`, `markClosed` twice)
+- [ ] Table tests for each bullet, including races (stale token after session restart, double `markVisible`, `markClosed` twice, response arriving after session end, `onInitialized` immediately followed by `trackEvent` before any `onSessionStarted`)
 - [ ] Gate: Android command
 
 **Tests**: unit
@@ -203,21 +208,23 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 **Where**: `android/src/main/java/com/notti/NottiInAppCoordinator.kt` (new), `android/src/test/java/com/notti/NottiInAppCoordinatorTest.kt` (new); behavior-preserving extraction of `formatIsoUtc` (`NottiCore.kt:675`) into a top-level internal function used by both
 **Depends on**: T2, T3, T4, T5
 **Reuses**: `NottiCore.scheduleFlush` single-flight idea (`:503`); `NottiApiClient` outcomes; retry constants (`:82`)
-**Requirement**: SDKIAM-01..06, SDKIAM-08, SDKIAM-10..13, SDKIAM-40..52, SDKIAM-54
-**Decisions implemented**: A15 (single-attempt flush then `eligible` regardless; `Retry-After` clamp), A16 (no forced re-registration); no link handling in the SDK (A9)
+**Requirement**: SDKIAM-01..06, SDKIAM-08, SDKIAM-09, SDKIAM-10..13, SDKIAM-15 (late response), SDKIAM-40..52, SDKIAM-54, SDKIAM-59 (coordinator part), SDKIAM-70
+**Decisions implemented**: A15 (single-attempt flush then `eligible` regardless except after `401`; events `Retry-After` clamp; `eligible` `429` cap), A16 (no forced re-registration; `403` warning only; `401` session stop), A14 (`onInitialized` before the first session), DD-14 (re-initialize); no link handling in the SDK (A9)
 
 **Done when**:
 - [ ] Own single-thread daemon `ScheduledExecutorService` (`notti-inapp`); state mutated on an injectable "main" poster; no `Thread.sleep`
 - [ ] Fetch triggers only when session open + identity available + fetch `Idle`; exactly one successful `eligible` per session; no refetch on `onRegistered` repeats, token refresh or core re-creation
-- [ ] A `singleAttempt` flush runs before `eligible` (one attempt per event, strict FIFO, stop at the first failure) and `eligible` is sent **regardless** of the flush outcome; remaining events stay queued; `GaveUp(transient)` resumes once per `onNetworkAvailable` within the session, never after 401/403/422 or exhausted 429 waits
-- [ ] `eligible` 429: no call before `Retry-After` clamped to 1..300 s (60 s when absent or invalid), non-blocking wait, at most 3 waits then give up for the session; 401/403/422 stop the fetch; 408/5xx/IO backoff 2/4/8/16 s, 5 attempts; constants in one adjustable place
-- [ ] `403` on `eligible` or events logs exactly one fixed warning stating that In-App is inactive on this device until the next registration (no ids, no values, asserted on captured logger output)
-- [ ] Event flush: single-flight and coalesced (`full` and `singleAttempt` modes); strict FIFO; Recorded and 404/422 remove the head; 429 pauses on a stored deadline (same clamp, shared by later triggers, independent of the `eligible` pause); transient: `full` retries the same head with the same `event_id` (5 attempts) then stops, `singleAttempt` stops at the first failure; 401/403 stop and keep the queue with a distinct log line and no re-registration; expired events dropped before sending
+- [ ] A `singleAttempt` flush runs before `eligible` (one attempt per event, strict FIFO, stop at the first failure) and `eligible` is sent **regardless** of the flush outcome, except that a `401` in the flush sets `keyRejected` and skips `eligible`; remaining events stay queued; `GaveUp(transient)` resumes once per `onNetworkAvailable` within the session, never after 401/403/422 or exhausted 429 waits
+- [ ] `eligible` 429: a parsed `Retry-After` above 60 s -> give up for the session with no wait and no second request; otherwise no call before `max(1, Retry-After)` s (60 s when absent or invalid), non-blocking wait, retry, at most 3 waits then give up for the session; 401/403/422 stop the fetch; 408/5xx/IO backoff 2/4/8/16 s, 5 attempts; constants (including the 60 s give-up threshold) in one adjustable place
+- [ ] `403` on `eligible` or events logs the one fixed warning that In-App is inactive on this device until the next registration, **once per session per route** (events and `eligible` have separate flags, reset at session start), no ids, no values; a `401` on either route sets `keyRejected` (flush and fetch stop for the rest of the session, queue kept, no re-registration) and logs only the generic operation+status line, never the warning text (asserted on captured logger output for both statuses)
+- [ ] Event flush: single-flight and coalesced (`full` and `singleAttempt` modes); strict FIFO; Recorded and 404/422 remove the head; 429 pauses on a stored deadline (same clamp, shared by later triggers, independent of the `eligible` pause); transient: `full` retries the same head with the same `event_id` (5 attempts) then stops, `singleAttempt` stops at the first failure; 403 stops and keeps the queue (no re-registration; later triggers retry), 401 stops for the session and keeps the queue; events `408` follows the `5xx`/network policy; expired events dropped before sending; only records whose `appId` equals the current app id are sent
 - [ ] Presenter callbacks: `onVisible` -> exactly one `impression` enqueued synchronously, then flush trigger; close -> one `click` (with `button_id`: button id, `image`, or first button id for bar body) or one `dismiss` (with reason); never both
 - [ ] Click order (SDKIAM-33): `click` enqueued, then the `ClickSink` port is called with `(messageId, buttonId, action untouched)`, then the display is closed with no `dismiss`; a second tap on a closing display is ignored; with no sink target the click is still reported and closed, and one fixed warning is logged (SDKIAM-68); the coordinator calls no URL-opening API
-- [ ] `trackEvent` blank/no-session/uninitialized -> no-op; never throws; never sends or logs the name
+- [ ] `trackEvent` blank, before `initialize`, or in the background after a session ran -> no-op; between `initialize` and the first session -> remembered (A14); never throws; never sends or logs the name
+- [ ] `onInitialized(config)` is called before the first `onSessionStarted` (hook contract); same config -> nothing; different config -> engine reset (T5), in-flight `eligible` response and pending retries/waits discarded, the presenter asked to tear the display down silently (no event), `purgeOtherApps(appId)` on the store, pause deadlines cleared, and the next registration under the new config triggers one `eligible`
+- [ ] A response to `eligible` arriving after its session ended (or after a config change) is discarded: no display, no held messages; held `event` messages dropped at session end
 - [ ] Identity read at call time; `null` identity defers to the next trigger (no crash)
-- [ ] Integration tests (real store, real client over MockWebServer, fake presenter and scheduler, `takeRequest(5, SECONDS)`): request-order assertions (events before `eligible`, and `eligible` still sent when the events route answers 503/429/403; impression before click), `eligible` count == 1 across a simulated RN reload (new core, same coordinator), no `PATCH /devices` in the request log, 429 timing (clamp 1..300, 60 s default when absent, 3 waits then give up on `eligible`; events pause deadline), `200 duplicate`, event_id identical across a retry, 8-day-old event never sent
+- [ ] Integration tests (real store, real client over MockWebServer, fake presenter and scheduler, `takeRequest(5, SECONDS)`): request-order assertions (events before `eligible`, and `eligible` still sent when the events route answers 503/429/403; impression before click), `eligible` count == 1 across a simulated RN reload (new core, same coordinator), no `PATCH /devices` in the request log, 429 timing (events: clamp 1..300, 60 s default, pause deadline; `eligible`: `Retry-After: 120` -> no retry and no second request, `Retry-After: 2` -> retry after 2 s, absent -> 60 s, 3 waits then give up), `403` warning once per session per route and `401` generic line with the session stop, events `408` backoff, `200 duplicate`, event_id identical across a retry, 8-day-old event never sent, a late `eligible` response after session end shows nothing and holds nothing, a different-config re-initialize resets state, tears the display down without events, discards the in-flight response and never sends the other app's records (purged), a same-config re-initialize keeps everything, **race test: `initialize` immediately followed by `trackEvent` on the same thread still matches once the first session's held messages arrive**
 - [ ] Logs contain no token, device id, ids, URLs, titles or event names (assert on captured logger output)
 - [ ] Gate: Android command
 
@@ -235,15 +242,15 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 **Depends on**: T2
 **Reuses**: nothing platform-specific
 **Requirement**: SDKIAM-16..19, SDKIAM-26..30
-**Decision implemented**: A13 (semantic system colors, no derivation)
+**Decision implemented**: A13 (semantic system colors, no derivation), A12 (margin measured from the safe-area edge)
 
 **Done when**:
 - [ ] Defaults come from the injected semantic palette (Android theme attributes with the documented fallback; iOS semantic colors) and match the design table; `style: null` -> all defaults
 - [ ] Invalid color token -> that token's default, others applied
-- [ ] `text_align` absent/unknown -> left; `margin` absent -> true; inset 16 for top/bottom/full, ignored for center
+- [ ] `text_align` absent/unknown -> left; `margin` absent -> true; inset 16 measured **from the safe-area edge** for top/bottom/full (all four sides on `full`), ignored for center; `margin: false` -> the frame equals the safe-area edges on all sides, horizontally too (landscape cutout/navigation insets included), never the raw screen edge; tested with non-zero safe-area insets on all four sides
 - [ ] `button_color`/`button_text_color` apply to all buttons; neither set -> first filled, second outlined
 - [ ] With only `background_color` set, `text_color` and the button colors stay at their semantic defaults (explicit test that no color is derived or adjusted)
-- [ ] Metrics: bar height <= 40% of container, card width <= 90% and <= 560, full inside safe area; table-tested at several container sizes (phone, small phone, tablet, landscape)
+- [ ] Metrics: bar height <= 40% of container, bar width = safe-area width minus 16 per side when `margin`, card width <= 90% and <= 560, full inside safe area; table-tested at several container sizes (phone, small phone, tablet, landscape)
 - [ ] Gate: Android command
 
 **Tests**: unit
@@ -267,9 +274,9 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 - [ ] Title/body set from the raw string; no `Html.fromHtml`, no `Linkify`/`autoLink`, no spans; newlines preserved
 - [ ] Two buttons side by side, wrapping to a column when they do not fit (measured), at default and 2.0 font scale
 - [ ] Close control always present, >= 48 dp, never removed by style, timer or content size
-- [ ] Insets applied (system bars + cutout) with API-level branching; `margin` adds 16 dp
+- [ ] Insets applied (system bars + cutout) with API-level branching; `margin` adds 16 dp measured from the safe-area edge; `margin: false` touches the safe-area edges on all sides (horizontal insets included) and is never under the status bar, cutout or navigation bar
 - [ ] Style applied (colors, align, button tokens), light/dark defaults resolved from the Activity configuration
-- [ ] Robolectric tests: each layout at phone/tablet, portrait/landscape, font scale 1.0/2.0, light/dark: bounds respected (bar <= 40%, card <= 90%), close control present and large enough, plain-text assertions (`HTML` and Markdown literals render verbatim, no `URLSpan`), two-button wrap, alignment and colors
+- [ ] Robolectric tests: each layout at phone/tablet, portrait/landscape, font scale 1.0/2.0, light/dark: bounds respected (bar <= 40%, card <= 90%), `margin` true/false against non-zero insets (16 from the safe-area edge vs touching it, horizontally too), close control present and large enough, plain-text assertions (`HTML` and Markdown literals render verbatim, no `URLSpan`), two-button wrap, alignment and colors
 - [ ] Gate: Android command
 
 **Tests**: unit (Robolectric)
@@ -289,7 +296,7 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 **Decision implemented**: A18 (in-code en/pt-BR table for the close label, English fallback for any other language)
 
 **Done when**:
-- [ ] Close control -> `close_button`; `top` swipe up and `bottom` swipe down beyond the threshold -> `swipe` (and a short drag does not dismiss); `center` backdrop tap -> `outside_tap`, tap inside the card does nothing; `full` has no other dismiss gesture; back key is not handled by the view
+- [ ] Close control -> `close_button`; `top` swipe up and `bottom` swipe down beyond the threshold -> `swipe` (and a short drag does not dismiss); `center` backdrop tap -> `outside_tap`, tap inside the card does nothing; `full` has no other dismiss gesture; the view itself does not handle the back key (the presenter owns the Back consumption on `center`/`full`, T10)
 - [ ] Button tap -> action callback with the button id; image tap (only with `image_action` and a loaded image) -> `image`; bar body tap with >= 1 button -> first button id; no buttons -> body not tappable; center/full body not tappable
 - [ ] Touches outside a `top`/`bottom` bar are not consumed (dispatch test)
 - [ ] Accessibility: close `contentDescription` from the table (en, pt-BR, fallback en), buttons announce their label and the Button role, title is a heading where the API allows, `center`/`full` hide siblings from accessibility while shown and restore the previous values exactly on removal, bars announce without taking focus
@@ -309,15 +316,17 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 **Where**: `android/src/main/java/com/notti/NottiInAppPresenter.kt` (new: `Presenter` port impl + `NottiInAppActivityTracker`), `android/src/test/java/com/notti/NottiInAppPresenterTest.kt` (new, Robolectric `ActivityController`)
 **Depends on**: T5, T9
 **Reuses**: `Application.ActivityLifecycleCallbacks` registration pattern (`NottiActivityLifecycleListener.kt:77-91`)
-**Requirement**: SDKIAM-15, SDKIAM-17, SDKIAM-25, SDKIAM-33, SDKIAM-36..40
+**Requirement**: SDKIAM-15, SDKIAM-17, SDKIAM-22 (Back), SDKIAM-25, SDKIAM-33, SDKIAM-36..40, SDKIAM-70 (silent teardown)
+**Decision implemented**: A19 / DD-10 (Back consumed on `center`/`full`)
 
 **Done when**:
 - [ ] Overlay added to `android.R.id.content` of the resumed Activity; removed on pause/destroy; re-attached (new views, same `Display`) on the next resume of the same or another Activity
 - [ ] `onVisible` raised once after the first layout while the process is started; repeated attaches (recreation, Activity A -> B) never raise a second impression (coordinator flag and presenter both asserted)
 - [ ] No resumed Activity -> display stays Preparing, no impression; session end while Preparing -> dropped, no events
 - [ ] Display clock runs only while attached and in the foreground; backgrounding or detaching pauses it; the remaining time survives recreation; at zero the display closes with `auto`; a manual close cancels it
-- [ ] Click/dismiss closes the overlay and restores host accessibility flags
-- [ ] Robolectric tests: `ActivityController.recreate()` keeps the same display and exactly one `impression`; A -> B transition moves the overlay; pause/resume math with a fake clock; `auto` dismiss; no-Activity wait; `ShadowLooper` for posted work
+- [ ] Click/dismiss closes the overlay and restores host accessibility flags; `teardownSilently()` (config-change re-initialize) removes the overlay, stops the clock, restores the flags and enqueues no event
+- [ ] Back (DD-10, A19): while a `center`/`full` display is attached the presenter holds an enabled no-op `OnBackPressedCallback` on the Activity's `onBackPressedDispatcher` (plus the API 33+ `OnBackInvokedCallback` path and the pre-33 key-listener fallback when the Activity is not a `ComponentActivity`); it is removed on pause/destroy, Activity change, close and silent teardown and re-registered on the new Activity's attach; `top`/`bottom` register nothing; verified that `androidx.activity` is on the compile classpath transitively without adding a dependency [Incerto]; the mechanism is validated on a real device in T30 scenario 26
+- [ ] Robolectric tests: Back on a `center` and on a `full` display leaves it visible, enqueues no `impression`/`click`/`dismiss`, and does not reach a host `OnBackPressedCallback` registered before the display; Back on `top`/`bottom` reaches the host callback; the callback is gone after close, Activity detach and silent teardown; `ActivityController.recreate()` keeps the same display and exactly one `impression`; A -> B transition moves the overlay; pause/resume math with a fake clock; `auto` dismiss; no-Activity wait; `ShadowLooper` for posted work
 - [ ] Gate: Android command
 
 **Tests**: unit (Robolectric)
@@ -383,14 +392,15 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 **Where**: `NottiCore.kt` (`inApp` hooks at `:436`, `:491`, `:503`, `:710`), `NottiModule.kt` (real `trackEvent`, core factory `:106`), `NottiInitProvider.kt` (`install` + tracker at `:41-46`; `handleProcessBackground` `:140`; `onStart` `:121`), `NottiNetworkObserver.kt` (`:32`); tests in `NottiCoreTest.kt`, `NottiModuleTest.kt`, `NottiForegroundObserverTest.kt`, `NottiNetworkObserverTest.kt`, new `NottiInAppEndToEndTest.kt`
 **Depends on**: T1, T6, T10, T11, T12
 **Reuses**: injection style of `NottiCore` providers (`NottiCore.kt:44-132`)
-**Requirement**: SDKIAM-02, SDKIAM-10, SDKIAM-15, SDKIAM-50, SDKIAM-53, SDKIAM-54, SDKIAM-58, SDKIAM-59, SDKIAM-67, SDKIAM-68
+**Requirement**: SDKIAM-02, SDKIAM-10, SDKIAM-13, SDKIAM-15, SDKIAM-50, SDKIAM-53, SDKIAM-54, SDKIAM-58, SDKIAM-59, SDKIAM-67, SDKIAM-68, SDKIAM-70
 
 **Done when**:
+- [ ] `onInitialized(appId, clientKey, baseUrl)` is called from the `initialize` path **before** the core is created (so the replayed missed foreground reaches `onSessionStarted()` after it), posted through the same main-thread queue as `trackEvent`; exact call site confirmed in code [Incerto until read]
 - [ ] `onSessionStarted()` only when `sessionGate.tryOpen()` succeeds; `onRegistered()` after a successful registration; `onNetworkAvailable()` from the core and the observer; `onSessionEnded()` and the display-clock pause in `handleProcessBackground` (works with no core); display-clock resume in `onStart`
-- [ ] RN reload (new core, same process) neither refetches nor drops the held messages or the visible display
+- [ ] RN reload (new core, same process, same config) neither refetches nor drops the held messages or the visible display; a re-initialize with a different app id resets the engine (SDKIAM-70)
 - [ ] `NottiModule.trackEvent` forwards to the coordinator on the main thread; `invalidate()` does not shut the coordinator down; `T1`'s `TODO(T13)` stub removed
 - [ ] Existing suites updated only for new constructor parameters, assertions unchanged
-- [ ] End-to-end test (MockWebServer + real parser/store/coordinator + fake presenter): session start -> registration -> events flushed -> `eligible` once -> `session_start` shown -> `impression` -> `click` in that order with distinct `event_id`s -> `trackEvent` shows the held message after close; request log contains no `PATCH /devices` caused by In-App (SDKIAM-53) and no sensitive logs (SDKIAM-54)
+- [ ] End-to-end test (MockWebServer + real parser/store/coordinator + fake presenter): session start -> registration -> events flushed -> `eligible` once -> `session_start` shown -> `impression` -> `click` in that order with distinct `event_id`s -> `trackEvent` shows the held message after close; **cold-start race**: `initialize` immediately followed by `trackEvent(name)` on the same thread, before the first session opens, still shows the matching held message once the first fetch completes (a name called before `initialize` does not); request log contains no `PATCH /devices` caused by In-App (SDKIAM-53) and no sensitive logs (SDKIAM-54)
 - [ ] `git diff plugin/ android/src/main/AndroidManifest.xml` empty
 - [ ] Gates: Android command; `pnpm run build:android`
 
@@ -412,7 +422,7 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 **Requirement**: SDKIAM-07, SDKIAM-14, SDKIAM-26 (parse), SDKIAM-36 (range)
 
 **Done when**:
-- [ ] Same bullets as T2, expressed in Swift, with identical table inputs (shared fixtures copied, not shared files) so parity can be diffed
+- [ ] Same bullets as T2, expressed in Swift, with identical table inputs (shared fixtures copied, not shared files) so parity can be diffed, including the SDKIAM-14 additions (buttons kept only with non-empty `id` and `label` then the first two valid ones, non-`https` `image_url` ignored, `image_action` without an image ignored, unknown `format` -> `center` unchanged; parity with iOS IAM-16)
 - [ ] No force-unwraps on server input; parse never traps
 - [ ] XCTest tables for every bullet
 - [ ] Gate: iOS command, test count grows
@@ -430,10 +440,10 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 **Where**: `ios/NottiInAppEventStore.swift`, `ios/Tests/NottiInAppEventStoreTests.swift`
 **Depends on**: T14
 **Reuses**: `NottiEventStore.swift:58-138` (`UserDefaults` suite, `NSLock`), `NottiEventStoreTests.swift` suite setup
-**Requirement**: SDKIAM-41, SDKIAM-44, SDKIAM-45, SDKIAM-46, SDKIAM-51
+**Requirement**: SDKIAM-41, SDKIAM-44, SDKIAM-45, SDKIAM-46, SDKIAM-51, SDKIAM-70 (record/purge part)
 
 **Done when**:
-- [ ] Same bullets as T3 (key `notti_pending_inapp_events` in the `notti_prefs` suite, cap 100, TTL 7 days, UUID stability, corruption self-heal, independence from the CTR store)
+- [ ] Same bullets as T3 (key `notti_pending_inapp_events` in the `notti_prefs` suite, record with `appId`, `purgeOtherApps`, cap 100, TTL 7 days, UUID stability, corruption self-heal, independence from the CTR store)
 - [ ] XCTest for each bullet
 - [ ] Gate: iOS command
 
@@ -453,7 +463,7 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 **Requirement**: SDKIAM-01 (shape), SDKIAM-05, SDKIAM-06, SDKIAM-47, SDKIAM-48, SDKIAM-49, SDKIAM-54
 
 **Done when**:
-- [ ] Same bullets as T4 (request shape, classification table incl. `Retry-After` integer-only parsing, one request per call, path-injection safe, no sensitive logs)
+- [ ] Same bullets as T4 (request shape, classification table incl. `Retry-After` integer-only parsing, 401 and 403 as distinct outcomes, `408` transient on both routes, one request per call, path-injection safe, no sensitive logs)
 - [ ] Pre-existing `NottiApiClientTests` pass unmodified
 - [ ] XCTests with `StubURLProtocol` for each status class and header case
 - [ ] Gate: iOS command
@@ -471,11 +481,11 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 **Where**: `ios/NottiInAppSession.swift`, `ios/Tests/NottiInAppSessionTests.swift`
 **Depends on**: T14
 **Reuses**: nothing platform-specific
-**Requirement**: SDKIAM-08..15, SDKIAM-36..39 (clock), SDKIAM-40 (flag)
-**Decision implemented**: A14 (max 32 names, same as Android)
+**Requirement**: SDKIAM-08..15, SDKIAM-36..39 (clock), SDKIAM-40 (flag), SDKIAM-59 (engine part), SDKIAM-70 (engine part)
+**Decision implemented**: A14 (max 32 names, same as Android, with the `awaitingFirstSession` window: on iOS the first session opens at `didBecomeActive`), SDKIAM-15 late response, SDKIAM-70 reset
 
 **Done when**:
-- [ ] Same bullets as T5 with the same table cases (session token staleness, pending-name replay, carry-over, once-only impression decision, single terminal outcome, clock pause/resume)
+- [ ] Same bullets as T5 with the same table cases (session token staleness, pending-name replay, carry-over, once-only impression decision, single terminal outcome, clock pause/resume, `awaitingFirstSession` set/clear/replay and the ignore cases, `fetchGeneration` late-response discard, held dropped at session end, `onInitialized` same vs different config)
 - [ ] Gate: iOS command
 
 **Tests**: unit
@@ -491,11 +501,12 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 **Where**: `ios/NottiInAppCoordinator.swift`, `ios/Tests/NottiInAppCoordinatorTests.swift`; behavior-preserving extraction of `NottiCore.formatIsoUtc` (`NottiCore.swift:1304`) into an internal helper
 **Depends on**: T14, T15, T16, T17
 **Reuses**: `NottiCore.onNetworkAvailable` single-flight pattern (`NottiCore.swift:611-628`), `StubURLProtocol`, injected clock/scheduler
-**Requirement**: SDKIAM-01..06, SDKIAM-08, SDKIAM-10..13, SDKIAM-40..52, SDKIAM-54
-**Decisions implemented**: A15 and A16; no link handling in the SDK (A9)
+**Requirement**: SDKIAM-01..06, SDKIAM-08, SDKIAM-09, SDKIAM-10..13, SDKIAM-15 (late response), SDKIAM-40..52, SDKIAM-54, SDKIAM-59 (coordinator part), SDKIAM-70
+**Decisions implemented**: A15 and A16 (as amended 2026-10-19), A14 (`onInitialized` before the first session), DD-14; no link handling in the SDK (A9)
 
 **Done when**:
-- [ ] Same bullets as T6 (own queue, one `eligible` per session, single-attempt flush then `eligible` regardless, 429 clamp/default/3 waits, 401/403/422 handling, pause deadline, single-flight flush, impression-then-terminal, no `PATCH /devices`, identity read at call time, no sensitive logs)
+- [ ] Same bullets as T6 (own queue, one `eligible` per session, single-attempt flush then `eligible` regardless except after `401`, events 429 clamp/default/pause deadline, `eligible` 429 give-up above 60 s else wait `max(1, Retry-After)` up to 3 waits, `403` warning once per session per route vs `401` generic line and session stop, 422 handling, events `408` as `5xx`, single-flight flush, impression-then-terminal, no `PATCH /devices`, identity read at call time, no sensitive logs, `onInitialized` before the first session with same-config keep / different-config reset and silent display teardown, `app_id` filter and purge, late `eligible` response discarded)
+- [ ] Cold-start race tests on iOS: `initialize` immediately followed by `trackEvent` on the same thread, with the application still `.inactive` (no session yet), matches once the first session (at `didBecomeActive`) delivers the held messages; a name before `initialize` does not
 - [ ] Tests assert the stubbed request log order and counts (events before `eligible`; one `eligible` across a simulated reload; no device PATCH), with injected scheduler so no real sleeps
 - [ ] Gate: iOS command
 
@@ -513,10 +524,10 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 **Depends on**: T14
 **Reuses**: nothing platform-specific
 **Requirement**: SDKIAM-16..19, SDKIAM-26..30
-**Decision implemented**: A13 (semantic `UIColor`s, no derivation)
+**Decision implemented**: A13 (semantic `UIColor`s, no derivation), A12 (margin measured from the safe-area edge)
 
 **Done when**:
-- [ ] Same bullets and table cases as T7 (semantic defaults, invalid colors, align/margin, button tokens, no derivation derivation, bounds at phone/tablet/landscape sizes)
+- [ ] Same bullets and table cases as T7 (semantic defaults, invalid colors, align, margin 16 measured from the safe-area edge and `margin: false` touching the safe-area edges on all sides horizontally too, never under the notch/Dynamic Island/home indicator, button tokens, no derivation, bounds at phone/tablet/landscape sizes)
 - [ ] Gate: iOS command
 
 **Tests**: unit
@@ -578,12 +589,13 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 **Where**: `ios/NottiInAppPresenter.swift`, `ios/Tests/NottiInAppPresenterTests.swift`
 **Depends on**: T17, T21
 **Reuses**: `NottiImpl.beginBackgroundTask` pattern is NOT needed (no background work); lifecycle notifications as in `NottiCore.observeAppForeground` (`NottiCore.swift:940-969`)
-**Requirement**: SDKIAM-15, SDKIAM-17, SDKIAM-25, SDKIAM-33, SDKIAM-36..40
+**Requirement**: SDKIAM-15, SDKIAM-17, SDKIAM-25, SDKIAM-33, SDKIAM-36..40, SDKIAM-70 (silent teardown)
 
 **Done when**:
 - [ ] `NottiInAppWindow` with `.alert` level, shown but never key; `hitTest` passes through outside the bar on `top`/`bottom`; scene resolved through an injected `SceneProviding` (first `.foregroundActive` scene; scene-less fallback)
 - [ ] `onVisible` raised once after the first layout with the app active; rotation/size changes and repeated layout passes never raise a second impression; no active scene -> Preparing, presents on `didBecomeActive`
 - [ ] Display clock runs only while presented and between `willEnterForeground` and `didEnterBackground`; `willResignActive` alone does not pause; `auto` dismiss at zero; manual close cancels
+- [ ] Silent teardown (config-change re-initialize): the window is hidden and released, the clock stops, and no event is produced
 - [ ] XCTest with fake scene provider and injected clock for the lifecycle logic; repeated `viewDidLayoutSubviews` asserts exactly one `impression`; real window behavior is in T30
 - [ ] Gate: iOS command
 
@@ -643,13 +655,14 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 **Where**: `ios/NottiCore.swift` (`inApp` hooks at `:994`, `:611-628`, `:712`, `:1009`), `ios/NottiImpl.swift` (`trackEvent`; `processBackgroundObserver` `:47-55`; coordinator touch next to `:109`), `ios/Notti.mm` (shim `trackEvent:` replaces the stub), `ios/NottiNetworkObserver.swift` (`:59`); tests in `ios/Tests/NottiCoreTests.swift`, `NottiNetworkObserverTests.swift`, new `NottiInAppEndToEndTests.swift`
 **Depends on**: T1, T18, T22, T23, T24
 **Reuses**: `sessionGate` injection (`NottiCore.swift:262-283`)
-**Requirement**: SDKIAM-02, SDKIAM-10, SDKIAM-15, SDKIAM-50, SDKIAM-53, SDKIAM-54, SDKIAM-58, SDKIAM-59, SDKIAM-67, SDKIAM-68
+**Requirement**: SDKIAM-02, SDKIAM-10, SDKIAM-13, SDKIAM-15, SDKIAM-50, SDKIAM-53, SDKIAM-54, SDKIAM-58, SDKIAM-59, SDKIAM-67, SDKIAM-68, SDKIAM-70
 
 **Done when**:
+- [ ] `onInitialized(appId, clientKey, baseUrl)` is called from the `initialize` path before the core is created, through the same main queue as `trackEvent` (on iOS the first session opens only at `didBecomeActive`); exact call site confirmed in code [Incerto until read]
 - [ ] Hooks fire exactly as in T13 (gate open, registration success, network, background even without a core); `NottiImpl.invalidate` (`:259`) does not tear the coordinator down; the `TODO(T25)` stub is gone
 - [ ] JS reload scenario keeps held messages and the visible display and sends no second `eligible`
 - [ ] Existing suites updated only for new initializer parameters
-- [ ] End-to-end XCTest equivalent to T13's flow (stubbed server, request-log order, distinct `event_id`s, no device PATCH, no sensitive logs)
+- [ ] End-to-end XCTest equivalent to T13's flow (stubbed server, request-log order, distinct `event_id`s, no device PATCH, no sensitive logs) including the cold-start race (`initialize` immediately followed by `trackEvent` before the first session still matches) and the different-config re-initialize reset
 - [ ] `git diff plugin/` empty; `Notti.mm` change limited to the shim method (AD-002)
 - [ ] Gates: iOS command; `pnpm run build:ios`
 
@@ -671,13 +684,13 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 **Requirement**: SDKIAM-55, SDKIAM-56, SDKIAM-61, SDKIAM-69
 
 **Done when**:
-- [ ] API reference rows for `Notti.trackEvent(name)` (exact, case-sensitive, local-only, never sent, dashboard names are lower-case `[a-z0-9_.-]` up to 64 chars, A7) and `Notti.InAppMessages.addClickListener(handler)` (payload `NottiInAppClick { messageId, buttonId, action: { type: 'url' | 'deeplink', value } | null }`); the listener row starts with the warning below
+- [ ] API reference rows for `Notti.trackEvent(name)` (exact, case-sensitive, local-only, never sent, dashboard names are lower-case `[a-z0-9_.-]` up to 64 chars, A7; a name reported after `initialize` and before the first session opens is remembered and replayed with that session, a name before `initialize` or in the background after a session ran is ignored, A14) and `Notti.InAppMessages.addClickListener(handler)` (payload `NottiInAppClick { messageId, buttonId, action: { type: 'url' | 'deeplink', value } | null }`); the listener row starts with the warning below
 - [ ] A highlighted callout (blockquote with a bold lead) at the top of the In-App section and repeated in the listener's API row: **"Links are yours to handle. The SDK never opens a `url` or `deeplink`. Without a registered click listener, tapping a button reports the click, closes the message and does nothing else."** With a listener example: `deeplink` values go through the app's navigation, `url` values through `Linking.openURL`; register the listener at app start (a click with no listener is not buffered or replayed)
 - [ ] "In-App messages" section: one fetch per session (session definition), one visible at a time, once per session, layouts, plain text, click always reported and closes the message (no `dismiss`), auto dismiss, offline queue and 7-day drop, no persistent "shown" state
 - [ ] Data collected table: fetch body (`device_id`, `token`), per-display events, new storage key `notti_pending_inapp_events`, and the image request to the author-chosen host (not Notti; no identifiers)
 - [ ] Privacy section: In-App events listed with the Product Interaction nature; the pending owner decision on labels referenced, not resolved; LGPD note unchanged in tone
-- [ ] Known limitations: overlay hidden under RN `<Modal>` on Android; queue/`eligible` give-up behavior; hostless-test gaps are NOT user docs
-- [ ] CHANGELOG `[Unreleased]` also states the deliberate divergence from the contract: on `403` the SDK does not re-register; In-App stays inactive on the device until the next registration (cold start or token refresh)
+- [ ] Known limitations: overlay hidden under RN `<Modal>` on Android; queue/`eligible` give-up behavior (including the `Retry-After` above 60 s give-up); on Android `center`/`full` consume the system Back button (no dismiss, no host navigation) while bars do not intercept it; `margin` measured from the safe-area edge; hostless-test gaps are NOT user docs
+- [ ] CHANGELOG `[Unreleased]` also states the deliberate divergence from the contract: on `403` the SDK does not re-register and logs the fixed warning once per session per route; In-App stays inactive on the device until the next registration (cold start or token refresh); a `401` stops In-App for the session without re-registering and logs only the generic line
 - [ ] CHANGELOG `[Unreleased]`: additive note ("New: `Notti.trackEvent`, In-App messages; requires a Notti backend with In-App rich messages")
 - [ ] All examples use synthetic values (`example.invalid`)
 - [ ] Gate: `pnpm lint` (prettier on markdown if configured) and `pnpm typecheck`
@@ -746,9 +759,10 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 - [ ] `git grep -nE "PATCH|patchDevice" ` inside In-App files finds none (SDKIAM-53)
 - [ ] `git grep -nE "ACTION_VIEW|startActivity|Uri\.parse|UIApplication|openURL|canOpenURL" android/src/main/java/com/notti/NottiInApp* ios/NottiInApp*` finds none: the SDK opens no link (SDKIAM-32)
 - [ ] Click payload and no-listener rule identical on both platforms (SDKIAM-67, SDKIAM-68)
+- [ ] Parity of the 2026-10-19 rules on both platforms: margin from the safe-area edge, `403`-only warning and `401` session stop, `eligible` 429 cap, `awaitingFirstSession`, late-response discard, config-change reset with `app_id` records, renderability; the only platform difference is the Android Back handling (listed in `design.md` "Platform differences")
 - [ ] Every SDKIAM requirement has a test (traceability) or a T30 scenario
 - [ ] Full gate green with real output pasted into the PR description: `pnpm typecheck && pnpm lint && pnpm test && pnpm run build:android && pnpm run build:ios`, Android `testDebugUnitTest`, iOS `xcodebuild test`
-- [ ] `STATE.md`: AD-004 status updated, feature handoff entry added
+- [ ] `STATE.md`: AD-004 status updated (2026-10-19 decisions included), feature handoff entry added
 
 **Tests**: none (review) + full gates
 **Gate**: full (all)
@@ -762,16 +776,16 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 **What**: Run the scenarios below on at least one physical Android device and one physical iPhone against a running `zeep-notti` with In-App rich messages; record evidence in `.specs/features/in-app-messages/validation.md` (created then, not now). Anything that fails becomes a fix task before release.
 **Where**: example app (T28), a real Notti instance, dashboard metrics
 **Depends on**: T29
-**Requirement**: SDKIAM-17, SDKIAM-21, SDKIAM-22, SDKIAM-25, SDKIAM-37, SDKIAM-40, SDKIAM-45, SDKIAM-63, SDKIAM-64, SDKIAM-66 (everything not unit-testable)
+**Requirement**: SDKIAM-13, SDKIAM-17, SDKIAM-21, SDKIAM-22, SDKIAM-25, SDKIAM-28, SDKIAM-37, SDKIAM-40, SDKIAM-45, SDKIAM-63, SDKIAM-64, SDKIAM-66, SDKIAM-70 (everything not unit-testable)
 
 **Scenarios** (each on both platforms unless stated; record device, OS, SDK version, result):
 
 1. Cold start: `session_start` message appears once, after registration; exactly one `eligible` request in the server log.
 2. Each layout (`top`, `center`, `bottom`, `full`) renders inside its bounds on a small phone and a large phone/tablet, portrait and landscape.
 3. Dark mode and light mode with default style; then with only `background_color` set: text stays readable.
-4. Full style set: colors, `text_align` left/center/right, `margin` true/false, button tokens apply to all buttons.
+4. Full style set: colors, `text_align` left/center/right, `margin` true/false (true: 16 from the safe-area edge; false: touches the safe-area edges on all sides, horizontally too, never under the notch/cutout/status bar/home indicator, also in landscape), button tokens apply to all buttons.
 5. Largest system font size / Dynamic Type: nothing unreachable; text scrolls; buttons and close control reachable.
-6. Gestures: `top` swipe up, `bottom` swipe down, `center` backdrop tap, `full` no gesture, close button on all; verify the reported `reason` in the dashboard/server.
+6. Gestures: `top` swipe up, `bottom` swipe down, `center` backdrop tap, `full` no gesture, close button on all; verify the reported `reason` in the dashboard/server. Android Back: see scenario 26.
 7. Taps: each button, image with `image_action` (`image`), bar body (first button); each closes the message and reports only the click.
 8. Links: with the example's listener, a button with an `https` `url` and one with a `deeplink` each deliver the untouched action to JS (the example opens it) and the SDK itself opens nothing; with the listener removed, tapping reports the click (dashboard), closes the message and nothing opens; a tap before any listener exists is not replayed when one registers later; unknown action type delivers `action: null`.
 9. Auto dismiss: closes after N s with `auto`; backgrounding mid-countdown pauses it; manual close earlier reports `close_button`.
@@ -782,14 +796,17 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 14. Background/foreground cycle: a new session fetches once; the previously shown `once` message is not re-offered by the server; a message visible across the background continues.
 15. `trackEvent` matching: exact name shows the held message only when none is visible; wrong case does nothing; called before the fetch completes (A14: remembered and evaluated on arrival); called in a tight loop causes no network traffic.
 16. Offline: airplane mode at launch (fetch fails, resumes on reconnect); airplane mode during a display then close, force-kill, relaunch: events delivered with the same `event_id`, no duplicates in metrics.
-17. Server `429` with `Retry-After` (throttle via a test proxy): no early retry; server `5xx` on events: backoff, queue kept; `403` (revoke token): flush stops and keeps the queue, resumes after the normal registration; `eligible` still goes out after a failed pre-fetch flush; `429` on `eligible` waits the clamped time at most 3 times.
+17. Server `429` with `Retry-After` (throttle via a test proxy): no early retry; server `5xx` on events: backoff, queue kept; `403` (revoke token): flush stops and keeps the queue, resumes after the normal registration; `eligible` still goes out after a failed pre-fetch flush; `429` on `eligible`: `Retry-After` of 60 s or less waits that time (at least 1 s, at most 3 waits), above 60 s gives up for the session with no retry; `401` (invalid client key): flush and fetch stop for the session, queue kept, only the generic log line; `403`: the fixed inactive warning appears once per session per route.
 18. Event older than 7 days (clock-shifted test device or edited queue): never sent.
 19. No sensitive data: capture device logs (`logcat`, Console) during a full run with synthetic token/title/event name: zero occurrences; capture the image request (proxy): no `Authorization`, no cookies.
 20. MAU: after a full run, the device's `last_seen_at` in the backend did not change because of In-App traffic alone.
 21. Accessibility: VoiceOver and TalkBack: close label announced, title heading, buttons activatable, `center`/`full` modal (focus trapped, background unreachable), bars announced without stealing focus; Reduce Motion; record the Android sibling-hiding behavior with real TalkBack (R3).
-22. Insets: devices with a notch/cutout, gesture navigation and 3-button navigation, Android 15+ edge-to-edge, iOS Dynamic Island: message never under system UI.
+22. Insets: devices with a notch/cutout, gesture navigation and 3-button navigation, Android 15+ edge-to-edge, iOS Dynamic Island: message never under system UI, with `margin` true and false, portrait and landscape.
 23. Memory/perf: show and dismiss 20 messages with images in one session: no leak growth, no ANR/hitch.
-24. Compare each layout with the dashboard preview (`InAppPreview`) side by side and record deviations for the owner's eyes (A12, A13).
+24. Compare each layout with the dashboard preview (`InAppPreview`) side by side and record deviations for the owner's eyes (A13; the `margin` rule, A12, is decided: report any preview difference).
+25. Cold-start ordering (A14, [Provável], the point the owner asked to validate; both platforms): with an `event` message named `checkout_done` active and no `session_start` message, call `Notti.trackEvent('checkout_done')` immediately after `Notti.initialize(...)` in the app entry (before any foreground-dependent code), over repeated cold starts: the held message shows once, as part of the first session, after the first `eligible`; record the order of the `initialize`, `trackEvent`, session open and `eligible` events from native debug logs (no names logged: use temporary local instrumentation, not committed). A `trackEvent` before `initialize` and one while the app is in the background after a session ran must do nothing. iOS: confirm the session opens at `didBecomeActive` and not earlier. Android: confirm the asynchronous store work behind the session start does not reorder the flag.
+26. Android Back (A19, DD-10, [Incerto]): on `center` and `full` the Back button and the Back gesture do nothing (message stays, no dismiss in the dashboard, the host screen behind does not navigate and the JS `BackHandler` is not triggered); on `top` and `bottom` Back reaches the app as usual; check 3-button navigation, gesture navigation with predictive back, API 33/34/35 with and without `android:enableOnBackInvokedCallback`, a `ReactActivity` host, rotation and Activity change while the message is visible, and that Back works normally again after the message closes. The close control remains the only way out of `full`.
+27. Re-initialize (SDKIAM-70): same config (RN reload) keeps the visible message, held messages and queue; a re-initialize with a different app id (test build with a second app) resets the engine, removes the visible message without a dismiss in the dashboard, discards the old app's queued events (never sent to the new app) and triggers one `eligible` for the new config.
 
 **Done when**:
 - [ ] Every scenario has a recorded result and evidence (screenshot/screen recording and server/dashboard readout, no real user data)
