@@ -10,6 +10,10 @@ import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
 import java.io.IOException
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 
 /**
  * `profileFields` holds the read-once profile fields the backend echoed back
@@ -62,6 +66,41 @@ sealed class EventResult {
   object Success : EventResult()
   data class Failure(val message: String, val terminal: Boolean) : EventResult()
 }
+
+/**
+ * Outcome of [NottiApiClient.fetchEligibleInAppMessages]: one request, no
+ * retry. The coordinator owns the waits and the give-up rules.
+ * [RateLimited.retryAfterSeconds] is the integer `Retry-After` or `null`
+ * (absent, an HTTP-date or anything else); it is not clamped here.
+ * [Unauthorized] (401) and [Forbidden] (403) stay distinct so the right log
+ * line is used. [Terminal] is a 4xx that cannot succeed (422, 404...).
+ * [Transient] is a network error, 408, 5xx or an unparseable 2xx.
+ */
+sealed class InAppEligibleResult {
+  data class Messages(val messages: List<InAppMessage>) : InAppEligibleResult()
+  data class RateLimited(val retryAfterSeconds: Int?) : InAppEligibleResult()
+  object Unauthorized : InAppEligibleResult()
+  object Forbidden : InAppEligibleResult()
+  data class Terminal(val status: Int) : InAppEligibleResult()
+  object Transient : InAppEligibleResult()
+}
+
+/**
+ * Outcome of [NottiApiClient.reportInAppEvent]: [Recorded] is a 2xx (201 new,
+ * 200 duplicate), [Drop] a 4xx that cannot succeed (the queue removes the
+ * event). The other cases mirror [InAppEligibleResult].
+ */
+sealed class InAppEventResult {
+  object Recorded : InAppEventResult()
+  object Drop : InAppEventResult()
+  data class RateLimited(val retryAfterSeconds: Int?) : InAppEventResult()
+  object Unauthorized : InAppEventResult()
+  object Forbidden : InAppEventResult()
+  object Transient : InAppEventResult()
+}
+
+/** Raw result of one HTTP exchange; [status] is -1 on an IO error. */
+private class OnceResponse(val status: Int, val body: String, val retryAfter: String?)
 
 /**
  * Talks to Notti' `/v1/apps/{app_id}/devices` endpoints (design.md
@@ -194,6 +233,111 @@ class NottiApiClient(
     return executeWithRetry(request) { true }
       .toEventResult()
   }
+
+  /**
+   * `POST /v1/apps/{appId}/in-app-messages/eligible`. A single attempt (no
+   * retry, no sleep): `Retry-After` and the backoff are the coordinator's
+   * concern. Nothing here logs a token, id, URL or body.
+   */
+  fun fetchEligibleInAppMessages(deviceId: String, token: String): InAppEligibleResult {
+    val url = inAppUrl("eligible") ?: return InAppEligibleResult.Terminal(0)
+    val body = JSONObject().put("device_id", deviceId).put("token", token)
+    val response = executeOnce(url, body)
+    return when {
+      response.status in 200..299 -> {
+        val messages = parseEligibleResponse(response.body)
+        if (messages == null) InAppEligibleResult.Transient else InAppEligibleResult.Messages(messages)
+      }
+      response.status == 429 -> InAppEligibleResult.RateLimited(parseRetryAfter(response.retryAfter))
+      response.status == 401 -> InAppEligibleResult.Unauthorized
+      response.status == 403 -> InAppEligibleResult.Forbidden
+      response.status == 408 || response.status !in 400..499 -> InAppEligibleResult.Transient
+      else -> InAppEligibleResult.Terminal(response.status)
+    }
+  }
+
+  /**
+   * `POST /v1/apps/{appId}/in-app-messages/{messageId}/events`. A single
+   * attempt. `button_id` is sent only for `click` and `reason` only for
+   * `dismiss` (the server rejects them elsewhere with 422).
+   */
+  fun reportInAppEvent(
+    event: InAppPendingEvent,
+    deviceId: String,
+    token: String
+  ): InAppEventResult {
+    val url = inAppUrl(event.messageId, "events") ?: return InAppEventResult.Drop
+    val body = JSONObject()
+      .put("device_id", deviceId)
+      .put("token", token)
+      .put("event_id", event.eventId)
+      .put("type", event.type)
+      .put("occurred_at", formatRfc3339Utc(event.occurredAtMs))
+    if (event.type == InAppEventType.CLICK && event.buttonId != null) body.put("button_id", event.buttonId)
+    if (event.type == InAppEventType.DISMISS && event.reason != null) body.put("reason", event.reason)
+    val response = executeOnce(url, body)
+    return when {
+      response.status in 200..299 -> InAppEventResult.Recorded
+      response.status == 429 -> InAppEventResult.RateLimited(parseRetryAfter(response.retryAfter))
+      response.status == 401 -> InAppEventResult.Unauthorized
+      response.status == 403 -> InAppEventResult.Forbidden
+      response.status == 408 || response.status !in 400..499 -> InAppEventResult.Transient
+      else -> InAppEventResult.Drop
+    }
+  }
+
+  /**
+   * Built segment-by-segment (like [eventsUrl]) so an `appId` or message id
+   * carrying `/`, `?` or `#` stays ONE path segment.
+   */
+  private fun inAppUrl(vararg tail: String): HttpUrl? = try {
+    baseUrl.toHttpUrlOrNull()
+      ?.newBuilder()
+      ?.addPathSegment("v1")
+      ?.addPathSegment("apps")
+      ?.addPathSegment(appId)
+      ?.addPathSegment("in-app-messages")
+      ?.also { builder -> tail.forEach { builder.addPathSegment(it) } }
+      ?.build()
+  } catch (e: IllegalArgumentException) {
+    null
+  }
+
+  /** One request, no retry, no sleep. An IO error or an unbuildable request yields status -1. */
+  private fun executeOnce(url: HttpUrl, json: JSONObject): OnceResponse {
+    val request = try {
+      Request.Builder()
+        .url(url)
+        .header("Authorization", "Bearer $clientKey")
+        .post(json.toString().toRequestBody(jsonMediaType))
+        .build()
+    } catch (e: IllegalArgumentException) {
+      return OnceResponse(-1, "", null)
+    }
+    return try {
+      httpClient.newCall(request).execute().use { response ->
+        OnceResponse(response.code, response.body?.string().orEmpty(), response.header("Retry-After"))
+      }
+    } catch (e: IOException) {
+      OnceResponse(-1, "", null)
+    }
+  }
+
+  /**
+   * Integer seconds only (the contract says seconds): an HTTP-date, a sign,
+   * a fraction or blank yields `null`. A value too large for an Int is
+   * capped at `Int.MAX_VALUE`.
+   */
+  private fun parseRetryAfter(raw: String?): Int? {
+    val value = raw?.trim() ?: return null
+    if (value.isEmpty() || !value.all { it in '0'..'9' }) return null
+    return value.toLongOrNull()?.coerceAtMost(Int.MAX_VALUE.toLong())?.toInt() ?: Int.MAX_VALUE
+  }
+
+  private fun formatRfc3339Utc(epochMs: Long): String =
+    SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)
+      .apply { timeZone = TimeZone.getTimeZone("UTC") }
+      .format(Date(epochMs))
 
   /** Shared path builder for `POST .../devices` and `PATCH .../devices/{id}` (L1). */
   private fun devicesUrl(deviceId: String? = null): HttpUrl? = try {

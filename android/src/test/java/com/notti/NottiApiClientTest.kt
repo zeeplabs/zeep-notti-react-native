@@ -7,6 +7,7 @@ import okhttp3.mockwebserver.SocketPolicy
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -615,5 +616,215 @@ class NottiApiClientTest {
     ) { index -> aospEncode(value.get(index)) }
     is Boolean, is Number -> value.toString()
     else -> JSONObject.quote(value.toString())
+  }
+
+  // --- In-App endpoints (single attempt) ----------------------------------
+
+  private val inAppDevice = "00000000-0000-0000-0000-0000000000d1"
+  private val inAppMessageId = "00000000-0000-0000-0000-0000000000b1"
+
+  private fun inAppEvent(
+    type: String = InAppEventType.IMPRESSION,
+    buttonId: String? = null,
+    reason: String? = null
+  ) = InAppPendingEvent(
+    id = "local",
+    eventId = "00000000-0000-4000-8000-0000000000e1",
+    appId = "app-1",
+    messageId = inAppMessageId,
+    type = type,
+    buttonId = buttonId,
+    reason = reason,
+    occurredAtMs = 1_792_247_405_000L
+  )
+
+  @Test
+  fun `eligible sends the documented request and parses the messages`() {
+    server.enqueue(
+      MockResponse().setResponseCode(200).setBody(
+        """{"messages":[{"id":"m1","title":"fixture","trigger":{"type":"session_start"}}]}"""
+      )
+    )
+
+    val result = client.fetchEligibleInAppMessages(inAppDevice, "fcm-token")
+
+    val recorded = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+    assertEquals("POST", recorded.method)
+    assertEquals("/v1/apps/app-1/in-app-messages/eligible", recorded.path)
+    assertEquals("Bearer secret-key", recorded.getHeader("Authorization"))
+    val sent = JSONObject(recorded.body.readUtf8())
+    assertEquals(setOf("device_id", "token"), sent.keys().asSequence().toSet())
+    assertEquals(inAppDevice, sent.getString("device_id"))
+    assertEquals("fcm-token", sent.getString("token"))
+    assertEquals(listOf("m1"), (result as InAppEligibleResult.Messages).messages.map { it.id })
+    assertEquals(1, server.requestCount)
+  }
+
+  @Test
+  fun `eligible with an empty messages array is a valid result`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"messages":[]}"""))
+
+    assertEquals(
+      InAppEligibleResult.Messages(emptyList()),
+      client.fetchEligibleInAppMessages(inAppDevice, "t")
+    )
+  }
+
+  @Test
+  fun `eligible classifies each status and never retries or sleeps`() {
+    val expected = mapOf(
+      401 to InAppEligibleResult.Unauthorized,
+      403 to InAppEligibleResult.Forbidden,
+      404 to InAppEligibleResult.Terminal(404),
+      422 to InAppEligibleResult.Terminal(422),
+      400 to InAppEligibleResult.Terminal(400),
+      408 to InAppEligibleResult.Transient,
+      500 to InAppEligibleResult.Transient,
+      503 to InAppEligibleResult.Transient
+    )
+    expected.forEach { (status, outcome) ->
+      server.enqueue(MockResponse().setResponseCode(status))
+      assertEquals("status $status", outcome, client.fetchEligibleInAppMessages(inAppDevice, "t"))
+    }
+    // OkHttp itself replays a 408 once (RetryAndFollowUpInterceptor); the client adds no retry.
+    assertEquals(expected.size + 1, server.requestCount)
+    assertTrue(sleeps.isEmpty())
+    assertTrue(InAppEligibleResult.Unauthorized != InAppEligibleResult.Forbidden)
+  }
+
+  @Test
+  fun `eligible with an unparseable 2xx or a network error is transient`() {
+    server.enqueue(MockResponse().setResponseCode(200).setBody("<html>portal</html>"))
+    assertEquals(InAppEligibleResult.Transient, client.fetchEligibleInAppMessages(inAppDevice, "t"))
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"messages":"x"}"""))
+    assertEquals(InAppEligibleResult.Transient, client.fetchEligibleInAppMessages(inAppDevice, "t"))
+    server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AT_START))
+    assertEquals(InAppEligibleResult.Transient, client.fetchEligibleInAppMessages(inAppDevice, "t"))
+    assertTrue(sleeps.isEmpty())
+  }
+
+  @Test
+  fun `429 carries Retry-After as integer seconds or null`() {
+    fun eligibleRetryAfter(header: String?): Int? {
+      val response = MockResponse().setResponseCode(429)
+      if (header != null) response.setHeader("Retry-After", header)
+      server.enqueue(response)
+      return (client.fetchEligibleInAppMessages(inAppDevice, "t") as InAppEligibleResult.RateLimited)
+        .retryAfterSeconds
+    }
+    assertEquals(2, eligibleRetryAfter("2"))
+    assertNull(eligibleRetryAfter(null))
+    assertEquals(0, eligibleRetryAfter("0"))
+    assertEquals(9999, eligibleRetryAfter("9999"))
+    assertNull(eligibleRetryAfter("Wed, 21 Oct 2026 07:28:00 GMT"))
+    assertNull(eligibleRetryAfter("-5"))
+    assertNull(eligibleRetryAfter("1.5"))
+    assertEquals(Int.MAX_VALUE, eligibleRetryAfter("99999999999999999999"))
+  }
+
+  @Test
+  fun `events sends the documented request for each type`() {
+    server.enqueue(MockResponse().setResponseCode(201).setBody("""{"duplicate":false}"""))
+    server.enqueue(MockResponse().setResponseCode(201).setBody("""{"duplicate":false}"""))
+    server.enqueue(MockResponse().setResponseCode(201).setBody("""{"duplicate":false}"""))
+
+    client.reportInAppEvent(inAppEvent(), inAppDevice, "tok")
+    client.reportInAppEvent(inAppEvent(InAppEventType.CLICK, buttonId = "btn"), inAppDevice, "tok")
+    client.reportInAppEvent(inAppEvent(InAppEventType.DISMISS, reason = "auto"), inAppDevice, "tok")
+
+    val impression = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+    assertEquals("POST", impression.method)
+    assertEquals("/v1/apps/app-1/in-app-messages/$inAppMessageId/events", impression.path)
+    assertEquals("Bearer secret-key", impression.getHeader("Authorization"))
+    val sent = JSONObject(impression.body.readUtf8())
+    assertEquals(
+      setOf("device_id", "token", "event_id", "type", "occurred_at"),
+      sent.keys().asSequence().toSet()
+    )
+    assertEquals("00000000-0000-4000-8000-0000000000e1", sent.getString("event_id"))
+    assertEquals("impression", sent.getString("type"))
+
+    val click = JSONObject(requireNotNull(server.takeRequest(5, TimeUnit.SECONDS)).body.readUtf8())
+    assertEquals("btn", click.getString("button_id"))
+    assertFalse(click.has("reason"))
+
+    val dismiss = JSONObject(requireNotNull(server.takeRequest(5, TimeUnit.SECONDS)).body.readUtf8())
+    assertEquals("auto", dismiss.getString("reason"))
+    assertFalse(dismiss.has("button_id"))
+  }
+
+  @Test
+  fun `occurred_at is RFC3339 UTC`() {
+    server.enqueue(MockResponse().setResponseCode(201))
+
+    client.reportInAppEvent(inAppEvent(), inAppDevice, "t")
+
+    val sent = JSONObject(requireNotNull(server.takeRequest(5, TimeUnit.SECONDS)).body.readUtf8())
+    assertEquals("2026-10-17T14:30:05Z", sent.getString("occurred_at"))
+  }
+
+  @Test
+  fun `events classify each status`() {
+    server.enqueue(MockResponse().setResponseCode(201))
+    assertEquals(InAppEventResult.Recorded, client.reportInAppEvent(inAppEvent(), inAppDevice, "t"))
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"duplicate":true}"""))
+    assertEquals(InAppEventResult.Recorded, client.reportInAppEvent(inAppEvent(), inAppDevice, "t"))
+    server.enqueue(MockResponse().setResponseCode(201).setBody(""))
+    assertEquals(InAppEventResult.Recorded, client.reportInAppEvent(inAppEvent(), inAppDevice, "t"))
+
+    val expected = mapOf(
+      404 to InAppEventResult.Drop,
+      422 to InAppEventResult.Drop,
+      400 to InAppEventResult.Drop,
+      401 to InAppEventResult.Unauthorized,
+      403 to InAppEventResult.Forbidden,
+      408 to InAppEventResult.Transient,
+      500 to InAppEventResult.Transient,
+      502 to InAppEventResult.Transient
+    )
+    expected.forEach { (status, outcome) ->
+      server.enqueue(MockResponse().setResponseCode(status))
+      assertEquals("status $status", outcome, client.reportInAppEvent(inAppEvent(), inAppDevice, "t"))
+    }
+    server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AT_START))
+    assertEquals(InAppEventResult.Transient, client.reportInAppEvent(inAppEvent(), inAppDevice, "t"))
+    // +1: OkHttp itself replays a 408 once; the client adds no retry.
+    assertEquals(3 + expected.size + 1 + 1, server.requestCount)
+    assertTrue(sleeps.isEmpty())
+  }
+
+  @Test
+  fun `events 429 carries Retry-After`() {
+    server.enqueue(MockResponse().setResponseCode(429).setHeader("Retry-After", "2"))
+    assertEquals(
+      InAppEventResult.RateLimited(2),
+      client.reportInAppEvent(inAppEvent(), inAppDevice, "t")
+    )
+    server.enqueue(MockResponse().setResponseCode(429))
+    assertEquals(
+      InAppEventResult.RateLimited(null),
+      client.reportInAppEvent(inAppEvent(), inAppDevice, "t")
+    )
+  }
+
+  @Test
+  fun `an app id with path or query characters cannot rewrite the in-app path`() {
+    val hostile = NottiApiClient(
+      httpClient = OkHttpClient(),
+      baseUrl = server.url("/").toString().trimEnd('/'),
+      appId = "a/../b?x=1#f",
+      clientKey = "secret-key",
+      sleeper = { }
+    )
+    server.enqueue(MockResponse().setResponseCode(200).setBody("""{"messages":[]}"""))
+    server.enqueue(MockResponse().setResponseCode(201))
+
+    hostile.fetchEligibleInAppMessages(inAppDevice, "t")
+    hostile.reportInAppEvent(inAppEvent().copy(messageId = "m/../x"), inAppDevice, "t")
+
+    val eligible = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+    assertEquals("/v1/apps/a%2F..%2Fb%3Fx=1%23f/in-app-messages/eligible", eligible.path)
+    val events = requireNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+    assertEquals("/v1/apps/a%2F..%2Fb%3Fx=1%23f/in-app-messages/m%2F..%2Fx/events", events.path)
   }
 }
