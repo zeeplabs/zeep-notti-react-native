@@ -14,6 +14,17 @@ export interface NotificationPayload {
   data?: { [key: string]: string };
 }
 
+export interface InAppClickAction {
+  type: string;
+  value: string;
+}
+
+export interface InAppClickPayload {
+  messageId: string;
+  buttonId: string;
+  action?: InAppClickAction | null;
+}
+
 export interface Spec extends TurboModule {
   initialize(
     appId: string,
@@ -53,6 +64,14 @@ export interface Spec extends TurboModule {
   getDeviceId(): string | null;
 
   /**
+   * Reports a host-app event name that can trigger an In-App message
+   * (`trigger.type = "event"`). The name is matched locally, byte for byte
+   * (no trimming, no case change) against the trigger names of the eligible
+   * messages. It is never sent to the Notti server.
+   */
+  trackEvent(name: string): void;
+
+  /**
    * Returns the notification the app was cold-launched from by the user
    * tapping it, if any - and only once: the native side clears it after
    * this resolves. Must exist because the click that launches the process
@@ -74,6 +93,12 @@ export interface Spec extends TurboModule {
    * (reinstall, device change, revocation/renewal by the Notti backend).
    */
   readonly onDeviceIdChanged: CodegenTypes.EventEmitter<string>;
+
+  /**
+   * Fires when the user taps a button or the image of an In-App message.
+   * The SDK never opens the link itself; the host app handles `action`.
+   */
+  readonly onInAppMessageClicked: CodegenTypes.EventEmitter<InAppClickPayload>;
 }
 
 export default TurboModuleRegistry.getEnforcing<Spec>('Notti');

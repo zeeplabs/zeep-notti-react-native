@@ -378,6 +378,10 @@ public class NottiImpl: NSObject {
     core.getDeviceId()
   }
 
+  // TODO(T25): replaced by the real in-app trigger wiring.
+  @objc(trackEvent:)
+  public func trackEvent(_ name: String) {}
+
   /// Backs the Spec's `getInitialNotificationClick()`: returns the click that
   /// launched the app from a cold start (buffered before any JS listener could
   /// exist) and consumes it, or nil when the app was not launched by a tap.

@@ -1,5 +1,9 @@
 import type { EventSubscription } from 'react-native';
-import NativeNotti, { type NotificationPayload } from './NativeNotti';
+import NativeNotti, {
+  type NotificationPayload,
+  type InAppClickAction,
+  type InAppClickPayload,
+} from './NativeNotti';
 
 // SPEC_DEVIATION: T4 replaced NativeNotti.ts's scaffolded `multiply` method
 // with the real v1 Spec, orphaning the `multiply`/`multiply.native` files
@@ -8,6 +12,8 @@ import NativeNotti, { type NotificationPayload } from './NativeNotti';
 // in TS).
 
 export type { NotificationPayload };
+export type NottiInAppAction = InAppClickAction;
+export type NottiInAppClick = InAppClickPayload;
 
 export type NottiEventName =
   'notificationReceived' | 'notificationClicked' | 'deviceIdChanged';
@@ -133,6 +139,27 @@ function getDeviceId(): string | null {
 }
 
 /**
+ * Reports a host-app event that can trigger an In-App message. The exact
+ * string is matched locally against the message triggers and is never sent
+ * to the Notti server.
+ */
+function trackEvent(name: string): void {
+  NativeNotti.trackEvent(name);
+}
+
+/**
+ * In-App message API. The SDK never opens a link: the integrator handles
+ * `action` in the click listener.
+ */
+const InAppMessages = {
+  addClickListener(
+    handler: (click: NottiInAppClick) => void
+  ): EventSubscription {
+    return NativeNotti.onInAppMessageClicked(handler);
+  },
+};
+
+/**
  * Resolves with the notification that cold-launched the app (the user
  * tapped it while the app wasn't running), or `null` if the app was not
  * launched this way. Call this once on startup, before or alongside
@@ -182,8 +209,10 @@ export const Notti = {
   setSubscription,
   setLocationSharingEnabled,
   getDeviceId,
+  trackEvent,
   getInitialNotificationClick,
   addEventListener,
+  InAppMessages,
   User,
 };
 

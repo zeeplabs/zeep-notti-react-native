@@ -13,10 +13,12 @@ const mockClearEmail = jest.fn();
 const mockSetPhone = jest.fn();
 const mockClearPhone = jest.fn();
 const mockGetDeviceId = jest.fn();
+const mockTrackEvent = jest.fn();
 const mockGetInitialNotificationClick = jest.fn();
 const mockOnNotificationReceived = jest.fn();
 const mockOnNotificationClicked = jest.fn();
 const mockOnDeviceIdChanged = jest.fn();
+const mockOnInAppMessageClicked = jest.fn();
 
 jest.mock('../NativeNotti', () => ({
   __esModule: true,
@@ -35,6 +37,7 @@ jest.mock('../NativeNotti', () => ({
     setPhone: (...args: unknown[]) => mockSetPhone(...args),
     clearPhone: (...args: unknown[]) => mockClearPhone(...args),
     getDeviceId: (...args: unknown[]) => mockGetDeviceId(...args),
+    trackEvent: (...args: unknown[]) => mockTrackEvent(...args),
     getInitialNotificationClick: (...args: unknown[]) =>
       mockGetInitialNotificationClick(...args),
     onNotificationReceived: (...args: unknown[]) =>
@@ -42,12 +45,18 @@ jest.mock('../NativeNotti', () => ({
     onNotificationClicked: (...args: unknown[]) =>
       mockOnNotificationClicked(...args),
     onDeviceIdChanged: (...args: unknown[]) => mockOnDeviceIdChanged(...args),
+    onInAppMessageClicked: (...args: unknown[]) =>
+      mockOnInAppMessageClicked(...args),
   },
 }));
 
 jest.mock('react-native-notti/package.json', () => ({ version: '0.4.0' }));
 
-import { Notti, type NotificationPayload } from '../index';
+import {
+  Notti,
+  type NotificationPayload,
+  type NottiInAppClick,
+} from '../index';
 
 describe('Notti facade', () => {
   beforeEach(() => {
@@ -278,5 +287,44 @@ describe('Notti facade', () => {
 
     expect(mockOnDeviceIdChanged).toHaveBeenCalledWith(callback);
     expect(result).toBe(subscription);
+  });
+
+  it('trackEvent forwards the exact string to NativeNotti.trackEvent', () => {
+    Notti.trackEvent('checkout_done');
+
+    expect(mockTrackEvent).toHaveBeenCalledTimes(1);
+    expect(mockTrackEvent).toHaveBeenCalledWith('checkout_done');
+  });
+
+  it('trackEvent does not trim or change the case of the name', () => {
+    Notti.trackEvent('  Checkout_Done ');
+
+    expect(mockTrackEvent).toHaveBeenCalledWith('  Checkout_Done ');
+  });
+
+  it('InAppMessages.addClickListener delivers the payload unchanged until remove()', () => {
+    const listeners = new Set<(payload: NottiInAppClick) => void>();
+    mockOnInAppMessageClicked.mockImplementation((...args: unknown[]) => {
+      const handler = args[0] as (payload: NottiInAppClick) => void;
+      listeners.add(handler);
+      return { remove: () => listeners.delete(handler) };
+    });
+    const handler = jest.fn();
+    const payload: NottiInAppClick = {
+      messageId: '00000000-0000-0000-0000-000000000000',
+      buttonId: 'fixture',
+      action: { type: 'url', value: 'https://example.invalid/path' },
+    };
+
+    const subscription = Notti.InAppMessages.addClickListener(handler);
+    listeners.forEach((l) => l(payload));
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler).toHaveBeenCalledWith(payload);
+
+    subscription.remove();
+    listeners.forEach((l) => l(payload));
+
+    expect(handler).toHaveBeenCalledTimes(1);
   });
 });

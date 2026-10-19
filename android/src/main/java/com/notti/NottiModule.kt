@@ -259,6 +259,9 @@ class NottiModule(reactContext: ReactApplicationContext) :
 
   override fun getDeviceId(): String? = core.getDeviceId()
 
+  // TODO(T13): replaced by the real in-app trigger wiring.
+  override fun trackEvent(name: String?) = Unit
+
   /**
    * Hands JS the notification tap that cold-launched the process, once.
    * Pull-based on purpose: the tap is detected by [NottiInitProvider]'s
