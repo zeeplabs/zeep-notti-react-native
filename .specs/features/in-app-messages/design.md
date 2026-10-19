@@ -443,4 +443,4 @@ Gates: Android `cd example/android && ./gradlew :react-native-notti:testDebugUni
 
 ## Open questions
 
-`spec.md` still lists four unconfirmed assumptions (`n`): A6, A7, A10 and A11; the recommended defaults in this design apply until the owner confirms them. Everything else is closed by the owner (2026-10-18: A8, A9, A13 to A18; 2026-10-19: A5, A12, A14 to A17, A19, SDKIAM-70). Two decided rules need a device check before release, not an owner decision: the A14 ordering between `initialize` and the first session (R18, T30 scenario 25) and the Android Back mechanism (DD-10, R17, T30 scenario 26).
+All assumptions are closed by the owner (A6, A7, A10 and A11 confirmed on 2026-10-19 with the defaults of this design). Earlier: (2026-10-18: A8, A9, A13 to A18; 2026-10-19: A5, A12, A14 to A17, A19, SDKIAM-70). Two decided rules need a device check before release, not an owner decision: the A14 ordering between `initialize` and the first session (R18, T30 scenario 25) and the Android Back mechanism (DD-10, R17, T30 scenario 26).
