@@ -147,6 +147,9 @@ final class NottiInAppWindowHost: InAppWindowHosting {
 /// impression (DD-6). Main thread only.
 final class NottiInAppWindowPresenter: InAppPresenter {
 
+  /// Longest wait for the image before the message shows without it (A11).
+  static let imageWait: TimeInterval = 3
+
   private final class Attachment {
     let displayId: String
     let host: InAppWindowHosting
@@ -168,11 +171,19 @@ final class NottiInAppWindowPresenter: InAppPresenter {
   private let scenes: InAppSceneProviding
   private let makeHost: (InAppWindowTarget) -> InAppWindowHosting
   private let announce: (InAppMessageViews, InAppFormat) -> Void
+  private let images: InAppImageSource?
+  /// Runs `task` after the delay on main and returns its cancellation.
+  private let schedule: (TimeInterval, @escaping () -> Void) -> () -> Void
   private let center: NotificationCenter
   private var observers: [NSObjectProtocol] = []
 
   private var display: InAppDisplay?
   private var attachment: Attachment?
+  /// False while the image of `display` is awaited; the window is built only once it is true.
+  private var prepared = false
+  /// Chosen once per display: every attach reuses it, a late image is never inserted.
+  private var image: UIImage?
+  private var cancelImageWait: (() -> Void)?
   /// Display id whose `onVisible` was already raised by this presenter.
   private var visibleRaisedFor: String?
 
@@ -182,12 +193,20 @@ final class NottiInAppWindowPresenter: InAppPresenter {
     scenes: InAppSceneProviding = NottiInAppSceneProvider(),
     makeHost: @escaping (InAppWindowTarget) -> InAppWindowHosting = { NottiInAppWindowHost(target: $0) },
     announce: @escaping (InAppMessageViews, InAppFormat) -> Void = { NottiInAppAccessibility.onShown($0, format: $1) },
+    images: InAppImageSource? = nil,
+    schedule: @escaping (TimeInterval, @escaping () -> Void) -> () -> Void = { delay, task in
+      let item = DispatchWorkItem(block: task)
+      DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
+      return { item.cancel() }
+    },
     center: NotificationCenter = .default
   ) {
     self.events = events
     self.scenes = scenes
     self.makeHost = makeHost
     self.announce = announce
+    self.images = images
+    self.schedule = schedule
     self.center = center
     observers = [
       center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
@@ -215,13 +234,13 @@ final class NottiInAppWindowPresenter: InAppPresenter {
     if self.display === display { return }
     if self.display != nil { teardownSilently() }
     self.display = display
-    attachIfPossible()
+    prepare(display)
   }
 
   func close(_ displayId: String) {
     guard display?.displayId == displayId else { return }
     detach(report: false)
-    display = nil
+    forget()
   }
 
   func teardown(_ display: InAppDisplay) {
@@ -231,7 +250,38 @@ final class NottiInAppWindowPresenter: InAppPresenter {
   /// Hides and releases the window and reports nothing (SDKIAM-70).
   func teardownSilently() {
     detach(report: false)
+    forget()
+  }
+
+  /// Waits at most `imageWait` for the image, then attaches with or without it (SDKIAM-20/57).
+  private func prepare(_ target: InAppDisplay) {
+    guard let url = target.message.imageUrl, let source = images else {
+      ready(target, nil)
+      return
+    }
+    cancelImageWait = schedule(Self.imageWait) { [weak self] in self?.ready(target, nil) }
+    let maxSide = max(UIScreen.main.bounds.width, UIScreen.main.bounds.height) * UIScreen.main.scale
+    source.load(url: url, maxSidePx: maxSide) { [weak self] loaded in
+      DispatchQueue.main.async { self?.ready(target, loaded) }
+    }
+  }
+
+  /// First outcome wins: the image, its failure or the wait; anything later is ignored.
+  private func ready(_ target: InAppDisplay, _ loaded: UIImage?) {
+    guard display === target, !prepared else { return }
+    cancelImageWait?()
+    cancelImageWait = nil
+    prepared = true
+    image = loaded
+    attachIfPossible()
+  }
+
+  private func forget() {
+    cancelImageWait?()
+    cancelImageWait = nil
     display = nil
+    prepared = false
+    image = nil
   }
 
   // MARK: Lifecycle
@@ -254,11 +304,11 @@ final class NottiInAppWindowPresenter: InAppPresenter {
   }
 
   private func attachIfPossible() {
-    guard let target = display, let events = events, attachment == nil, target.state != .closed else { return }
+    guard let target = display, let events = events, prepared, attachment == nil, target.state != .closed else { return }
     // Nothing active (cold start before activation): the display stays Preparing.
     guard let windowTarget = scenes.activeTarget() else { return }
     let displayId = target.displayId
-    let views = NottiInAppViewFactory.build(target.message)
+    let views = NottiInAppViewFactory.build(target.message, image: image)
     let listener = ViewListener(events: events, displayId: displayId)
     NottiInAppViewFactory.bind(views, message: target.message, listener: listener)
     let host = makeHost(windowTarget)

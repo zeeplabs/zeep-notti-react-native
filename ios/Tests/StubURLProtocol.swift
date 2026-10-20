@@ -16,6 +16,9 @@ final class StubURLProtocol: URLProtocol {
     var echoDevice: Bool = false
     /// Response header fields (e.g. `Retry-After`); none when empty.
     var headers: [String: String] = [:]
+    /// Answers with a `302` to this URL instead of a body (a followed redirect
+    /// consumes the next queued response).
+    var redirectTo: String? = nil
 
     static func status(
       _ code: Int,
@@ -24,6 +27,14 @@ final class StubURLProtocol: URLProtocol {
       headers: [String: String] = [:]
     ) -> StubResponse {
       StubResponse(statusCode: code, body: body.data(using: .utf8), error: nil, delayMs: delayMs, headers: headers)
+    }
+
+    static func data(_ body: Data, headers: [String: String] = [:], delayMs: Int = 0) -> StubResponse {
+      StubResponse(statusCode: 200, body: body, error: nil, delayMs: delayMs, headers: headers)
+    }
+
+    static func redirect(to url: String) -> StubResponse {
+      StubResponse(statusCode: 302, body: nil, error: nil, delayMs: 0, redirectTo: url)
     }
 
     static func echoDevice() -> StubResponse {
@@ -86,6 +97,13 @@ final class StubURLProtocol: URLProtocol {
 
     if stub.delayMs > 0 {
       Thread.sleep(forTimeInterval: TimeInterval(stub.delayMs) / 1000.0)
+    }
+
+    if let location = stub.redirectTo, let target = URL(string: location) {
+      let moved = HTTPURLResponse(
+        url: request.url!, statusCode: 302, httpVersion: "HTTP/1.1", headerFields: ["Location": location])!
+      client?.urlProtocol(self, wasRedirectedTo: URLRequest(url: target), redirectResponse: moved)
+      return
     }
 
     let response = HTTPURLResponse(

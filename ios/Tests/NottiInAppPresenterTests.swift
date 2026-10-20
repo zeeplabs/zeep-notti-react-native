@@ -34,6 +34,18 @@ private final class FakeHost: InAppWindowHosting {
   }
 }
 
+private final class ManualImages: InAppImageSource {
+  var loads = 0
+  private var pending: ((UIImage?) -> Void)?
+
+  func load(url: String, maxSidePx: CGFloat, done: @escaping (UIImage?) -> Void) {
+    loads += 1
+    pending = done
+  }
+
+  func deliver(_ image: UIImage?) { pending?(image) }
+}
+
 private final class RecordingEvents: InAppDisplayEvents {
   var log: [String] = []
   func onDisplayAttached(_ displayId: String, attached: Bool) { log.append("attached:\(attached)") }
@@ -82,6 +94,10 @@ final class NottiInAppPresenterTests: XCTestCase {
   private var scenes: FakeScenes!
   private var hosts: [FakeHost] = []
   private var announced: [InAppFormat] = []
+  private var images: ManualImages!
+  /// Waits the presenter scheduled: delay and task, in order; cancelled ones are dropped.
+  private var waits: [(id: Int, delay: TimeInterval, task: () -> Void)] = []
+  private var waitId = 0
   private var events: RecordingEvents!
   private var presenter: NottiInAppWindowPresenter!
 
@@ -99,6 +115,8 @@ final class NottiInAppPresenterTests: XCTestCase {
     scenes = FakeScenes()
     hosts = []
     announced = []
+    images = ManualImages()
+    waits = []
     events = RecordingEvents()
     presenter = makePresenter(events: events)
   }
@@ -119,6 +137,13 @@ final class NottiInAppPresenterTests: XCTestCase {
         return host
       },
       announce: { [unowned self] _, format in self.announced.append(format) },
+      images: images,
+      schedule: { [unowned self] delay, task in
+        self.waitId += 1
+        let id = self.waitId
+        self.waits.append((id, delay, task))
+        return { [unowned self] in self.waits.removeAll { $0.id == id } }
+      },
       center: center
     )
   }
@@ -171,6 +196,137 @@ final class NottiInAppPresenterTests: XCTestCase {
 
   private func types() -> [String] {
     store.all().map { event in event.reason.map { "\(event.type):\($0)" } ?? event.type }
+  }
+
+  // MARK: Image (SDKIAM-20, SDKIAM-35, SDKIAM-57)
+
+  private let withImage = #","image_url":"https://img.example.invalid/a.png","image_action":{"type":"deeplink","value":"app://promo"}"#
+
+  private func picture() -> UIImage {
+    UIGraphicsImageRenderer(size: CGSize(width: 40, height: 20)).image { context in
+      UIColor.red.setFill()
+      context.fill(CGRect(x: 0, y: 0, width: 40, height: 20))
+    }
+  }
+
+  /// Lets the presenter's `DispatchQueue.main.async` hops run.
+  private func drainMain() {
+    let drained = expectation(description: "main drained")
+    DispatchQueue.main.async { drained.fulfill() }
+    wait(for: [drained], timeout: 5)
+  }
+
+  private func fireWait() {
+    let due = waits
+    waits.removeAll()
+    for item in due { item.task() }
+  }
+
+  func testALoadedImageIsShownAndTappable() throws {
+    show(extra: withImage)
+    XCTAssertTrue(hosts.isEmpty)
+    XCTAssertEqual(images.loads, 1)
+    images.deliver(picture())
+    drainMain()
+    let image = try XCTUnwrap(hosts[0].root?.card.image)
+    XCTAssertTrue(image.isUserInteractionEnabled)
+    hosts[0].layout()
+    XCTAssertEqual(events.log, ["attached:true", "visible"])
+    XCTAssertTrue(waits.isEmpty, "the wait is cancelled once the image arrived")
+  }
+
+  func testAnActivationDuringTheWaitDoesNotShowTheMessageWithoutItsImage() {
+    show(extra: withImage)
+    center.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+    center.post(name: UIScene.didActivateNotification, object: nil)
+    XCTAssertTrue(hosts.isEmpty)
+    images.deliver(picture())
+    drainMain()
+    XCTAssertEqual(hosts.count, 1)
+    XCTAssertNotNil(hosts[0].root?.card.image)
+  }
+
+  func testAFailedImageShowsTheMessageWithoutAnImageAndWithoutAnImageTarget() {
+    show(extra: withImage)
+    images.deliver(nil)
+    drainMain()
+    XCTAssertEqual(hosts.count, 1)
+    XCTAssertNil(hosts[0].root?.card.image)
+    hosts[0].layout()
+    XCTAssertEqual(events.log, ["attached:true", "visible"])
+  }
+
+  func testTheMessageWaitsAtMostThreeSecondsThenShowsWithoutTheLateImage() {
+    show(extra: withImage)
+    XCTAssertEqual(waits.map { $0.delay }, [NottiInAppWindowPresenter.imageWait])
+    XCTAssertEqual(NottiInAppWindowPresenter.imageWait, 3)
+    XCTAssertTrue(hosts.isEmpty)
+    fireWait()
+    XCTAssertEqual(hosts.count, 1)
+    images.deliver(picture())
+    drainMain()
+    XCTAssertNil(hosts[0].root?.card.image)
+    XCTAssertEqual(hosts.count, 1)
+    // Not on the next attach either: the choice was made when the wait ended.
+    let key = NSObject()
+    hosts[0].sceneKey = key
+    center.post(name: UIScene.didDisconnectNotification, object: key)
+    XCTAssertEqual(hosts.count, 2)
+    XCTAssertNil(hosts[1].root?.card.image)
+    XCTAssertEqual(images.loads, 1)
+  }
+
+  func testAReattachReusesTheChosenImageWithoutANewLoad() {
+    show(extra: withImage)
+    images.deliver(picture())
+    drainMain()
+    let key = NSObject()
+    hosts[0].sceneKey = key
+    center.post(name: UIScene.didDisconnectNotification, object: key)
+    XCTAssertEqual(hosts.count, 2)
+    XCTAssertNotNil(hosts[1].root?.card.image)
+    XCTAssertEqual(images.loads, 1)
+  }
+
+  func testATeardownDuringTheWaitIgnoresTheLateResult() {
+    let shown = show(extra: withImage)
+    presenter.teardown(shown)
+    XCTAssertTrue(waits.isEmpty, "the wait is cancelled")
+    images.deliver(picture())
+    drainMain()
+    fireWait()
+    XCTAssertTrue(hosts.isEmpty)
+    XCTAssertTrue(events.log.isEmpty)
+  }
+
+  func testAMessageWithoutAnImageDoesNotWait() {
+    show()
+    XCTAssertEqual(hosts.count, 1)
+    XCTAssertEqual(images.loads, 0)
+    XCTAssertTrue(waits.isEmpty)
+  }
+
+  func testAnImageUrlWithoutAnImageSourceDoesNotWait() {
+    let bare = NottiInAppWindowPresenter(
+      events: events, scenes: scenes, makeHost: { [unowned self] _ in
+        let host = FakeHost()
+        self.hosts.append(host)
+        return host
+      }, announce: { _, _ in }, center: center)
+    bare.present(display(extra: withImage))
+    XCTAssertEqual(hosts.count, 1)
+  }
+
+  func testAnImageThatArrivesWhileNoSceneIsActiveShowsOnActivation() {
+    scenes.target = nil
+    show(extra: withImage)
+    images.deliver(picture())
+    drainMain()
+    XCTAssertTrue(hosts.isEmpty)
+    scenes.target = .screen(CGRect(x: 0, y: 0, width: 393, height: 852))
+    center.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+    XCTAssertEqual(hosts.count, 1)
+    XCTAssertNotNil(hosts[0].root?.card.image)
   }
 
   // MARK: Attach and visible
