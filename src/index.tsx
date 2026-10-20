@@ -12,8 +12,17 @@ import NativeNotti, {
 // in TS).
 
 export type { NotificationPayload };
-export type NottiInAppAction = InAppClickAction;
-export type NottiInAppClick = InAppClickPayload;
+/**
+ * The Codegen spec types `type` as `string` (it cannot express a literal
+ * union). Native code only ever delivers `url` or `deeplink`: any other action
+ * type reaches the listener as `action: null`.
+ */
+export type NottiInAppAction = Omit<InAppClickAction, 'type'> & {
+  type: 'url' | 'deeplink';
+};
+export type NottiInAppClick = Omit<InAppClickPayload, 'action'> & {
+  action?: NottiInAppAction | null;
+};
 
 export type NottiEventName =
   'notificationReceived' | 'notificationClicked' | 'deviceIdChanged';
@@ -155,7 +164,10 @@ const InAppMessages = {
   addClickListener(
     handler: (click: NottiInAppClick) => void
   ): EventSubscription {
-    return NativeNotti.onInAppMessageClicked(handler);
+    // Safe: native filters `action.type` to `url` | `deeplink` (see above).
+    return NativeNotti.onInAppMessageClicked(
+      handler as (click: InAppClickPayload) => void
+    );
   },
 };
 

@@ -55,6 +55,7 @@ jest.mock('react-native-notti/package.json', () => ({ version: '0.4.0' }));
 import {
   Notti,
   type NotificationPayload,
+  type NottiInAppAction,
   type NottiInAppClick,
 } from '../index';
 
@@ -326,5 +327,29 @@ describe('Notti facade', () => {
     listeners.forEach((l) => l(payload));
 
     expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('NottiInAppAction is a closed union, so a switch over its type is exhaustive', () => {
+    const describeAction = (action: NottiInAppAction | null | undefined) => {
+      if (!action) return 'none';
+      switch (action.type) {
+        case 'url':
+          return 'url';
+        case 'deeplink':
+          return 'deeplink';
+        default: {
+          const unreachable: never = action.type;
+          return unreachable;
+        }
+      }
+    };
+
+    expect(
+      describeAction({ type: 'url', value: 'https://example.invalid' })
+    ).toBe('url');
+    expect(describeAction({ type: 'deeplink', value: 'example://x' })).toBe(
+      'deeplink'
+    );
+    expect(describeAction(null)).toBe('none');
   });
 });
