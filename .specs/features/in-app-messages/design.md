@@ -156,7 +156,7 @@ Both platforms keep the repo's flat layout (`android/src/main/java/com/notti/`, 
 | `ios/NottiInAppSession.swift` | Pure state machine + display clock. |
 | `ios/NottiInAppCoordinator.swift` | Mirror of the Android coordinator on a serial `DispatchQueue("app.notti.sdk.inapp", qos: .utility)` with `asyncAfter` retries; state on main. `static let` holder on `NottiImpl` (`NottiImpl.swift:68` pattern). |
 | `ios/NottiInAppStyle.swift` | Pure style/metrics mirror. |
-| `ios/NottiInAppViews.swift` | UIKit views: `UIVisualEffectView`-free solid backgrounds, Auto Layout against `safeAreaLayoutGuide`, `UIScrollView` for text. |
+| `ios/NottiInAppViews.swift` | UIKit views: `UIVisualEffectView`-free solid backgrounds, frames set in `layoutSubviews` from the pure metrics (`computeFrame`) and the overlay's `safeAreaInsets` (overridable in tests, where a view outside a window has none), mirroring the Android custom layouts instead of Auto Layout; `UIScrollView` for text. |
 | `ios/NottiInAppPresenter.swift` | `NottiInAppWindow` (hit-test passthrough), root view controller, scene resolution, lifecycle observers. |
 | `ios/NottiInAppImageLoader.swift` | See "Images". |
 | `ios/NottiCore.swift` (modify) | Optional `inApp` hooks injected like `sessionGate` (`:262-283`): `onSessionStarted()` in the `tryOpen` branch (`:994`), `onRegistered()` after `flushEventQueue()` (`:712`), `onNetworkAvailable()` in `NottiCore.onNetworkAvailable` (`:611-628`) and the foreground flush (`:1009`). |
