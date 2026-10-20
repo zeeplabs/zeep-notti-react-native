@@ -33,6 +33,9 @@ final class InAppOverlayView: UIView {
 
   private(set) var messageFrame: InAppFrame?
 
+  /// Gestures and taps of the display, set by `NottiInAppViewFactory.bind`.
+  var interaction: InAppInteraction?
+
   init(format: InAppFormat, margin: Bool, card: InAppCardView) {
     self.format = format
     self.margin = margin
@@ -90,6 +93,13 @@ final class InAppOverlayView: UIView {
     let hit = super.hitTest(point, with: event)
     if hit === self && (format == .top || format == .bottom) { return nil }
     return hit
+  }
+
+  /// VoiceOver's escape gesture acts as the close control on `center`/`full`.
+  override func accessibilityPerformEscape() -> Bool {
+    guard format == .center || format == .full, let interaction = interaction else { return false }
+    interaction.close(InAppDismissReason.closeButton)
+    return true
   }
 }
 
@@ -304,6 +314,257 @@ struct InAppMessageViews {
   let style: InAppResolvedStyle
 }
 
+/// Display outcomes reported by the views; the presenter forwards them to the coordinator.
+protocol InAppViewListener: AnyObject {
+  func onClose(reason: String)
+  /// `buttonId` is a button id or `image`; `action` is passed untouched.
+  func onAction(buttonId: String, action: InAppAction?)
+}
+
+/// Gestures and taps of one display (SDKIAM-22, 33-35). Only the first outcome
+/// is delivered: a second tap or a swipe on a closing display is ignored. The
+/// recognizers call the handler methods below, which tests call directly.
+final class InAppInteraction: NSObject, UIGestureRecognizerDelegate {
+
+  private weak var root: InAppOverlayView?
+  private weak var listener: InAppViewListener?
+  private let message: InAppMessage
+  /// -1 dismisses upward (`top`), 1 downward (`bottom`), 0 has no swipe.
+  let dismissDirection: CGFloat
+  let imageTappable: Bool
+
+  /// Read on each transition; injected by tests.
+  var reduceMotion: () -> Bool = { UIAccessibility.isReduceMotionEnabled }
+  var animate: (TimeInterval, @escaping () -> Void) -> Void = { duration, changes in
+    UIView.animate(withDuration: duration, animations: changes)
+  }
+
+  private(set) var done = false
+  private(set) var pan: UIPanGestureRecognizer?
+  private(set) var bodyTap: UITapGestureRecognizer?
+  private(set) var backdropTap: UITapGestureRecognizer?
+  private(set) var imageTap: UITapGestureRecognizer?
+
+  init(root: InAppOverlayView, message: InAppMessage, listener: InAppViewListener) {
+    self.root = root
+    self.message = message
+    self.listener = listener
+    switch message.format {
+    case .top: dismissDirection = -1
+    case .bottom: dismissDirection = 1
+    case .center, .full: dismissDirection = 0
+    }
+    // A failed image is never built, so a tappable image is always a loaded one.
+    imageTappable = root.card.image != nil && message.imageAction != nil
+    super.init()
+  }
+
+  // MARK: Outcomes
+
+  func close(_ reason: String) {
+    if done { return }
+    done = true
+    listener?.onClose(reason: reason)
+  }
+
+  func act(_ buttonId: String, _ action: InAppAction?) {
+    if done { return }
+    done = true
+    listener?.onAction(buttonId: buttonId, action: action)
+  }
+
+  @objc func handleImageTap() { act(NottiInAppViewFactory.imageButtonId, message.imageAction) }
+
+  /// A bar body tap acts as the first button.
+  @objc func handleBodyTap() {
+    guard let first = message.buttons.first else { return }
+    act(first.id, first.action)
+  }
+
+  @objc func handleBackdropTap() { close(InAppDismissReason.outsideTap) }
+
+  @objc func handlePan(_ recognizer: UIPanGestureRecognizer) {
+    let dy = recognizer.translation(in: root).y
+    switch recognizer.state {
+    case .changed: panChanged(dy)
+    case .ended: panEnded(dy)
+    case .cancelled, .failed: settle()
+    default: break
+    }
+  }
+
+  // MARK: Swipe
+
+  /// A third of the bar height, at most the close target (SDKIAM-22).
+  var swipeThreshold: CGFloat {
+    min((root?.card.bounds.height ?? 0) / 3, InAppMetrics.closeTarget)
+  }
+
+  func panChanged(_ dy: CGFloat) {
+    guard !done, let card = root?.card else { return }
+    let offset = dismissDirection < 0 ? min(0, dy) : max(0, dy)
+    card.transform = CGAffineTransform(translationX: 0, y: offset)
+  }
+
+  func panEnded(_ dy: CGFloat) {
+    if !done && dismissDirection != 0 && dy * dismissDirection >= swipeThreshold {
+      close(InAppDismissReason.swipe)
+    } else {
+      settle()
+    }
+  }
+
+  /// Snaps the card back, without animation under Reduce Motion.
+  func settle() {
+    guard let card = root?.card else { return }
+    let changes = { card.transform = .identity }
+    if reduceMotion() { changes() } else { animate(0.2, changes) }
+  }
+
+  /// A drag becomes a swipe when it is mostly vertical, in the dismiss
+  /// direction, and the text cannot scroll that way first.
+  func startsSwipe(dx: CGFloat, dy: CGFloat) -> Bool {
+    guard !done, dismissDirection != 0, abs(dy) > abs(dx), dy * dismissDirection > 0, let scroll = root?.card.scroll else {
+      return false
+    }
+    let maxOffset = max(scroll.contentSize.height - scroll.bounds.height, 0)
+    // A finger moving up scrolls the content down, and the other way round.
+    let canScroll = dismissDirection < 0 ? scroll.contentOffset.y < maxOffset - 0.5 : scroll.contentOffset.y > 0.5
+    return !canScroll
+  }
+
+  // MARK: Tap areas
+
+  /// `point` in card coordinates: a body tap outside the card's controls.
+  func bodyTapAccepts(_ point: CGPoint) -> Bool {
+    guard let card = root?.card else { return false }
+    var excluded: [UIView] = [card.close] + (card.buttonRow?.buttons ?? [])
+    if imageTappable, let image = card.image { excluded.append(image) }
+    return !excluded.contains { view in
+      !view.isHidden && view.superview != nil && view.convert(view.bounds, to: card).contains(point)
+    }
+  }
+
+  /// `point` in overlay coordinates: outside the card.
+  func backdropAccepts(_ point: CGPoint) -> Bool {
+    guard let card = root?.card else { return false }
+    return !card.frame.contains(point)
+  }
+
+  // MARK: Wiring
+
+  func install() {
+    guard let root = root else { return }
+    let card = root.card
+    card.close.addAction(UIAction { [weak self] _ in self?.close(InAppDismissReason.closeButton) }, for: .touchUpInside)
+    for (index, button) in (card.buttonRow?.buttons ?? []).enumerated() where index < message.buttons.count {
+      let model = message.buttons[index]
+      button.addAction(UIAction { [weak self] _ in self?.act(model.id, model.action) }, for: .touchUpInside)
+    }
+    if imageTappable, let image = card.image {
+      image.isUserInteractionEnabled = true
+      let tap = UITapGestureRecognizer(target: self, action: #selector(handleImageTap))
+      image.addGestureRecognizer(tap)
+      imageTap = tap
+    }
+    switch message.format {
+    case .top, .bottom:
+      let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
+      pan.delegate = self
+      card.addGestureRecognizer(pan)
+      // The text scrolls only once the drag is known not to be a swipe.
+      card.scroll.panGestureRecognizer.require(toFail: pan)
+      self.pan = pan
+      if !message.buttons.isEmpty {
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleBodyTap))
+        tap.delegate = self
+        card.addGestureRecognizer(tap)
+        bodyTap = tap
+      }
+    case .center:
+      let tap = UITapGestureRecognizer(target: self, action: #selector(handleBackdropTap))
+      tap.delegate = self
+      root.addGestureRecognizer(tap)
+      backdropTap = tap
+    case .full:
+      // The close control is the only way out of `full` (A19).
+      break
+    }
+  }
+
+  func gestureRecognizerShouldBegin(_ recognizer: UIGestureRecognizer) -> Bool {
+    guard recognizer === pan, let pan = pan else { return true }
+    let velocity = pan.velocity(in: root)
+    return startsSwipe(dx: velocity.x, dy: velocity.y)
+  }
+
+  func gestureRecognizer(_ recognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+    if recognizer === bodyTap, let card = root?.card { return bodyTapAccepts(touch.location(in: card)) }
+    if recognizer === backdropTap, let root = root { return backdropAccepts(touch.location(in: root)) }
+    return true
+  }
+}
+
+/// Accessibility of an in-app display (SDKIAM-63). The close label is the only
+/// text the SDK owns: an in-code table, no `.strings` file (A18).
+enum NottiInAppAccessibility {
+
+  private static let closeEnglish = "Close"
+  private static let closeLabels = ["pt": "Fechar"]
+
+  /// Close label for the first preferred language: Portuguese or English, any
+  /// other language falls back to English (A18).
+  static func closeLabel(languages: [String] = Locale.preferredLanguages) -> String {
+    guard let first = languages.first else { return closeEnglish }
+    let code = first.split(whereSeparator: { $0 == "-" || $0 == "_" }).first.map { String($0).lowercased() } ?? ""
+    return closeLabels[code] ?? closeEnglish
+  }
+
+  /// Static semantics of a bound display: labels, traits, heading, modality.
+  static func apply(_ views: InAppMessageViews, format: InAppFormat, imageTappable: Bool, languages: [String] = Locale.preferredLanguages) {
+    views.close.accessibilityLabel = closeLabel(languages: languages)
+    views.close.accessibilityTraits = .button
+    for button in views.buttons {
+      button.accessibilityLabel = button.configuration?.title
+      button.accessibilityTraits = .button
+    }
+    views.title.accessibilityTraits.insert(.header)
+    if let image = views.image {
+      image.isAccessibilityElement = imageTappable
+      if imageTappable {
+        // Author text only: the SDK has no string of its own for the image.
+        let title = views.title.text ?? ""
+        image.accessibilityLabel = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : title
+        image.accessibilityTraits = [.button, .image]
+      }
+    }
+    views.root.accessibilityViewIsModal = format == .center || format == .full
+  }
+
+  /// Text announced for a bar, which never takes focus away from the app.
+  static func announcement(_ views: InAppMessageViews) -> String {
+    [views.title, views.body]
+      .filter { !$0.isHidden }
+      .compactMap { $0.text }
+      .joined(separator: ". ")
+  }
+
+  /// Called by the presenter once the display is on screen: a bar is
+  /// announced, a `center`/`full` message moves the VoiceOver focus to its title.
+  static func onShown(
+    _ views: InAppMessageViews,
+    format: InAppFormat,
+    post: (UIAccessibility.Notification, Any?) -> Void = { UIAccessibility.post(notification: $0, argument: $1) }
+  ) {
+    switch format {
+    case .top, .bottom:
+      post(.announcement, announcement(views))
+    case .center, .full:
+      post(.screenChanged, views.title.isHidden ? views.card : views.title)
+    }
+  }
+}
+
 /// Builds the UIKit views of a message. Text is always plain: the raw string
 /// goes to `UILabel.text`, never an HTML or Markdown attributed string, never
 /// a web view, and a label detects no links (SDKIAM-31).
@@ -363,6 +624,21 @@ enum NottiInAppViewFactory {
       close: close,
       style: style
     )
+  }
+
+  /// `button_id` of an image click (SDKIAM-35).
+  static let imageButtonId = "image"
+
+  /// Wires the gestures and taps of `views` to `listener` and sets the
+  /// accessibility semantics. The presenter owns the window; nothing here
+  /// handles presentation.
+  @discardableResult
+  static func bind(_ views: InAppMessageViews, message: InAppMessage, listener: InAppViewListener) -> InAppInteraction {
+    let interaction = InAppInteraction(root: views.root, message: message, listener: listener)
+    views.root.interaction = interaction
+    interaction.install()
+    NottiInAppAccessibility.apply(views, format: message.format, imageTappable: interaction.imageTappable)
+    return interaction
   }
 
   private static func plainLabel(_ value: String, font: UIFont, style: InAppResolvedStyle) -> UILabel {

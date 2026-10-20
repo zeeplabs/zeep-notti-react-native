@@ -372,4 +372,378 @@ final class NottiInAppViewsTests: XCTestCase {
     }
   }
 }
+
+/// Mirror of the T9 cases of `NottiInAppViewFactoryTest.kt`: gestures and taps
+/// through the handlers the recognizers call, accessibility properties.
+final class NottiInAppInteractionTests: XCTestCase {
+
+  private final class Recorder: InAppViewListener {
+    var closes: [String] = []
+    var actions: [(String, InAppAction?)] = []
+    var total: Int { closes.count + actions.count }
+    func onClose(reason: String) { closes.append(reason) }
+    func onAction(buttonId: String, action: InAppAction?) { actions.append((buttonId, action)) }
+  }
+
+  private let insets = InAppInsets(left: 12, top: 59, right: 20, bottom: 34)
+  private let longBody = (1...200).map { "Line \($0) of a long body" }.joined(separator: "\n")
+
+  private func message(_ format: String, body: String = "Body", buttons: String = "", imageAction: Bool = false) -> InAppMessage {
+    var fields = [
+      #""id":"m""#,
+      #""format":"\#(format)""#,
+      #""title":"Title""#,
+      #""body":"\#(body.replacingOccurrences(of: "\n", with: "\\n"))""#,
+      #""trigger":{"type":"session_start"}"#,
+      #""image_url":"https://img.test/a.png""#,
+    ]
+    if imageAction { fields.append(#""image_action":{"type":"deeplink","value":"app://promo"}"#) }
+    if !buttons.isEmpty { fields.append(#""buttons":[\#(buttons)]"#) }
+    let raw = #"{"messages":[{\#(fields.joined(separator: ","))}]}"#
+    return parseEligibleResponse(Data(raw.utf8))!.first!
+  }
+
+  private func button(_ id: String, _ label: String) -> String { #"{"id":"\#(id)","label":"\#(label)"}"# }
+
+  private func picture() -> UIImage {
+    UIGraphicsImageRenderer(size: CGSize(width: 120, height: 80)).image { context in
+      UIColor.red.setFill()
+      context.fill(CGRect(x: 0, y: 0, width: 120, height: 80))
+    }
+  }
+
+  private func bound(
+    _ format: String,
+    body: String = "Body",
+    buttons: String = "",
+    image: Bool = false,
+    imageAction: Bool = false
+  ) -> (InAppMessageViews, InAppInteraction, Recorder) {
+    let model = message(format, body: body, buttons: buttons, imageAction: imageAction)
+    let views = NottiInAppViewFactory.build(model, image: image ? picture() : nil, traits: UITraitCollection(preferredContentSizeCategory: .large))
+    let recorder = Recorder()
+    let interaction = NottiInAppViewFactory.bind(views, message: model, listener: recorder)
+    views.root.safeAreaOverride = insets
+    views.root.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+    views.root.layoutIfNeeded()
+    views.card.layoutIfNeeded()
+    views.buttonRow?.layoutIfNeeded()
+    // The interaction holds its root and listener weakly: keep both for the whole test.
+    retained.append((views, recorder))
+    return (views, interaction, recorder)
+  }
+
+  private var retained: [Any] = []
+
+  private func tap(_ button: UIButton) { button.sendActions(for: .touchUpInside) }
+
+  // MARK: Dismiss
+
+  func testCloseControlReportsCloseButtonOnEveryLayout() {
+    for format in ["top", "bottom", "center", "full"] {
+      let (views, _, recorder) = bound(format, buttons: button("a", "Accept"))
+      tap(views.close)
+      XCTAssertEqual(recorder.closes, [InAppDismissReason.closeButton], format)
+      XCTAssertTrue(recorder.actions.isEmpty, format)
+    }
+  }
+
+  func testTopSwipeUpPastTheThresholdReportsSwipeAShortDragDoesNot() {
+    let (views, interaction, recorder) = bound("top")
+    interaction.reduceMotion = { true }
+    interaction.panChanged(-12)
+    XCTAssertEqual(views.card.transform.ty, -12)
+    interaction.panEnded(-12)
+    XCTAssertEqual(recorder.total, 0)
+    XCTAssertEqual(views.card.transform, .identity)
+    interaction.panEnded(-80)
+    XCTAssertEqual(recorder.closes, [InAppDismissReason.swipe])
+  }
+
+  func testBottomSwipeDownPastTheThresholdReportsSwipeTheOppositeDirectionDoesNot() {
+    let (views, interaction, recorder) = bound("bottom")
+    interaction.reduceMotion = { true }
+    interaction.panChanged(-80)
+    XCTAssertEqual(views.card.transform.ty, 0)
+    interaction.panEnded(-80)
+    XCTAssertEqual(recorder.total, 0)
+    interaction.panChanged(80)
+    XCTAssertEqual(views.card.transform.ty, 80)
+    interaction.panEnded(80)
+    XCTAssertEqual(recorder.closes, [InAppDismissReason.swipe])
+  }
+
+  func testSwipeThresholdIsAThirdOfTheBarHeightAtMost44() {
+    let (views, interaction, _) = bound("top")
+    views.card.bounds = CGRect(x: 0, y: 0, width: 300, height: 60)
+    XCTAssertEqual(interaction.swipeThreshold, 20, accuracy: 0.01)
+    views.card.bounds = CGRect(x: 0, y: 0, width: 300, height: 300)
+    XCTAssertEqual(interaction.swipeThreshold, 44, accuracy: 0.01)
+  }
+
+  func testOnlyAMostlyVerticalDragInTheDismissDirectionStartsASwipe() {
+    let (_, top, _) = bound("top")
+    XCTAssertTrue(top.startsSwipe(dx: 5, dy: -50))
+    XCTAssertFalse(top.startsSwipe(dx: 60, dy: -50))
+    XCTAssertFalse(top.startsSwipe(dx: 0, dy: 50))
+    let (_, bottom, _) = bound("bottom")
+    XCTAssertTrue(bottom.startsSwipe(dx: -5, dy: 50))
+    XCTAssertFalse(bottom.startsSwipe(dx: 0, dy: -50))
+  }
+
+  func testABarWhoseTextCanStillScrollLetsTheDragScrollInsteadOfDismissing() {
+    let (views, bottom, _) = bound("bottom", body: longBody)
+    XCTAssertTrue(bottom.startsSwipe(dx: 0, dy: 50))
+    views.card.scroll.contentOffset = CGPoint(x: 0, y: 40)
+    XCTAssertFalse(bottom.startsSwipe(dx: 0, dy: 50))
+    // `top` with more text below: a finger moving up scrolls the content first.
+    let (topViews, top, _) = bound("top", body: longBody)
+    XCTAssertFalse(top.startsSwipe(dx: 0, dy: -50))
+    let scroll = topViews.card.scroll
+    scroll.contentOffset = CGPoint(x: 0, y: scroll.contentSize.height - scroll.bounds.height)
+    XCTAssertTrue(top.startsSwipe(dx: 0, dy: -50))
+  }
+
+  func testACancelledDragSnapsBackWithoutDismissing() {
+    let (views, interaction, recorder) = bound("top")
+    interaction.reduceMotion = { true }
+    interaction.panChanged(-30)
+    interaction.settle()
+    XCTAssertEqual(views.card.transform, .identity)
+    XCTAssertEqual(recorder.total, 0)
+  }
+
+  func testCenterBackdropTapReportsOutsideTapATapInsideTheCardDoesNothing() {
+    let (views, interaction, recorder) = bound("center")
+    XCTAssertNotNil(interaction.backdropTap)
+    XCTAssertTrue(interaction.backdropTap?.view === views.root)
+    XCTAssertFalse(interaction.backdropAccepts(CGPoint(x: views.card.frame.midX, y: views.card.frame.midY)))
+    XCTAssertTrue(interaction.backdropAccepts(CGPoint(x: 4, y: 4)))
+    interaction.handleBackdropTap()
+    XCTAssertEqual(recorder.closes, [InAppDismissReason.outsideTap])
+  }
+
+  func testFullHasNoDismissGestureBesidesTheCloseControl() {
+    let (views, interaction, _) = bound("full", buttons: button("a", "Accept"))
+    XCTAssertNil(interaction.pan)
+    XCTAssertNil(interaction.bodyTap)
+    XCTAssertNil(interaction.backdropTap)
+    XCTAssertFalse(interaction.startsSwipe(dx: 0, dy: 200))
+    XCTAssertFalse(interaction.startsSwipe(dx: 0, dy: -200))
+    XCTAssertTrue(views.root.gestureRecognizers?.isEmpty ?? true)
+    XCTAssertTrue(views.card.gestureRecognizers?.isEmpty ?? true)
+  }
+
+  func testBarsHaveTheirSwipeOnTheCard() {
+    for format in ["top", "bottom"] {
+      let (views, interaction, _) = bound(format)
+      XCTAssertTrue(interaction.pan?.view === views.card, format)
+      XCTAssertTrue(interaction.pan?.delegate === interaction, format)
+    }
+  }
+
+  // MARK: Taps
+
+  func testButtonTapReportsItsOwnIdAndTheUntouchedAction() {
+    let buttons = #"{"id":"yes","label":"Yes","action":{"type":"url","value":"https://x.test/a?b=1"}},"# + button("no", "No")
+    for format in ["top", "center", "full"] {
+      let (views, _, recorder) = bound(format, buttons: buttons)
+      tap(views.buttons[1])
+      XCTAssertEqual(recorder.actions.map { $0.0 }, ["no"], format)
+      XCTAssertNil(recorder.actions.first?.1, format)
+      let (other, _, otherRecorder) = bound(format, buttons: buttons)
+      tap(other.buttons[0])
+      XCTAssertEqual(otherRecorder.actions.map { $0.0 }, ["yes"], format)
+      XCTAssertEqual(otherRecorder.actions.first?.1, InAppAction(type: "url", value: "https://x.test/a?b=1"), format)
+    }
+  }
+
+  func testImageTapWithAnImageActionReportsImage() {
+    for format in ["top", "center", "full"] {
+      let (views, interaction, recorder) = bound(format, buttons: button("a", "Accept"), image: true, imageAction: true)
+      XCTAssertTrue(interaction.imageTap?.view === views.image, format)
+      XCTAssertTrue(views.image!.isUserInteractionEnabled, format)
+      interaction.handleImageTap()
+      XCTAssertEqual(recorder.actions.map { $0.0 }, ["image"], format)
+      XCTAssertEqual(recorder.actions.first?.1, InAppAction(type: "deeplink", value: "app://promo"), format)
+      XCTAssertTrue(recorder.closes.isEmpty, format)
+    }
+  }
+
+  func testImageWithoutAnImageActionIsNotTappable() {
+    let (views, interaction, _) = bound("center", image: true)
+    XCTAssertFalse(interaction.imageTappable)
+    XCTAssertNil(interaction.imageTap)
+    XCTAssertFalse(views.image!.isUserInteractionEnabled)
+  }
+
+  func testBarBodyTapActsAsTheFirstButtonNoButtonsMeansNotTappable() {
+    for format in ["top", "bottom"] {
+      let (views, interaction, recorder) = bound(format, buttons: button("first", "One") + "," + button("second", "Two"))
+      XCTAssertTrue(interaction.bodyTap?.view === views.card, format)
+      XCTAssertTrue(interaction.bodyTapAccepts(views.card.scroll.convert(views.body.center, from: views.card.textBlock)), format)
+      interaction.handleBodyTap()
+      XCTAssertEqual(recorder.actions.map { $0.0 }, ["first"], format)
+      let (_, bare, bareRecorder) = bound(format)
+      XCTAssertNil(bare.bodyTap, format)
+      bare.handleBodyTap()
+      XCTAssertEqual(bareRecorder.total, 0, format)
+    }
+  }
+
+  func testABodyTapNeverStartsOnTheControls() {
+    let (views, interaction, _) = bound("top", buttons: button("a", "Accept"), image: true, imageAction: true)
+    for control in [views.close, views.buttons[0], views.image!] as [UIView] {
+      let point = control.convert(CGPoint(x: control.bounds.midX, y: control.bounds.midY), to: views.card)
+      XCTAssertFalse(interaction.bodyTapAccepts(point), "\(type(of: control))")
+    }
+  }
+
+  func testCenterAndFullBodyIsNotTappableEvenWithButtons() {
+    for format in ["center", "full"] {
+      let (_, interaction, recorder) = bound(format, buttons: button("a", "Accept"))
+      XCTAssertNil(interaction.bodyTap, format)
+      XCTAssertNil(interaction.pan, format)
+      XCTAssertEqual(recorder.total, 0, format)
+    }
+  }
+
+  func testTouchesOutsideABarAreNotConsumedInsideTheyAre() {
+    for format in ["top", "bottom"] {
+      let (views, _, _) = bound(format, buttons: button("a", "Accept"))
+      let outsideY: CGFloat = format == "top" ? 842 : 10
+      XCTAssertNil(views.root.hitTest(CGPoint(x: 196, y: outsideY), with: nil), format)
+      XCTAssertNotNil(views.root.hitTest(CGPoint(x: views.card.frame.midX, y: views.card.frame.midY), with: nil), format)
+    }
+  }
+
+  func testOnlyTheFirstOutcomeOfADisplayIsDelivered() {
+    let (views, interaction, recorder) = bound("top", buttons: button("a", "Accept"))
+    tap(views.buttons[0])
+    tap(views.buttons[0])
+    tap(views.close)
+    interaction.handleBodyTap()
+    interaction.panEnded(-80)
+    XCTAssertEqual(recorder.actions.map { $0.0 }, ["a"])
+    XCTAssertTrue(recorder.closes.isEmpty)
+  }
+
+  func testTheListenerIsHeldWeakly() {
+    let model = message("center")
+    let views = NottiInAppViewFactory.build(model)
+    var recorder: Recorder? = Recorder()
+    weak var released = recorder
+    NottiInAppViewFactory.bind(views, message: model, listener: recorder!)
+    recorder = nil
+    XCTAssertNil(released)
+    views.close.sendActions(for: .touchUpInside)
+  }
+
+  // MARK: Reduce Motion
+
+  func testSnapBackSkipsTheAnimationUnderReduceMotion() {
+    let (views, interaction, _) = bound("top")
+    var animated = 0
+    interaction.animate = { _, changes in
+      animated += 1
+      changes()
+    }
+    interaction.reduceMotion = { true }
+    interaction.panChanged(-20)
+    interaction.panEnded(-20)
+    XCTAssertEqual(animated, 0)
+    XCTAssertEqual(views.card.transform, .identity)
+    interaction.reduceMotion = { false }
+    interaction.panChanged(-20)
+    interaction.panEnded(-20)
+    XCTAssertEqual(animated, 1)
+    XCTAssertEqual(views.card.transform, .identity)
+  }
+
+  // MARK: Accessibility
+
+  func testCloseLabelComesFromTheInCodeTableWithAnEnglishFallback() {
+    XCTAssertEqual(NottiInAppAccessibility.closeLabel(languages: ["pt-BR"]), "Fechar")
+    XCTAssertEqual(NottiInAppAccessibility.closeLabel(languages: ["pt"]), "Fechar")
+    XCTAssertEqual(NottiInAppAccessibility.closeLabel(languages: ["PT_br"]), "Fechar")
+    XCTAssertEqual(NottiInAppAccessibility.closeLabel(languages: ["en-US", "pt-BR"]), "Close")
+    XCTAssertEqual(NottiInAppAccessibility.closeLabel(languages: ["es-ES"]), "Close")
+    XCTAssertEqual(NottiInAppAccessibility.closeLabel(languages: []), "Close")
+  }
+
+  func testCloseControlUsesThePreferredLanguage() {
+    let (views, interaction, _) = bound("center")
+    NottiInAppAccessibility.apply(views, format: .center, imageTappable: interaction.imageTappable, languages: ["pt-BR"])
+    XCTAssertEqual(views.close.accessibilityLabel, "Fechar")
+    NottiInAppAccessibility.apply(views, format: .center, imageTappable: interaction.imageTappable, languages: ["fr-FR"])
+    XCTAssertEqual(views.close.accessibilityLabel, "Close")
+    XCTAssertTrue(views.close.accessibilityTraits.contains(.button))
+  }
+
+  func testButtonsAnnounceTheirLabelAndTheButtonTraitTheTitleIsAHeader() {
+    let (views, _, _) = bound("center", buttons: button("a", "Accept") + "," + button("b", "Later"))
+    XCTAssertEqual(views.buttons.map { $0.accessibilityLabel }, ["Accept", "Later"])
+    for b in views.buttons { XCTAssertTrue(b.accessibilityTraits.contains(.button)) }
+    XCTAssertTrue(views.title.accessibilityTraits.contains(.header))
+    XCTAssertFalse(views.body.accessibilityTraits.contains(.header))
+  }
+
+  func testCenterAndFullAreModalBarsAreNot() {
+    for (format, modal) in [("top", false), ("bottom", false), ("center", true), ("full", true)] {
+      let (views, _, _) = bound(format)
+      XCTAssertEqual(views.root.accessibilityViewIsModal, modal, format)
+    }
+  }
+
+  func testEscapeActsAsTheCloseControlOnCenterAndFullOnly() {
+    for format in ["center", "full"] {
+      let (views, _, recorder) = bound(format)
+      XCTAssertTrue(views.root.accessibilityPerformEscape(), format)
+      XCTAssertEqual(recorder.closes, [InAppDismissReason.closeButton], format)
+    }
+    for format in ["top", "bottom"] {
+      let (views, _, recorder) = bound(format)
+      XCTAssertFalse(views.root.accessibilityPerformEscape(), format)
+      XCTAssertEqual(recorder.total, 0, format)
+    }
+  }
+
+  func testBarsAreAnnouncedModalsMoveTheFocusToTheTitle() {
+    var posted: [(UIAccessibility.Notification, Any?)] = []
+    let record: (UIAccessibility.Notification, Any?) -> Void = { posted.append(($0, $1)) }
+    let (bar, _, _) = bound("top")
+    NottiInAppAccessibility.onShown(bar, format: .top, post: record)
+    XCTAssertEqual(posted.count, 1)
+    XCTAssertEqual(posted[0].0, .announcement)
+    XCTAssertEqual(posted[0].1 as? String, "Title. Body")
+    posted.removeAll()
+    let (modal, _, _) = bound("center")
+    NottiInAppAccessibility.onShown(modal, format: .center, post: record)
+    XCTAssertEqual(posted[0].0, .screenChanged)
+    XCTAssertTrue(posted[0].1 as AnyObject === modal.title)
+  }
+
+  func testTheAnnouncementSkipsABlankTitle() {
+    let model = parseEligibleResponse(Data(#"{"messages":[{"id":"m","format":"top","title":" ","body":"Only body","trigger":{"type":"session_start"}}]}"#.utf8))!.first!
+    let views = NottiInAppViewFactory.build(model)
+    XCTAssertEqual(NottiInAppAccessibility.announcement(views), "Only body")
+  }
+
+  func testASecondCloseIsIgnored() {
+    let (views, interaction, recorder) = bound("center")
+    tap(views.close)
+    interaction.handleBackdropTap()
+    XCTAssertTrue(views.root.accessibilityPerformEscape())
+    XCTAssertEqual(recorder.closes, [InAppDismissReason.closeButton])
+  }
+
+  func testTappableImageIsReachableWithTheButtonTraitAStaticOneStaysHidden() {
+    let (tappable, _, _) = bound("center", image: true, imageAction: true)
+    XCTAssertTrue(tappable.image!.isAccessibilityElement)
+    XCTAssertTrue(tappable.image!.accessibilityTraits.contains(.button))
+    XCTAssertEqual(tappable.image!.accessibilityLabel, "Title")
+    let (still, _, _) = bound("center", image: true)
+    XCTAssertFalse(still.image!.isAccessibilityElement)
+  }
+}
 #endif
