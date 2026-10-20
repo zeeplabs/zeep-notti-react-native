@@ -791,7 +791,7 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 9. Auto dismiss: closes after N s with `auto`; backgrounding mid-countdown pauses it; manual close earlier reports `close_button`.
 10. Rotation during a visible message (both orientations, repeatedly): same message continues, no second `impression` in the dashboard.
 11. Android only: navigate between two Activities (or screens that recreate the Activity) while a message is visible; open an RN `<Modal>` while a message is visible (record behavior, R2).
-12. iOS only: iPad multi-scene or Stage Manager window if available; app with and without scene manifest; keyboard visible while a message appears.
+12. iOS only: iPad multi-scene or Stage Manager window if available; app with and without scene manifest; keyboard visible while a message appears. Also: the host keeps its orientation lock and status bar style while the `.alert` window is shown (the window's controller follows the host key window's controller, [Incerto]); the window never becomes key; `testTheWindowNeverBecomesKeyAndPassesTouchesOutsideABar` is skipped under Mac Catalyst (no running app) and must pass on an iOS simulator.
 13. RN reload (dev menu) while a message is visible and while only held: no second `eligible`, no duplicate message, `trackEvent` still works.
 14. Background/foreground cycle: a new session fetches once; the previously shown `once` message is not re-offered by the server; a message visible across the background continues.
 15. `trackEvent` matching: exact name shows the held message only when none is visible; wrong case does nothing; called before the fetch completes (A14: remembered and evaluated on arrival); called in a tight loop causes no network traffic.
