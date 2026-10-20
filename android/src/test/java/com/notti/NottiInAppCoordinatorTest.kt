@@ -260,7 +260,45 @@ class NottiInAppCoordinatorTest {
     assertEquals(1, store.all().size)
   }
 
+  /**
+   * The pre-fetch flush is single-attempt: a failure leaves the rest
+   * queued with no backoff retry until the next trigger.
+   */
+  @Test
+  fun `a failed pre-fetch flush is not retried until the next trigger`() {
+    queuedEvent()
+    server.enqueue(status(503))
+    server.enqueue(messages())
+    server.enqueue(status(201))
+    init()
+    startAndRegister()
+    executor.advance(120_000)
+    assertEquals(listOf(eventsPath("old"), eligiblePath()), paths(takeAll()))
+    assertEquals(1, store.all().size)
+    coordinator.onNetworkAvailable()
+    executor.runAll()
+    assertEquals(listOf(eventsPath("old")), paths(takeAll()))
+    assertTrue(store.all().isEmpty())
+  }
+
   // eligible failures
+
+  /** A 429 answering a session that already ended must not pause the next session's fetch (SDKIAM-15). */
+  @Test
+  fun `a late 429 does not pause the next session`() {
+    server.enqueue(status(429, retryAfter = "30"))
+    server.enqueue(messages(sessionStart("s1")))
+    init()
+    coordinator.onSessionStarted()
+    coordinator.onSessionEnded()
+    executor.runAll()
+    assertEquals(1, server.requestCount)
+    assertNull(coordinator.session.eligiblePausedUntilMs)
+    coordinator.onSessionStarted()
+    executor.runAll()
+    assertEquals(2, server.requestCount)
+    assertEquals(listOf("s1"), presenter.presented.map { it.message.id })
+  }
 
   @Test
   fun `eligible 429 above 60 seconds gives up with no wait and no second request`() {
@@ -736,6 +774,45 @@ class NottiInAppCoordinatorTest {
     assertEquals(1, server.requestCount)
     executor.advance(2_000)
     assertEquals(listOf(eventsPath("a"), eventsPath("a"), eventsPath("b")), paths(takeAll()))
+  }
+
+  /**
+   * A trigger while a flush is running is coalesced into one more pass
+   * that starts as soon as the running one ends, even after it failed.
+   */
+  @Test
+  fun `a trigger during a flush that ends in failure starts one more pass`() {
+    queuedEvent("a")
+    repeat(5) { server.enqueue(status(500)) }
+    server.enqueue(status(201))
+    init()
+    coordinator.onRegistered()
+    executor.runAll()
+    coordinator.onNetworkAvailable()
+    coordinator.onNetworkAvailable()
+    executor.advance(30_000)
+    assertEquals(6, server.requestCount)
+    assertTrue(store.all().isEmpty())
+  }
+
+  /** A flush in backoff when the config changes ends there, then runs the pass a trigger asked for. */
+  @Test
+  fun `a trigger during a flush cut by a config change flushes the new app`() {
+    queuedEvent("a")
+    server.enqueue(status(503))
+    init("app-1")
+    coordinator.onRegistered()
+    executor.runAll()
+    init("app-2")
+    executor.runAll()
+    queuedEvent("b", appId = "app-2")
+    server.enqueue(status(201))
+    coordinator.onNetworkAvailable()
+    executor.runAll()
+    assertEquals(1, server.requestCount)
+    executor.advance(2_000)
+    assertEquals(listOf(eventsPath("a"), eventsPath("b", appId = "app-2")), paths(takeAll()))
+    assertTrue(store.all().isEmpty())
   }
 
   // Privacy

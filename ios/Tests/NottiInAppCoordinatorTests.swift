@@ -798,6 +798,26 @@ final class NottiInAppCoordinatorTests: XCTestCase {
     XCTAssertTrue(store.all().isEmpty)
   }
 
+  /// A flush in backoff when the config changes ends there, then runs the
+  /// pass a trigger asked for.
+  func test_aTriggerDuringAFlushCutByAConfigChangeFlushesTheNewApp() {
+    queuedEvent("a")
+    enqueue(status(503))
+    initialize("app-1")
+    coordinator.onRegistered()
+    executor.runAll()
+    initialize("app-2")
+    executor.runAll()
+    queuedEvent("b", appId: "app-2")
+    enqueue(status(201))
+    coordinator.onNetworkAvailable()
+    executor.runAll()
+    XCTAssertEqual(requestCount, 1)
+    executor.advance(2_000)
+    XCTAssertEqual(paths(takeAll()), [eventsPath("a"), eventsPath("b", appId: "app-2")])
+    XCTAssertTrue(store.all().isEmpty)
+  }
+
   // MARK: - Privacy
 
   func test_requestsAreOnlyInAppPostsAndLogsCarryNoIdentifiers() throws {
