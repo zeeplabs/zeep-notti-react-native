@@ -10,10 +10,6 @@ import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
 import java.io.IOException
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-import java.util.TimeZone
 
 /**
  * `profileFields` holds the read-once profile fields the backend echoed back
@@ -272,7 +268,7 @@ class NottiApiClient(
       .put("token", token)
       .put("event_id", event.eventId)
       .put("type", event.type)
-      .put("occurred_at", formatRfc3339Utc(event.occurredAtMs))
+      .put("occurred_at", formatIsoUtc(event.occurredAtMs))
     if (event.type == InAppEventType.CLICK && event.buttonId != null) body.put("button_id", event.buttonId)
     if (event.type == InAppEventType.DISMISS && event.reason != null) body.put("reason", event.reason)
     val response = executeOnce(url, body)
@@ -333,11 +329,6 @@ class NottiApiClient(
     if (value.isEmpty() || !value.all { it in '0'..'9' }) return null
     return value.toLongOrNull()?.coerceAtMost(Int.MAX_VALUE.toLong())?.toInt() ?: Int.MAX_VALUE
   }
-
-  private fun formatRfc3339Utc(epochMs: Long): String =
-    SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)
-      .apply { timeZone = TimeZone.getTimeZone("UTC") }
-      .format(Date(epochMs))
 
   /** Shared path builder for `POST .../devices` and `PATCH .../devices/{id}` (L1). */
   private fun devicesUrl(deviceId: String? = null): HttpUrl? = try {

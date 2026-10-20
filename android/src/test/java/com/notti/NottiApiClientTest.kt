@@ -760,7 +760,7 @@ class NottiApiClientTest {
     client.reportInAppEvent(inAppEvent(), inAppDevice, "t")
 
     val sent = JSONObject(requireNotNull(server.takeRequest(5, TimeUnit.SECONDS)).body.readUtf8())
-    assertEquals("2026-10-17T14:30:05Z", sent.getString("occurred_at"))
+    assertEquals("2026-10-17T14:30:05.000Z", sent.getString("occurred_at"))
   }
 
   @Test

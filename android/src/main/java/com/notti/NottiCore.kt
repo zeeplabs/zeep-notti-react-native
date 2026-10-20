@@ -666,18 +666,6 @@ class NottiCore(
   }
 
   /**
-   * Formats an epoch-ms timestamp as UTC ISO-8601 (`yyyy-MM-dd'T'HH:mm:ss.SSS'Z'`)
-   * for the session PATCH payload. No `java.time` (minSdk 24, no desugaring) -
-   * `SimpleDateFormat` with an explicit UTC `TimeZone`; the literal `'Z'` in the
-   * pattern matches the RFC3339 shape the backend's Go parser accepts. Matches
-   * the iOS helper's output.
-   */
-  internal fun formatIsoUtc(epochMs: Long): String =
-    SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
-      .apply { timeZone = TimeZone.getTimeZone("UTC") }
-      .format(Date(epochMs))
-
-  /**
    * Holds [mutationLock] across the whole call/response/store-write sequence,
    * for the same reason `mutateTags` does: the POST response carries the
    * device's server-side `tags`, so registration is itself a read-modify-write
@@ -1316,3 +1304,16 @@ class NottiCore(
   }
 
 }
+
+/**
+ * Formats an epoch-ms timestamp as UTC ISO-8601 (`yyyy-MM-dd'T'HH:mm:ss.SSS'Z'`)
+ * for the session PATCH payload and the In-App event `occurred_at`. No
+ * `java.time` (minSdk 24, no desugaring) - `SimpleDateFormat` with an
+ * explicit UTC `TimeZone`; the literal `'Z'` in the pattern matches the
+ * RFC3339 shape the backend's Go parser accepts. Matches the iOS helper's
+ * output.
+ */
+internal fun formatIsoUtc(epochMs: Long): String =
+  SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
+    .apply { timeZone = TimeZone.getTimeZone("UTC") }
+    .format(Date(epochMs))
