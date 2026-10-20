@@ -106,7 +106,7 @@ class NottiInAppCoordinator(
   private val monotonicMs: () -> Long = { System.nanoTime() / 1_000_000 },
   private val logger: (String) -> Unit = {},
   val session: NottiInAppSession = NottiInAppSession(monotonicMs)
-) {
+) : InAppDisplayEvents {
 
   companion object {
     const val INACTIVE_WARNING = "Notti.inapp: In-App is inactive on this device until the next registration"
@@ -161,14 +161,14 @@ class NottiInAppCoordinator(
 
   // Presenter callbacks (any thread)
 
-  fun onDisplayAttached(displayId: String, attached: Boolean) = onMain {
+  override fun onDisplayAttached(displayId: String, attached: Boolean) = onMain {
     val display = session.display?.takeIf { it.displayId == displayId } ?: return@onMain
     display.clock?.setAttached(attached)
     scheduleClockCheck()
   }
 
   /** First layout while attached and in the foreground: one impression per display (SDKIAM-40). */
-  fun onDisplayVisible(displayId: String) = onMain {
+  override fun onDisplayVisible(displayId: String) = onMain {
     val display = session.display ?: return@onMain
     if (!session.markVisible(displayId)) return@onMain
     enqueue(display.message.id, InAppEventType.IMPRESSION)
@@ -180,7 +180,7 @@ class NottiInAppCoordinator(
    * A button, the image or a bar body was tapped (SDKIAM-33/42): `click`
    * enqueued, then delivered, then the display closed with no `dismiss`.
    */
-  fun onDisplayClicked(displayId: String, buttonId: String, action: InAppAction?) = onMain {
+  override fun onDisplayClicked(displayId: String, buttonId: String, action: InAppAction?) = onMain {
     val display = session.display ?: return@onMain
     if (!session.markClosed(displayId)) return@onMain
     val messageId = display.message.id
@@ -195,10 +195,10 @@ class NottiInAppCoordinator(
     requestFlush()
   }
 
-  fun onDisplayDismissed(displayId: String, reason: String) = onMain { dismiss(displayId, reason) }
+  override fun onDisplayDismissed(displayId: String, reason: String) = onMain { dismiss(displayId, reason) }
 
   /** The display could not be presented; it is dropped with no event. */
-  fun onDisplayFailed(displayId: String) = onMain { session.dropPreparing(displayId) }
+  override fun onDisplayFailed(displayId: String) = onMain { session.dropPreparing(displayId) }
 
   // Main-thread handlers
 
