@@ -14,9 +14,16 @@ final class StubURLProtocol: URLProtocol {
     /// Answer like the real backend's PATCH: a device whose fields echo the
     /// request body (`token` excluded). Overrides `body`.
     var echoDevice: Bool = false
+    /// Response header fields (e.g. `Retry-After`); none when empty.
+    var headers: [String: String] = [:]
 
-    static func status(_ code: Int, body: String = "", delayMs: Int = 0) -> StubResponse {
-      StubResponse(statusCode: code, body: body.data(using: .utf8), error: nil, delayMs: delayMs)
+    static func status(
+      _ code: Int,
+      body: String = "",
+      delayMs: Int = 0,
+      headers: [String: String] = [:]
+    ) -> StubResponse {
+      StubResponse(statusCode: code, body: body.data(using: .utf8), error: nil, delayMs: delayMs, headers: headers)
     }
 
     static func echoDevice() -> StubResponse {
@@ -85,7 +92,7 @@ final class StubURLProtocol: URLProtocol {
       url: request.url!,
       statusCode: stub.statusCode ?? 200,
       httpVersion: "HTTP/1.1",
-      headerFields: nil
+      headerFields: stub.headers.isEmpty ? nil : stub.headers
     )!
     client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
     if stub.echoDevice {

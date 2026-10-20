@@ -462,7 +462,7 @@ public class NottiCore {
           self.deviceStore.setPendingUnsubscribeAtMs(stamp)
           self.deviceStore.setLastUnsubscribedAtMs(stamp)
           stampMs = stamp
-          extraFields["last_unsubscribed_at"] = Self.formatIsoUtc(stamp)
+          extraFields["last_unsubscribed_at"] = formatIsoUtc(stamp)
         }
         let acked = self.patchSubscribed(
           client, deviceId: deviceId, token: token, enabled,
@@ -836,7 +836,7 @@ public class NottiCore {
             self.deviceStore.setPendingPermissionUnsubscribeAtMs(stamp)
             self.deviceStore.setLastUnsubscribedAtMs(stamp)
             stampMs = stamp
-            fields["last_unsubscribed_at"] = Self.formatIsoUtc(stamp)
+            fields["last_unsubscribed_at"] = formatIsoUtc(stamp)
           }
           let result = client.patchDevice(deviceId: deviceId, token: token, fields: fields)
           switch result {
@@ -1281,9 +1281,9 @@ public class NottiCore {
 
     var snapshot: [String: Any] = [:]
     if let firstSessionAt = deviceStore.getFirstSessionAtMs() {
-      snapshot["first_session_at"] = Self.formatIsoUtc(firstSessionAt)
+      snapshot["first_session_at"] = formatIsoUtc(firstSessionAt)
     }
-    snapshot["last_session_at"] = Self.formatIsoUtc(nowMs)
+    snapshot["last_session_at"] = formatIsoUtc(nowMs)
     snapshot["session_count"] = sessionCount
     snapshot["session_time_seconds"] = sessionTimeMs / 1000
 
@@ -1296,15 +1296,6 @@ public class NottiCore {
 
   private func nowMs() -> Int64 {
     Int64(Date().timeIntervalSince1970 * 1000)
-  }
-
-  /// ISO-8601 UTC with millisecond precision — the same
-  /// `yyyy-MM-dd'T'HH:mm:ss.SSS'Z'` shape Android's `formatIsoUtc` produces,
-  /// so the backend's Go RFC3339 parse accepts both platforms.
-  private static func formatIsoUtc(_ epochMs: Int64) -> String {
-    let formatter = ISO8601DateFormatter()
-    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    return formatter.string(from: Date(timeIntervalSince1970: Double(epochMs) / 1000))
   }
 
   /// Runs `work` right away when the device already has an id + token, or

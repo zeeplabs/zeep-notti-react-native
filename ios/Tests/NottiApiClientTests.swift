@@ -493,6 +493,239 @@ final class NottiApiClientTests: XCTestCase {
     }
   }
 
+  // MARK: - In-App endpoints (single attempt)
+
+  private let inAppDevice = "00000000-0000-0000-0000-0000000000d1"
+  private let inAppMessageId = "00000000-0000-0000-0000-0000000000b1"
+
+  private func inAppEvent(
+    type: String = InAppEventType.impression,
+    buttonId: String? = nil,
+    reason: String? = nil,
+    messageId: String? = nil
+  ) -> InAppPendingEvent {
+    InAppPendingEvent(
+      id: "local",
+      eventId: "00000000-0000-4000-8000-0000000000e1",
+      appId: "app-1",
+      messageId: messageId ?? inAppMessageId,
+      type: type,
+      buttonId: buttonId,
+      reason: reason,
+      occurredAtMs: 1_792_247_405_000
+    )
+  }
+
+  private func sentJson(_ index: Int) -> [String: Any] {
+    let recorded = StubURLProtocol.recordedRequests()
+    guard index < recorded.count,
+      let json = try? JSONSerialization.jsonObject(with: bodyData(recorded[index])) as? [String: Any]
+    else {
+      XCTFail("no JSON body for request \(index)")
+      return [:]
+    }
+    return json
+  }
+
+  private func encodedPath(_ index: Int) -> String? {
+    let recorded = StubURLProtocol.recordedRequests()
+    guard index < recorded.count, let url = recorded[index].url else { return nil }
+    return URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedPath
+  }
+
+  func test_eligibleSendsTheDocumentedRequestAndParsesTheMessages() {
+    StubURLProtocol.enqueue(.status(
+      200, body: #"{"messages":[{"id":"m1","title":"fixture","trigger":{"type":"session_start"}}]}"#
+    ))
+
+    let result = client.fetchEligibleInAppMessages(deviceId: inAppDevice, token: "apns-token")
+
+    let recorded = StubURLProtocol.recordedRequests()
+    XCTAssertEqual(recorded.count, 1)
+    XCTAssertEqual(recorded.first?.httpMethod, "POST")
+    XCTAssertEqual(encodedPath(0), "/v1/apps/app-1/in-app-messages/eligible")
+    XCTAssertEqual(recorded.first?.value(forHTTPHeaderField: "Authorization"), "Bearer secret-key")
+    let sent = sentJson(0)
+    XCTAssertEqual(Set(sent.keys), ["device_id", "token"])
+    XCTAssertEqual(sent["device_id"] as? String, inAppDevice)
+    XCTAssertEqual(sent["token"] as? String, "apns-token")
+    guard case .messages(let messages) = result else { return XCTFail("expected messages, got \(result)") }
+    XCTAssertEqual(messages.map(\.id), ["m1"])
+  }
+
+  func test_eligibleWithAnEmptyMessagesArrayIsAValidResult() {
+    StubURLProtocol.enqueue(.status(200, body: #"{"messages":[]}"#))
+
+    XCTAssertEqual(client.fetchEligibleInAppMessages(deviceId: inAppDevice, token: "t"), .messages([]))
+  }
+
+  func test_eligibleClassifiesEachStatusAndNeverRetriesOrSleeps() {
+    let expected: [(Int, InAppEligibleResult)] = [
+      (401, .unauthorized),
+      (403, .forbidden),
+      (404, .terminal(status: 404)),
+      (422, .terminal(status: 422)),
+      (400, .terminal(status: 400)),
+      (408, .transient),
+      (500, .transient),
+      (503, .transient),
+    ]
+    for (status, outcome) in expected {
+      StubURLProtocol.enqueue(.status(status))
+      XCTAssertEqual(client.fetchEligibleInAppMessages(deviceId: inAppDevice, token: "t"), outcome, "status \(status)")
+    }
+    XCTAssertEqual(StubURLProtocol.recordedRequests().count, expected.count)
+    XCTAssertEqual(sleeps, [])
+    XCTAssertNotEqual(InAppEligibleResult.unauthorized, InAppEligibleResult.forbidden)
+  }
+
+  func test_eligibleWithAnUnparseable2xxOrANetworkErrorIsTransient() {
+    StubURLProtocol.enqueue(.status(200, body: "<html>portal</html>"))
+    XCTAssertEqual(client.fetchEligibleInAppMessages(deviceId: inAppDevice, token: "t"), .transient)
+    StubURLProtocol.enqueue(.status(200, body: #"{"messages":"x"}"#))
+    XCTAssertEqual(client.fetchEligibleInAppMessages(deviceId: inAppDevice, token: "t"), .transient)
+    StubURLProtocol.enqueue(.networkError())
+    XCTAssertEqual(client.fetchEligibleInAppMessages(deviceId: inAppDevice, token: "t"), .transient)
+    XCTAssertEqual(StubURLProtocol.recordedRequests().count, 3)
+    XCTAssertEqual(sleeps, [])
+  }
+
+  func test_429CarriesRetryAfterAsIntegerSecondsOrNil() {
+    func eligibleRetryAfter(_ header: String?) -> Int?? {
+      StubURLProtocol.enqueue(.status(429, headers: header.map { ["Retry-After": $0] } ?? [:]))
+      guard case .rateLimited(let seconds) = client.fetchEligibleInAppMessages(deviceId: inAppDevice, token: "t")
+      else {
+        XCTFail("expected rateLimited for header \(String(describing: header))")
+        return .none
+      }
+      return .some(seconds)
+    }
+    XCTAssertEqual(eligibleRetryAfter("2"), .some(2))
+    XCTAssertEqual(eligibleRetryAfter(nil), .some(nil))
+    XCTAssertEqual(eligibleRetryAfter("0"), .some(0))
+    XCTAssertEqual(eligibleRetryAfter("9999"), .some(9999))
+    XCTAssertEqual(eligibleRetryAfter("Wed, 21 Oct 2026 07:28:00 GMT"), .some(nil))
+    XCTAssertEqual(eligibleRetryAfter("-5"), .some(nil))
+    XCTAssertEqual(eligibleRetryAfter("1.5"), .some(nil))
+    XCTAssertEqual(eligibleRetryAfter("99999999999999999999"), .some(Int(Int32.max)))
+  }
+
+  /// iOS-only: `Int(_:)` would accept a leading sign and `Int` is 64-bit, so
+  /// the parser is pinned directly to Android's integer-only, Int32-capped rule.
+  func test_parseRetryAfterMatchesAndroidRules() {
+    XCTAssertEqual(NottiApiClient.parseRetryAfter(" 2 "), 2)
+    XCTAssertNil(NottiApiClient.parseRetryAfter("+2"))
+    XCTAssertNil(NottiApiClient.parseRetryAfter(""))
+    XCTAssertNil(NottiApiClient.parseRetryAfter("   "))
+    XCTAssertNil(NottiApiClient.parseRetryAfter("٣"))
+    XCTAssertEqual(NottiApiClient.parseRetryAfter("2147483648"), Int(Int32.max))
+  }
+
+  func test_eventsSendTheDocumentedRequestForEachType() {
+    for _ in 0..<3 { StubURLProtocol.enqueue(.status(201, body: #"{"duplicate":false}"#)) }
+
+    _ = client.reportInAppEvent(inAppEvent(), deviceId: inAppDevice, token: "tok")
+    _ = client.reportInAppEvent(inAppEvent(type: InAppEventType.click, buttonId: "btn"), deviceId: inAppDevice, token: "tok")
+    _ = client.reportInAppEvent(inAppEvent(type: InAppEventType.dismiss, reason: "auto"), deviceId: inAppDevice, token: "tok")
+
+    let recorded = StubURLProtocol.recordedRequests()
+    XCTAssertEqual(recorded.count, 3)
+    XCTAssertEqual(recorded.first?.httpMethod, "POST")
+    XCTAssertEqual(encodedPath(0), "/v1/apps/app-1/in-app-messages/\(inAppMessageId)/events")
+    XCTAssertEqual(recorded.first?.value(forHTTPHeaderField: "Authorization"), "Bearer secret-key")
+    let impression = sentJson(0)
+    XCTAssertEqual(Set(impression.keys), ["device_id", "token", "event_id", "type", "occurred_at"])
+    XCTAssertEqual(impression["event_id"] as? String, "00000000-0000-4000-8000-0000000000e1")
+    XCTAssertEqual(impression["type"] as? String, "impression")
+
+    let click = sentJson(1)
+    XCTAssertEqual(click["button_id"] as? String, "btn")
+    XCTAssertNil(click["reason"])
+
+    let dismiss = sentJson(2)
+    XCTAssertEqual(dismiss["reason"] as? String, "auto")
+    XCTAssertNil(dismiss["button_id"])
+  }
+
+  func test_buttonIdAndReasonAreSentOnlyForTheirOwnType() {
+    StubURLProtocol.enqueue(.status(201))
+    StubURLProtocol.enqueue(.status(201))
+
+    _ = client.reportInAppEvent(inAppEvent(buttonId: "btn", reason: "auto"), deviceId: inAppDevice, token: "t")
+    _ = client.reportInAppEvent(inAppEvent(type: InAppEventType.click, reason: "auto"), deviceId: inAppDevice, token: "t")
+
+    XCTAssertEqual(Set(sentJson(0).keys), ["device_id", "token", "event_id", "type", "occurred_at"])
+    XCTAssertEqual(Set(sentJson(1).keys), ["device_id", "token", "event_id", "type", "occurred_at"])
+  }
+
+  func test_occurredAtIsRFC3339UTC() {
+    StubURLProtocol.enqueue(.status(201))
+
+    _ = client.reportInAppEvent(inAppEvent(), deviceId: inAppDevice, token: "t")
+
+    XCTAssertEqual(sentJson(0)["occurred_at"] as? String, "2026-10-17T14:30:05.000Z")
+  }
+
+  func test_eventsClassifyEachStatus() {
+    StubURLProtocol.enqueue(.status(201))
+    XCTAssertEqual(client.reportInAppEvent(inAppEvent(), deviceId: inAppDevice, token: "t"), .recorded)
+    StubURLProtocol.enqueue(.status(200, body: #"{"duplicate":true}"#))
+    XCTAssertEqual(client.reportInAppEvent(inAppEvent(), deviceId: inAppDevice, token: "t"), .recorded)
+    StubURLProtocol.enqueue(.status(201, body: ""))
+    XCTAssertEqual(client.reportInAppEvent(inAppEvent(), deviceId: inAppDevice, token: "t"), .recorded)
+
+    let expected: [(Int, InAppEventResult)] = [
+      (404, .drop),
+      (422, .drop),
+      (400, .drop),
+      (401, .unauthorized),
+      (403, .forbidden),
+      (408, .transient),
+      (500, .transient),
+      (502, .transient),
+    ]
+    for (status, outcome) in expected {
+      StubURLProtocol.enqueue(.status(status))
+      XCTAssertEqual(client.reportInAppEvent(inAppEvent(), deviceId: inAppDevice, token: "t"), outcome, "status \(status)")
+    }
+    StubURLProtocol.enqueue(.networkError())
+    XCTAssertEqual(client.reportInAppEvent(inAppEvent(), deviceId: inAppDevice, token: "t"), .transient)
+    XCTAssertEqual(StubURLProtocol.recordedRequests().count, 3 + expected.count + 1)
+    XCTAssertEqual(sleeps, [])
+  }
+
+  func test_events429CarriesRetryAfter() {
+    StubURLProtocol.enqueue(.status(429, headers: ["Retry-After": "2"]))
+    XCTAssertEqual(
+      client.reportInAppEvent(inAppEvent(), deviceId: inAppDevice, token: "t"),
+      .rateLimited(retryAfterSeconds: 2)
+    )
+    StubURLProtocol.enqueue(.status(429))
+    XCTAssertEqual(
+      client.reportInAppEvent(inAppEvent(), deviceId: inAppDevice, token: "t"),
+      .rateLimited(retryAfterSeconds: nil)
+    )
+  }
+
+  func test_anAppIdWithPathOrQueryCharactersCannotRewriteTheInAppPath() {
+    let hostile = NottiApiClient(
+      session: stubSession(),
+      baseUrl: "https://notti.example.com",
+      appId: "a/../b?x=1#f",
+      clientKey: "secret-key",
+      sleeper: { _ in }
+    )
+    StubURLProtocol.enqueue(.status(200, body: #"{"messages":[]}"#))
+    StubURLProtocol.enqueue(.status(201))
+
+    _ = hostile.fetchEligibleInAppMessages(deviceId: inAppDevice, token: "t")
+    _ = hostile.reportInAppEvent(inAppEvent(messageId: "m/../x"), deviceId: inAppDevice, token: "t")
+
+    XCTAssertEqual(encodedPath(0), "/v1/apps/a%2F..%2Fb%3Fx=1%23f/in-app-messages/eligible")
+    XCTAssertEqual(encodedPath(1), "/v1/apps/a%2F..%2Fb%3Fx=1%23f/in-app-messages/m%2F..%2Fx/events")
+    XCTAssertNil(StubURLProtocol.recordedRequests().first?.url?.query)
+  }
+
   private func bodyData(_ request: URLRequest) -> Data {
     if let body = request.httpBody { return body }
     guard let stream = request.httpBodyStream else { return Data() }
