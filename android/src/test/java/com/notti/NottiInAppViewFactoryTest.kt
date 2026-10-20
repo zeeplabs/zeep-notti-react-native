@@ -6,7 +6,15 @@ import android.graphics.drawable.GradientDrawable
 import android.text.Spanned
 import android.text.style.URLSpan
 import android.view.Gravity
+import android.graphics.Rect
+import android.os.Looper
+import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
+import android.view.accessibility.AccessibilityNodeInfo
+import android.widget.Button
+import android.widget.FrameLayout
+import java.util.Locale
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -18,6 +26,7 @@ import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
@@ -52,10 +61,12 @@ class NottiInAppViewFactoryTest {
     body: String = "Body",
     style: String? = null,
     buttons: String = "",
-    image: Boolean = false
+    image: Boolean = false,
+    imageAction: Boolean = false
   ): InAppMessage {
     val styleJson = if (style == null) "" else ""","style":$style"""
-    val imageJson = if (image) ""","image_url":"https://img.test/a.png"""" else ""
+    val imageJson = (if (image) ""","image_url":"https://img.test/a.png"""" else "") +
+      (if (imageAction) ""","image_action":{"type":"deeplink","value":"app://promo"}""" else "")
     val buttonsJson = if (buttons.isEmpty()) "" else ""","buttons":[$buttons]"""
     val raw = """{"messages":[{"id":"m","format":"$format","title":${JSONString.quote(title)},"body":${JSONString.quote(body)},""" +
       """"trigger":{"type":"session_start"}$styleJson$imageJson$buttonsJson}]}"""
@@ -369,5 +380,316 @@ class NottiInAppViewFactoryTest {
   fun `title text keeps the raw string type`() {
     val views = NottiInAppViewFactory.build(activity(), message("top"))
     assertFalse(views.title.text is Spanned)
+  }
+
+  // Interactions
+
+  private class Recorder : InAppViewListener {
+    val closes = mutableListOf<String>()
+    val actions = mutableListOf<Pair<String, InAppAction?>>()
+    val total get() = closes.size + actions.size
+
+    override fun onClose(reason: String) {
+      closes.add(reason)
+    }
+
+    override fun onAction(buttonId: String, action: InAppAction?) {
+      actions.add(buttonId to action)
+    }
+  }
+
+  private fun bound(
+    format: String,
+    buttons: String = "",
+    body: String = "Body",
+    bitmap: Bitmap? = null,
+    imageAction: Boolean = false
+  ): Pair<InAppMessageViews, Recorder> {
+    RuntimeEnvironment.setQualifiers("+w393dp-h852dp")
+    val msg = message(format, body = body, buttons = buttons, image = bitmap != null, imageAction = imageAction)
+    val activity = activity()
+    val views = NottiInAppViewFactory.build(activity, msg, bitmap)
+    val recorder = Recorder()
+    NottiInAppViewFactory.bind(views, msg, recorder)
+    // Attached and laid out by a real window: a View only runs its posted click when attached.
+    activity.setContentView(views.root)
+    shadowOf(Looper.getMainLooper()).idle()
+    return views to recorder
+  }
+
+  /** Center of [view] in root (screen) pixels. */
+  private fun centerOf(root: View, view: View): Pair<Float, Float> {
+    val rect = Rect()
+    view.getDrawingRect(rect)
+    (root as ViewGroup).offsetDescendantRectToMyCoords(view, rect)
+    return rect.exactCenterX() to rect.exactCenterY()
+  }
+
+  private fun dispatch(root: View, action: Int, x: Float, y: Float, time: Long = 0L): Boolean {
+    val ev = MotionEvent.obtain(0L, time, action, x, y, 0)
+    return try {
+      root.dispatchTouchEvent(ev)
+    } finally {
+      ev.recycle()
+    }
+  }
+
+  private fun tap(root: View, x: Float, y: Float): Boolean {
+    val consumed = dispatch(root, MotionEvent.ACTION_DOWN, x, y)
+    dispatch(root, MotionEvent.ACTION_UP, x, y, 50L)
+    // A View posts its click on the main looper.
+    shadowOf(Looper.getMainLooper()).idle()
+    return consumed
+  }
+
+  private fun tap(root: View, view: View) {
+    val (x, y) = centerOf(root, view)
+    tap(root, x, y)
+  }
+
+  /** Vertical drag of [dyPx] in small steps from [view]'s center. */
+  private fun drag(views: InAppMessageViews, dyPx: Float, from: View = views.card) {
+    val (x, y) = centerOf(views.root, from)
+    dispatch(views.root, MotionEvent.ACTION_DOWN, x, y)
+    val steps = 10
+    for (i in 1..steps) dispatch(views.root, MotionEvent.ACTION_MOVE, x, y + dyPx * i / steps, i * 10L)
+    dispatch(views.root, MotionEvent.ACTION_UP, x, y + dyPx, 200L)
+  }
+
+  private fun px(view: View, dp: Float): Float = dp * view.resources.displayMetrics.density
+
+  @Test
+  fun `close control reports close_button on every layout`() {
+    for (format in listOf("top", "bottom", "center", "full")) {
+      val (views, recorder) = bound(format, buttons = button("a", "Accept"))
+      tap(views.root, views.close)
+      assertEquals(format, listOf(InAppDismissReason.CLOSE_BUTTON), recorder.closes)
+      assertTrue(format, recorder.actions.isEmpty())
+    }
+  }
+
+  @Test
+  fun `top swipe up past the threshold reports swipe, a short drag does not`() {
+    val (views, recorder) = bound("top")
+    drag(views, -px(views.card, 12f))
+    assertEquals(0, recorder.total)
+    assertEquals(0f, views.card.translationY)
+    drag(views, -px(views.card, 80f))
+    assertEquals(listOf(InAppDismissReason.SWIPE), recorder.closes)
+  }
+
+  @Test
+  fun `bottom swipe down past the threshold reports swipe, the opposite direction does not`() {
+    val (views, recorder) = bound("bottom")
+    drag(views, -px(views.card, 80f))
+    assertEquals(0, recorder.total)
+    assertEquals(0f, views.card.translationY)
+    drag(views, px(views.card, 80f))
+    assertEquals(listOf(InAppDismissReason.SWIPE), recorder.closes)
+  }
+
+  @Test
+  fun `swipe threshold is a third of the bar height, at most 48 dp`() {
+    assertEquals(20f, swipeThresholdPx(60, 1f), 0.01f)
+    assertEquals(48f, swipeThresholdPx(300, 1f), 0.01f)
+    assertEquals(144f, swipeThresholdPx(900, 3f), 0.01f)
+  }
+
+  @Test
+  fun `a swipe that starts on a button dismisses without clicking it`() {
+    val (views, recorder) = bound("top", buttons = button("a", "Accept"))
+    drag(views, -px(views.card, 80f), from = views.buttons[0])
+    assertEquals(listOf(InAppDismissReason.SWIPE), recorder.closes)
+    assertTrue(recorder.actions.isEmpty())
+  }
+
+  @Test
+  fun `a bar whose text can still scroll lets the drag scroll instead of dismissing`() {
+    val (views, recorder) = bound("bottom", body = longBody)
+    val scroll = views.card.scroll!!
+    scroll.scrollTo(0, px(views.card, 40f).toInt())
+    assertTrue(scroll.canScrollVertically(-1))
+    drag(views, px(views.card, 80f))
+    assertTrue(recorder.closes.isEmpty())
+  }
+
+  @Test
+  fun `center backdrop tap reports outside_tap, a tap inside the card does nothing`() {
+    val (views, recorder) = bound("center")
+    tap(views.root, views.body)
+    tap(views.root, views.card)
+    assertEquals(0, recorder.total)
+    tap(views.root, 4f, 4f)
+    assertEquals(listOf(InAppDismissReason.OUTSIDE_TAP), recorder.closes)
+  }
+
+  @Test
+  fun `full has no dismiss gesture besides the close control`() {
+    val (views, recorder) = bound("full", buttons = button("a", "Accept"))
+    tap(views.root, views.body)
+    tap(views.root, 2f, 2f)
+    drag(views, px(views.card, 200f), from = views.title)
+    drag(views, -px(views.card, 200f), from = views.title)
+    assertEquals(0, recorder.total)
+    assertEquals(0f, views.card.translationY)
+  }
+
+  @Test
+  fun `button tap reports its own id and the untouched action`() {
+    val buttons = """{"id":"yes","label":"Yes","action":{"type":"url","value":"https://x.test/a?b=1"}},""" + button("no", "No")
+    for (format in listOf("top", "center", "full")) {
+      val (views, recorder) = bound(format, buttons = buttons)
+      tap(views.root, views.buttons[1])
+      assertEquals(format, listOf("no" to null), recorder.actions)
+      val (other, otherRecorder) = bound(format, buttons = buttons)
+      tap(other.root, other.buttons[0])
+      assertEquals(format, listOf("yes" to InAppAction("url", "https://x.test/a?b=1")), otherRecorder.actions)
+    }
+  }
+
+  @Test
+  fun `image tap with an image action reports image`() {
+    for (format in listOf("top", "center", "full")) {
+      val (views, recorder) = bound(format, buttons = button("a", "Accept"), bitmap = bitmap(), imageAction = true)
+      tap(views.root, views.image!!)
+      assertEquals(format, listOf("image" to InAppAction("deeplink", "app://promo")), recorder.actions)
+      assertTrue(format, recorder.closes.isEmpty())
+    }
+  }
+
+  @Test
+  fun `image without an image action is not tappable`() {
+    val (views, recorder) = bound("center", bitmap = bitmap())
+    assertFalse(views.image!!.isClickable)
+    tap(views.root, views.image!!)
+    assertEquals(0, recorder.total)
+  }
+
+  @Test
+  fun `bar body tap acts as the first button, no buttons means not tappable`() {
+    for (format in listOf("top", "bottom")) {
+      val (views, recorder) = bound(format, buttons = button("first", "One") + "," + button("second", "Two"))
+      tap(views.root, views.body)
+      assertEquals(format, listOf("first" to null), recorder.actions)
+      val (bare, bareRecorder) = bound(format)
+      tap(bare.root, bare.body)
+      assertEquals(format, 0, bareRecorder.total)
+    }
+  }
+
+  @Test
+  fun `center and full body is not tappable even with buttons`() {
+    for (format in listOf("center", "full")) {
+      val (views, recorder) = bound(format, buttons = button("a", "Accept"))
+      tap(views.root, views.body)
+      tap(views.root, views.title)
+      assertEquals(format, 0, recorder.total)
+    }
+  }
+
+  @Test
+  fun `touches outside a bar are not consumed, inside they are`() {
+    for (format in listOf("top", "bottom")) {
+      val (views, _) = bound(format, buttons = button("a", "Accept"))
+      val outsideY = if (format == "top") views.root.height - 10f else 10f
+      assertFalse(format, dispatch(views.root, MotionEvent.ACTION_DOWN, views.root.width / 2f, outsideY))
+      val (x, y) = centerOf(views.root, views.body)
+      assertTrue(format, dispatch(views.root, MotionEvent.ACTION_DOWN, x, y))
+    }
+  }
+
+  @Test
+  fun `only the first outcome of a display is delivered`() {
+    val (views, recorder) = bound("top", buttons = button("a", "Accept"))
+    tap(views.root, views.buttons[0])
+    tap(views.root, views.buttons[0])
+    tap(views.root, views.close)
+    drag(views, -px(views.card, 80f))
+    assertEquals(listOf("a" to null), recorder.actions)
+    assertTrue(recorder.closes.isEmpty())
+  }
+
+  // Accessibility
+
+  @Test
+  fun `close label comes from the in-code table with an English fallback`() {
+    assertEquals("Close", NottiInAppAccessibility.closeLabel(Locale.forLanguageTag("en-US")))
+    assertEquals("Fechar", NottiInAppAccessibility.closeLabel(Locale.forLanguageTag("pt-BR")))
+    assertEquals("Close", NottiInAppAccessibility.closeLabel(Locale.forLanguageTag("fr-FR")))
+    assertEquals("Close", NottiInAppAccessibility.closeLabel(Locale.forLanguageTag("ja")))
+  }
+
+  @Test
+  fun `close control uses the device language`() {
+    RuntimeEnvironment.setQualifiers("pt-rBR")
+    val (pt, _) = bound("center")
+    assertEquals("Fechar", pt.close.contentDescription)
+    RuntimeEnvironment.setQualifiers("de-rDE")
+    val (de, _) = bound("center")
+    assertEquals("Close", de.close.contentDescription)
+  }
+
+  @Test
+  fun `buttons announce their label and the Button role, the title is a heading`() {
+    val (views, _) = bound("center", buttons = button("a", "Accept") + "," + button("b", "Later"))
+    assertEquals("Accept", views.buttons[0].contentDescription)
+    assertEquals("Later", views.buttons[1].contentDescription)
+    for (view in views.buttons + views.close) {
+      assertEquals(Button::class.java.name, view.createAccessibilityNodeInfo().className)
+    }
+    assertTrue(views.title.isAccessibilityHeading)
+  }
+
+  @Test
+  fun `card is an accessibility action only when the bar body is tappable`() {
+    val (center, _) = bound("center", buttons = button("a", "Accept"))
+    assertFalse(center.card.createAccessibilityNodeInfo().isClickable)
+    assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_NO, center.root.importantForAccessibility)
+    val (bar, recorder) = bound("top", buttons = button("a", "Accept"))
+    assertTrue(bar.card.performAccessibilityAction(AccessibilityNodeInfo.ACTION_CLICK, null))
+    assertEquals(listOf("a" to null), recorder.actions)
+  }
+
+  @Test
+  fun `bar announcement joins title and body`() {
+    val (views, _) = bound("top", body = "Hello")
+    assertEquals("Title. Hello", NottiInAppAccessibility.announcement(views))
+  }
+
+  @Test
+  fun `modal hides the host siblings and restores their exact previous values`() {
+    val context = activity()
+    val container = FrameLayout(context)
+    val auto = View(context)
+    val yes = View(context).apply { importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES }
+    val no = View(context).apply { importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
+    val hidden = View(context).apply { importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS }
+    val overlay = NottiInAppViewFactory.build(context, message("center")).root
+    listOf(auto, yes, no, hidden, overlay).forEach { container.addView(it) }
+
+    val restore = NottiInAppAccessibility.hideSiblings(container, overlay)
+    for (view in listOf(auto, yes, no, hidden)) {
+      assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS, view.importantForAccessibility)
+    }
+    assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_NO, overlay.importantForAccessibility)
+
+    restore.restore()
+    assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_AUTO, auto.importantForAccessibility)
+    assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_YES, yes.importantForAccessibility)
+    assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_NO, no.importantForAccessibility)
+    assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS, hidden.importantForAccessibility)
+    // Idempotent: a second restore does not clobber a later host change.
+    yes.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+    restore.restore()
+    assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_NO, yes.importantForAccessibility)
+  }
+
+  @Test
+  fun `tappable image is reachable with the Button role, a static one stays hidden`() {
+    val (tappable, _) = bound("center", bitmap = bitmap(), imageAction = true)
+    assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_YES, tappable.image!!.importantForAccessibility)
+    assertEquals(Button::class.java.name, tappable.image!!.createAccessibilityNodeInfo().className)
+    val (static, _) = bound("center", bitmap = bitmap())
+    assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_NO, static.image!!.importantForAccessibility)
   }
 }

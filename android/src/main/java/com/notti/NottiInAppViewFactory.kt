@@ -7,15 +7,21 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.util.TypedValue
+import android.graphics.Rect
+import android.os.Bundle
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.WindowInsets
+import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
@@ -77,7 +83,7 @@ class InAppOverlayLayout internal constructor(
   private val margin: Boolean
 ) : FrameLayout(context) {
 
-  internal lateinit var card: FrameLayout
+  internal lateinit var card: InAppCardLayout
   internal lateinit var column: InAppColumnLayout
 
   var safeArea: InAppInsets = InAppInsets.ZERO
@@ -234,10 +240,144 @@ class InAppButtonRow internal constructor(context: Context, private val spacingP
   }
 }
 
+/** Swipe distance that dismisses a bar: a third of its height, at most 48 dp (SDKIAM-22). */
+internal fun swipeThresholdPx(barHeightPx: Int, density: Float): Float =
+  min(barHeightPx / 3f, InAppMetrics.CLOSE_TARGET_DP * density)
+
+/**
+ * The message card. On a bar it owns the swipe and the body tap, observing the
+ * touch stream before its children so the scroll container cannot swallow
+ * them: a vertical drag in [dismissDirection] (-1 up, 1 down, 0 none) that the
+ * content cannot scroll becomes a swipe, and a tap outside the [excluded]
+ * controls is a body tap. Touches never leave the card's frame.
+ */
+class InAppCardLayout internal constructor(context: Context, private val dismissDirection: Int) : FrameLayout(context) {
+
+  internal var onSwipe: (() -> Unit)? = null
+  internal var onBodyTap: (() -> Unit)? = null
+  internal var excluded: List<View> = emptyList()
+  internal var scroll: View? = null
+
+  private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+  private var downX = 0f
+  private var downY = 0f
+  private var dragging = false
+  private var decided = false
+  private var tapCandidate = false
+
+  override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+    when (ev.actionMasked) {
+      MotionEvent.ACTION_DOWN -> {
+        // Raw coordinates: the card's own translation moves during a drag.
+        downX = ev.rawX
+        downY = ev.rawY
+        dragging = false
+        decided = false
+        tapCandidate = onBodyTap != null && excluded.none { hits(it, ev) }
+      }
+      MotionEvent.ACTION_MOVE -> {
+        val dx = ev.rawX - downX
+        val dy = ev.rawY - downY
+        if (dragging) {
+          translationY = dragOffset(dy)
+          return true
+        }
+        if (!decided && (abs(dx) > touchSlop || abs(dy) > touchSlop)) {
+          // Decided once per gesture: a drag the text scroll took never turns
+          // into a swipe halfway, when the scroll reaches its edge.
+          decided = true
+          tapCandidate = false
+          if (startsSwipe(dx, dy)) {
+            dragging = true
+            cancelChildren(ev)
+            translationY = dragOffset(dy)
+            return true
+          }
+        }
+      }
+      MotionEvent.ACTION_UP -> {
+        if (dragging) {
+          dragging = false
+          val distance = (ev.rawY - downY) * dismissDirection
+          if (distance >= swipeThresholdPx(height, resources.displayMetrics.density)) {
+            onSwipe?.invoke()
+          } else {
+            translationY = 0f
+          }
+          return true
+        }
+        if (tapCandidate) {
+          tapCandidate = false
+          super.dispatchTouchEvent(ev)
+          onBodyTap?.invoke()
+          return true
+        }
+      }
+      MotionEvent.ACTION_CANCEL -> {
+        if (dragging) translationY = 0f
+        dragging = false
+        decided = false
+        tapCandidate = false
+      }
+    }
+    return super.dispatchTouchEvent(ev)
+  }
+
+  // The card consumes touches so they never reach the backdrop, but it is only
+  // an accessibility action when the body tap exists (bars with a button).
+  override fun onInitializeAccessibilityNodeInfo(info: AccessibilityNodeInfo) {
+    super.onInitializeAccessibilityNodeInfo(info)
+    if (onBodyTap == null) {
+      info.isClickable = false
+      info.removeAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_CLICK)
+    }
+  }
+
+  override fun performAccessibilityAction(action: Int, arguments: Bundle?): Boolean {
+    if (action == AccessibilityNodeInfo.ACTION_CLICK) {
+      val tap = onBodyTap ?: return false
+      tap()
+      return true
+    }
+    return super.performAccessibilityAction(action, arguments)
+  }
+
+  private fun startsSwipe(dx: Float, dy: Float): Boolean {
+    if (dismissDirection == 0 || onSwipe == null) return false
+    if (abs(dy) <= abs(dx) || dy * dismissDirection <= 0) return false
+    // Let the text scroll first: a finger moving up scrolls the content down.
+    return scroll?.canScrollVertically(-dismissDirection) != true
+  }
+
+  private fun dragOffset(dy: Float): Float = if (dismissDirection < 0) min(0f, dy) else max(0f, dy)
+
+  private fun cancelChildren(ev: MotionEvent) {
+    val cancel = MotionEvent.obtain(ev)
+    cancel.action = MotionEvent.ACTION_CANCEL
+    super.dispatchTouchEvent(cancel)
+    cancel.recycle()
+  }
+
+  private fun hits(view: View, ev: MotionEvent): Boolean {
+    if (view.visibility != VISIBLE || view.parent == null) return false
+    val rect = Rect()
+    view.getDrawingRect(rect)
+    offsetDescendantRectToMyCoords(view, rect)
+    return rect.contains(ev.x.toInt(), ev.y.toInt())
+  }
+}
+
+/** Display outcomes reported by the views; the presenter forwards them to the coordinator. */
+interface InAppViewListener {
+  fun onClose(reason: String)
+  /** [buttonId] is a button id or `image`; [action] is passed untouched. */
+  fun onAction(buttonId: String, action: InAppAction?)
+}
+
 /** The built tree of one display. Rebuilt on every attach; holds no state. */
 class InAppMessageViews internal constructor(
   val root: InAppOverlayLayout,
-  val card: FrameLayout,
+  val card: InAppCardLayout,
   val title: TextView,
   val body: TextView,
   val image: ImageView?,
@@ -248,9 +388,9 @@ class InAppMessageViews internal constructor(
 )
 
 /**
- * Builds the native views of a message (static rendering only: interactions
- * and accessibility are attached by the presenter). Text is always plain:
- * the raw string goes to `setText`, no HTML, no links, no spans (SDKIAM-31).
+ * Builds the native views of a message and, with [NottiInAppViewFactory.bind],
+ * its gestures and taps. Text is always plain: the raw string goes to
+ * `setText`, no HTML, no links, no spans (SDKIAM-31).
  */
 object NottiInAppViewFactory {
 
@@ -276,15 +416,21 @@ object NottiInAppViewFactory {
     val root = InAppOverlayLayout(context, message.format, style.margin)
     root.layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
     when (message.format) {
-      InAppFormat.CENTER -> {
-        root.setBackgroundColor(InAppColors.BACKDROP)
-        root.isClickable = true
-      }
-      InAppFormat.FULL -> root.isClickable = true
+      InAppFormat.CENTER -> root.setBackgroundColor(InAppColors.BACKDROP)
       else -> Unit
     }
+    if (!bar) {
+      root.isClickable = true
+      // The backdrop is not an accessibility element; the close control is the way out.
+      root.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+    }
 
-    val card = FrameLayout(context).apply {
+    val dismissDirection = when (message.format) {
+      InAppFormat.TOP -> -1
+      InAppFormat.BOTTOM -> 1
+      else -> 0
+    }
+    val card = InAppCardLayout(context, dismissDirection).apply {
       background = GradientDrawable().apply {
         setColor(style.background)
         cornerRadius = if (full && !style.margin) 0f else CORNER_DP * density
@@ -356,6 +502,7 @@ object NottiInAppViewFactory {
       addView(scrollContent)
     }
     column.addView(scroll)
+    card.scroll = scroll
 
     val buttonViews = message.buttons.mapIndexed { index, button ->
       val look = style.buttons[index]
@@ -406,6 +553,56 @@ object NottiInAppViewFactory {
 
     return InAppMessageViews(root, card, title, body, imageView, buttonViews, buttonRow, close, style)
   }
+
+  /**
+   * Wires the dismiss gestures and the taps of [views] to [listener] and sets
+   * the accessibility semantics (SDKIAM-22, 33-35, 63). Only the first outcome
+   * is delivered: a second tap or a swipe on a closing display is ignored.
+   * Back is not handled here: the presenter owns it (DD-10).
+   */
+  fun bind(views: InAppMessageViews, message: InAppMessage, listener: InAppViewListener) {
+    var done = false
+    fun close(reason: String) {
+      if (done) return
+      done = true
+      listener.onClose(reason)
+    }
+    fun action(buttonId: String, action: InAppAction?) {
+      if (done) return
+      done = true
+      listener.onAction(buttonId, action)
+    }
+
+    views.close.setOnClickListener { close(InAppDismissReason.CLOSE_BUTTON) }
+    views.buttons.forEachIndexed { index, view ->
+      val button = message.buttons[index]
+      view.setOnClickListener { action(button.id, button.action) }
+    }
+    // A failed image is never built, so a tappable image is always a loaded one.
+    val imageTappable = views.image != null && message.imageAction != null
+    if (imageTappable) {
+      views.image?.isClickable = true
+      views.image?.setOnClickListener { action(IMAGE_BUTTON_ID, message.imageAction) }
+    }
+
+    when (message.format) {
+      InAppFormat.TOP, InAppFormat.BOTTOM -> {
+        views.card.onSwipe = { close(InAppDismissReason.SWIPE) }
+        message.buttons.firstOrNull()?.let { first ->
+          views.card.onBodyTap = { action(first.id, first.action) }
+        }
+        views.card.excluded = listOfNotNull(views.close, views.image?.takeIf { imageTappable }) + views.buttons
+      }
+      InAppFormat.CENTER -> views.root.setOnClickListener { close(InAppDismissReason.OUTSIDE_TAP) }
+      // The close control is the only way out of `full` (A19).
+      InAppFormat.FULL -> Unit
+    }
+
+    NottiInAppAccessibility.apply(views, imageTappable)
+  }
+
+  /** `button_id` of an image click (SDKIAM-35). */
+  const val IMAGE_BUTTON_ID = "image"
 
   private fun plainText(context: Context, value: String, sizeSp: Float, style: InAppResolvedStyle): TextView =
     TextView(context).apply {
