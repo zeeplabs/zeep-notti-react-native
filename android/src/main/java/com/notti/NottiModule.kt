@@ -10,6 +10,7 @@ import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReadableArray
@@ -197,6 +198,12 @@ class NottiModule(reactContext: ReactApplicationContext) :
   internal fun emitClicked(payload: WritableMap) = emitOnNotificationClicked(payload)
 
   internal fun emitDeviceIdChanged(deviceId: String) = emitOnDeviceIdChanged(deviceId)
+
+  /**
+   * Emits an In-App click. A field so tests can observe the payload: the
+   * generated emitter is backed by a native callback a unit test cannot set.
+   */
+  internal var inAppClickEmitter: (WritableMap) -> Unit = { emitOnInAppMessageClicked(it) }
 
   override fun initialize(appId: String?, clientKey: String?, baseUrl: String?, sdkVersion: String?) {
     core.initialize(appId.orEmpty(), clientKey.orEmpty(), baseUrl.orEmpty(), sdkVersion.orEmpty())
@@ -531,6 +538,18 @@ class NottiModule(reactContext: ReactApplicationContext) :
      * when no module existed yet - now the null-check happens first, before
      * any parsing/allocation is even attempted.
      */
+    /**
+     * In-App click bridge (SDKIAM-67/68). False when no module is live (e.g.
+     * between RN reloads): the click is neither buffered nor replayed to a
+     * later module (A9). JS subscriptions are not visible natively, so a
+     * live module without a JS listener counts as delivered and RN drops it.
+     */
+    internal fun emitInAppClick(click: InAppClick): Boolean {
+      val instance = activeInstance ?: return false
+      instance.inAppClickEmitter(click.toWritableMap())
+      return true
+    }
+
     internal fun emitNotificationReceived(remoteMessage: RemoteMessage) {
       val instance = activeInstance ?: return
       instance.emitReceived(parseRemoteMessage(remoteMessage).toWritableMap())
@@ -621,4 +640,20 @@ class NottiModule(reactContext: ReactApplicationContext) :
     }
 
   }
+}
+
+/** Keys `messageId`, `buttonId`, `action`; `action` is `null`, never absent. Values pass through untouched. */
+internal fun InAppClick.toWritableMap(): WritableMap {
+  val map = Arguments.createMap()
+  map.putString("messageId", messageId)
+  map.putString("buttonId", buttonId)
+  if (action == null) {
+    map.putNull("action")
+  } else {
+    val actionMap = Arguments.createMap()
+    actionMap.putString("type", action.type)
+    actionMap.putString("value", action.value)
+    map.putMap("action", actionMap)
+  }
+  return map
 }

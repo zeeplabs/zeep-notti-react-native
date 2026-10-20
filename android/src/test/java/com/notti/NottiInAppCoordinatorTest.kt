@@ -513,6 +513,38 @@ class NottiInAppCoordinatorTest {
   }
 
   @Test
+  fun `a click is enqueued before it is delivered and delivered before the display closes`() {
+    val seen = mutableListOf<String>()
+    coordinator.clickSink = InAppClickSink {
+      seen.add("deliver queued=${store.all().map { e -> e.type }} closed=${presenter.closed.size}")
+      true
+    }
+    server.enqueue(messages(sessionStart("s1")))
+    init()
+    startAndRegister()
+    val display = showVisible()
+    coordinator.onDisplayClicked(display.displayId, "b1", InAppAction("url", "https://x.test"))
+    assertEquals(
+      listOf("deliver queued=${listOf(InAppEventType.IMPRESSION, InAppEventType.CLICK)} closed=0"),
+      seen
+    )
+    assertEquals(listOf(display.displayId), presenter.closed)
+    assertFalse(logs.contains(NottiInAppCoordinator.NO_LISTENER_WARNING))
+  }
+
+  @Test
+  fun `the default click sink reports no listener when no module is live`() {
+    val fresh = NottiInAppCoordinator(
+      store = store,
+      clientFactory = { config -> NottiApiClient(OkHttpClient(), config.baseUrl, config.appId, config.clientKey) },
+      identity = { identity },
+      executor = executor,
+      postToMain = { it() }
+    )
+    assertFalse(fresh.clickSink!!.deliver(InAppClick("m1", "b1", null)))
+  }
+
+  @Test
   fun `click with no listener is still reported, closed and warned`() {
     coordinator.clickSink = null
     server.enqueue(messages(sessionStart("s1")))

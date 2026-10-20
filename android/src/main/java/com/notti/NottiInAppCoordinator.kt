@@ -115,7 +115,8 @@ class NottiInAppCoordinator(
 
   /** Set by the module/presentation layer; read on main only. */
   var presenter: InAppPresenter? = null
-  var clickSink: InAppClickSink? = null
+  /** Defaults to the live module's emitter; the SDK itself never opens a link (A9). */
+  var clickSink: InAppClickSink? = InAppClickSink { NottiModule.emitInAppClick(it) }
 
   private var client: NottiApiClient? = null
 

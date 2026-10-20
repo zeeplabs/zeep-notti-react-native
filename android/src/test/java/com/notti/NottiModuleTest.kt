@@ -4,6 +4,7 @@ import android.app.Activity
 import com.facebook.react.bridge.Callback
 import com.facebook.react.bridge.CatalystInstance
 import com.facebook.react.bridge.JavaScriptContextHolder
+import com.facebook.react.bridge.JavaOnlyMap
 import com.facebook.react.bridge.JavaScriptModule
 import com.facebook.react.bridge.NativeModule
 import com.facebook.react.bridge.Promise
@@ -13,6 +14,7 @@ import com.facebook.react.bridge.UIManager
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.turbomodule.core.interfaces.CallInvokerHolder
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -116,6 +118,61 @@ class NottiModuleTest {
     module.getInitialNotificationClick(second)
     assertNull(second.resolved)
     assertTrue(second.didResolve)
+  }
+
+  @Test
+  fun `an In-App click reaches the live module with exactly messageId, buttonId and action`() {
+    val module = NottiModule(FakeReactApplicationContext())
+    val emitted = mutableListOf<WritableMap>()
+    module.inAppClickEmitter = { emitted.add(it) }
+    // Reserved characters and escapes must arrive byte for byte.
+    val value = "https://shop.test/p?a=1&b=%20x#frag"
+
+    assertTrue(NottiModule.emitInAppClick(InAppClick("msg-1", "b2", InAppAction("url", value))))
+
+    val payload = emitted.single() as JavaOnlyMap
+    assertEquals(setOf("messageId", "buttonId", "action"), payload.toHashMap().keys)
+    assertEquals("msg-1", payload.getString("messageId"))
+    assertEquals("b2", payload.getString("buttonId"))
+    val action = payload.getMap("action") as JavaOnlyMap
+    assertEquals(setOf("type", "value"), action.toHashMap().keys)
+    assertEquals("url", action.getString("type"))
+    assertEquals(value, action.getString("value"))
+  }
+
+  @Test
+  fun `an In-App click without a usable action carries action null rather than omitting it`() {
+    val module = NottiModule(FakeReactApplicationContext())
+    val emitted = mutableListOf<WritableMap>()
+    module.inAppClickEmitter = { emitted.add(it) }
+
+    // The parser turns an unknown action type into no action (T2).
+    val parsed = parseEligibleResponse(
+      """{"messages":[{"id":"m1","format":"center","title":"t","body":"b",""" +
+        """"buttons":[{"id":"b1","label":"Go","action":{"type":"sms","value":"x"}}]}]}"""
+    )!!.single()
+    assertTrue(NottiModule.emitInAppClick(InAppClick("m1", "b1", parsed.buttons.single().action)))
+
+    val payload = emitted.single()
+    assertTrue(payload.hasKey("action"))
+    assertTrue(payload.isNull("action"))
+  }
+
+  @Test
+  fun `an In-App click with no live module is not delivered and never replayed to a later module`() {
+    val old = NottiModule(FakeReactApplicationContext())
+    old.inAppClickEmitter = { throw AssertionError("torn-down module must not emit") }
+    old.invalidate()
+
+    assertFalse(NottiModule.emitInAppClick(InAppClick("m1", "b1", null)))
+
+    val module = NottiModule(FakeReactApplicationContext())
+    val emitted = mutableListOf<WritableMap>()
+    module.inAppClickEmitter = { emitted.add(it) }
+    assertTrue(emitted.isEmpty())
+
+    NottiModule.emitInAppClick(InAppClick("m2", "b1", null))
+    assertEquals(listOf("m2"), emitted.map { it.getString("messageId") })
   }
 
   @Test
