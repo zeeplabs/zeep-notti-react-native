@@ -666,6 +666,8 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 - [ ] `git diff plugin/` empty; `Notti.mm` change limited to the shim method (AD-002)
 - [ ] Gates: iOS command; `pnpm run build:ios`
 
+**Implementation notes (2026-10-20)**: the coordinator is installed from `NottiImpl.init` through `NottiInAppSetup.install()`, before the core exists. `NottiInAppHooks` is `public` and `NottiCore` takes it as an optional (`nil` by default) because the core's initializer is public. The foreground signal is `willEnterForeground` and the background one `didEnterBackground` (design "Background"), both registered once per process in `NottiImpl`. `NottiNetworkObserver.shared` calls `notifyProcess()`; the one thing no test reaches is that the shared observer's closure points at it (the real path monitor cannot be driven), so that line is review-only.
+
 **Tests**: unit + integration
 **Gate**: full (iOS)
 

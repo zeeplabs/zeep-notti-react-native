@@ -83,6 +83,11 @@ public class NottiCore {
   /// instance; the default is a fresh gate so every test core is isolated.
   private let sessionGate: SessionGate
 
+  /// In-App messages hear about a session opening and a successful
+  /// registration. Nil by default; production passes `NottiInApp.coreHooks`.
+  /// Network and foreground/background reach In-App from their own observers.
+  private let inApp: NottiInAppHooks?
+
   /// Thread-safe process-level session flag. Opened by the first core that
   /// starts a session in this process, closed on `didEnterBackground`.
   public final class SessionGate {
@@ -259,7 +264,8 @@ public class NottiCore {
     platform: String = "ios",
     logger: @escaping (String) -> Void = { _ in },
     onDeviceIdChanged: @escaping (String) -> Void = { _ in },
-    sessionGate: SessionGate = SessionGate()
+    sessionGate: SessionGate = SessionGate(),
+    inApp: NottiInAppHooks? = nil
   ) {
     self.deviceStore = deviceStore
     self.eventStore = eventStore
@@ -281,6 +287,7 @@ public class NottiCore {
     self.logger = logger
     self.onDeviceIdChanged = onDeviceIdChanged
     self.sessionGate = sessionGate
+    self.inApp = inApp
     workQueue.setSpecific(key: Self.workQueueKey, value: 1)
     observeAppForeground()
     observeAppBackground()
@@ -710,6 +717,7 @@ public class NottiCore {
       syncPermissionStatusIfNeeded()
       resyncHeldEmailAndPhone(client)
       flushEventQueue()
+      inApp?.onRegistered()
     case .failure(let message):
       registrationState = .failed
       logger("Notti.initialize: device registration failed: \(message)")
@@ -993,6 +1001,7 @@ public class NottiCore {
         self.appIsInBackground = false
         if self.sessionGate.tryOpen() {
           self.handleSessionStartOnQueue(nowMs: activatedAtMs)
+          self.inApp?.onSessionStarted()
         } else {
           // Another core of this same process (pre-reload) already opened
           // the foreground session: adopt it instead of closing it as an

@@ -66,7 +66,7 @@ protocol InAppDisplayEvents: AnyObject {
 
 /// What `NottiCore` tells In-App. Network and foreground/background reach the
 /// coordinator straight from their observers, which also run with no core.
-protocol NottiInAppHooks: AnyObject {
+public protocol NottiInAppHooks: AnyObject {
   /// A foreground session was opened (the process session gate flipped).
   func onSessionStarted()
   /// The device registration succeeded and the push event queue was flushed.

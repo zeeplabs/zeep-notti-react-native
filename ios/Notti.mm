@@ -103,7 +103,6 @@
     return [_impl getDeviceId];
 }
 
-// TODO(T25): replaced by the real in-app trigger wiring.
 - (void)trackEvent:(NSString *)name
 {
     [_impl trackEvent:name];

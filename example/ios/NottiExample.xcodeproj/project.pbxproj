@@ -15,6 +15,7 @@
 		11AB3FC92A3DE594F46BE337 /* NottiInAppViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = C497A66BEA1B50124D7C1DF9 /* NottiInAppViews.swift */; };
 		45E0FD8AF6D0339763D8C4B4 /* NottiInAppPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADCEB9EDEBE62DF036FB0527 /* NottiInAppPresenter.swift */; };
 		174C987770897A4714A46503 /* NottiInAppImageLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2803F81BB4E455785E3661F9 /* NottiInAppImageLoader.swift */; };
+		0F8963192251EEF28DEAB190 /* NottiInAppSetup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21FDA6E4A8082322E8983832 /* NottiInAppSetup.swift */; };
 		14C228BE591450585EC14E8C /* NottiInAppCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35A7D36D087BBBF600BA7D2A /* NottiInAppCoordinator.swift */; };
 		0B3F0B613DF47A4DC2E57BC8 /* NottiEventStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1EA95D6D54B3CAAF04960C6 /* NottiEventStoreTests.swift */; };
 		561A2D417E165BED8E6ED271 /* NottiInAppModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 617B682C7D6849740F990B43 /* NottiInAppModelsTests.swift */; };
@@ -24,6 +25,7 @@
 		FC0E0808B8BAB9559A4F013D /* NottiInAppViewsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 336014514822820D8AAE40F9 /* NottiInAppViewsTests.swift */; };
 		D97D33C801B056496E403A2B /* NottiInAppPresenterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1641DCE06A0B0085809960AC /* NottiInAppPresenterTests.swift */; };
 		52C097715F18A5626B5A7199 /* NottiInAppClickBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D28508AA58A81BA2130893DA /* NottiInAppClickBridgeTests.swift */; };
+		BCEB0BDD42E0ECF5102F9B13 /* NottiInAppEndToEndTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3E3D863596282F9A0F1B700 /* NottiInAppEndToEndTests.swift */; };
 		E32EC4D9F61BB4292A3A7CCA /* NottiInAppImageLoaderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2EF411A4F795CB52F09140B /* NottiInAppImageLoaderTests.swift */; };
 		A016EA8BACAAE20F06148424 /* NottiInAppCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B328D0EDE407C9185A4C2FF /* NottiInAppCoordinatorTests.swift */; };
 		0C80B921A6F3F58F76C31292 /* libPods-NottiExample.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 5DCACB8F33CDC322A6C60F78 /* libPods-NottiExample.a */; };
@@ -111,6 +113,7 @@
 		C497A66BEA1B50124D7C1DF9 /* NottiInAppViews.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiInAppViews.swift; sourceTree = "<group>"; };
 		ADCEB9EDEBE62DF036FB0527 /* NottiInAppPresenter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiInAppPresenter.swift; sourceTree = "<group>"; };
 		2803F81BB4E455785E3661F9 /* NottiInAppImageLoader.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiInAppImageLoader.swift; sourceTree = "<group>"; };
+		21FDA6E4A8082322E8983832 /* NottiInAppSetup.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiInAppSetup.swift; sourceTree = "<group>"; };
 		35A7D36D087BBBF600BA7D2A /* NottiInAppCoordinator.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiInAppCoordinator.swift; sourceTree = "<group>"; };
 		9A21C704380E495E9684E854 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS14.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		9c59c2317ee1d68afd0953ed /* NottiNetworkObserver.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiNetworkObserver.swift; sourceTree = "<group>"; };
@@ -127,6 +130,7 @@
 		336014514822820D8AAE40F9 /* NottiInAppViewsTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiInAppViewsTests.swift; sourceTree = "<group>"; };
 		1641DCE06A0B0085809960AC /* NottiInAppPresenterTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiInAppPresenterTests.swift; sourceTree = "<group>"; };
 		D28508AA58A81BA2130893DA /* NottiInAppClickBridgeTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiInAppClickBridgeTests.swift; sourceTree = "<group>"; };
+		A3E3D863596282F9A0F1B700 /* NottiInAppEndToEndTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiInAppEndToEndTests.swift; sourceTree = "<group>"; };
 		F2EF411A4F795CB52F09140B /* NottiInAppImageLoaderTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiInAppImageLoaderTests.swift; sourceTree = "<group>"; };
 		5B328D0EDE407C9185A4C2FF /* NottiInAppCoordinatorTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiInAppCoordinatorTests.swift; sourceTree = "<group>"; };
 		DA4ACA366E1F5E06B947B616 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -248,6 +252,7 @@
 				C497A66BEA1B50124D7C1DF9 /* NottiInAppViews.swift */,
 				ADCEB9EDEBE62DF036FB0527 /* NottiInAppPresenter.swift */,
 				2803F81BB4E455785E3661F9 /* NottiInAppImageLoader.swift */,
+				21FDA6E4A8082322E8983832 /* NottiInAppSetup.swift */,
 				35A7D36D087BBBF600BA7D2A /* NottiInAppCoordinator.swift */,
 				3f0b3f51e7e781e5702d9c98 /* NottiImpl.swift */,
 				9c59c2317ee1d68afd0953ed /* NottiNetworkObserver.swift */,
@@ -293,6 +298,7 @@
 				336014514822820D8AAE40F9 /* NottiInAppViewsTests.swift */,
 				1641DCE06A0B0085809960AC /* NottiInAppPresenterTests.swift */,
 				D28508AA58A81BA2130893DA /* NottiInAppClickBridgeTests.swift */,
+				A3E3D863596282F9A0F1B700 /* NottiInAppEndToEndTests.swift */,
 				F2EF411A4F795CB52F09140B /* NottiInAppImageLoaderTests.swift */,
 				5B328D0EDE407C9185A4C2FF /* NottiInAppCoordinatorTests.swift */,
 				f87325434599b530175c4764 /* NottiNetworkObserverTests.swift */,
@@ -578,6 +584,7 @@
 				11AB3FC92A3DE594F46BE337 /* NottiInAppViews.swift in Sources */,
 				45E0FD8AF6D0339763D8C4B4 /* NottiInAppPresenter.swift in Sources */,
 				174C987770897A4714A46503 /* NottiInAppImageLoader.swift in Sources */,
+				0F8963192251EEF28DEAB190 /* NottiInAppSetup.swift in Sources */,
 				14C228BE591450585EC14E8C /* NottiInAppCoordinator.swift in Sources */,
 				0B3F0B613DF47A4DC2E57BC8 /* NottiEventStoreTests.swift in Sources */,
 				561A2D417E165BED8E6ED271 /* NottiInAppModelsTests.swift in Sources */,
@@ -587,6 +594,7 @@
 				FC0E0808B8BAB9559A4F013D /* NottiInAppViewsTests.swift in Sources */,
 				D97D33C801B056496E403A2B /* NottiInAppPresenterTests.swift in Sources */,
 				52C097715F18A5626B5A7199 /* NottiInAppClickBridgeTests.swift in Sources */,
+				BCEB0BDD42E0ECF5102F9B13 /* NottiInAppEndToEndTests.swift in Sources */,
 				E32EC4D9F61BB4292A3A7CCA /* NottiInAppImageLoaderTests.swift in Sources */,
 				A016EA8BACAAE20F06148424 /* NottiInAppCoordinatorTests.swift in Sources */,
 				0c13ec34595b36506c09e32e /* NottiImpl.swift in Sources */,
