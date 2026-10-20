@@ -560,6 +560,16 @@ The Android runtime-permission declaration and the iOS `AppDelegate` forwarding 
 3. Run `pnpm example android` / `pnpm example ios`, or `pnpm run build:android` / `pnpm run build:ios` for a release-shaped build.
 4. Tap the example screen's buttons and confirm a new Device row appears in Notti' admin screen, tags/subscription reflect your taps, and notifications sent from Notti trigger the `notificationReceived`/`notificationClicked` console logs.
 
+### In-App messages smoke test
+
+The example registers `Notti.InAppMessages.addClickListener` at start (it logs only the `buttonId`, opens a `url` with `Linking.openURL` and shows a `deeplink` on screen) and has a "Track event: checkout_done" button. With the placeholders replaced by a real App on a Notti plan with In-App messages:
+
+1. In the dashboard, create and activate a `session_start` message: layout `center`, two buttons (one with action type `deeplink` and a made-up value such as `example://promo`), `dismiss_after_seconds` 8.
+2. Create and activate an `event` message with event name `checkout_done`: layout `bottom`, an image and an `image_action`.
+3. Launch the app. The `session_start` message appears once, after registration. Tap the `deeplink` button: the message closes and the screen shows the value you set.
+4. Tap "Track event: checkout_done". The `bottom` message appears; tap its image or button and confirm the closing and the listener log.
+5. Open each message in the dashboard and check its **Metrics** tab: impressions, clicks and dismissals should reflect what you did (queued events are sent when the network is back).
+
 ## Contributing
 
 See the [contributing guide](CONTRIBUTING.md) to learn how to contribute to the repository and the development workflow, including:
