@@ -54,6 +54,14 @@ Status: implementado nas duas plataformas (Android + iOS), com testes unitários
 
 ## Handoff
 
+- **Feature**: in-app-messages (SDK side, AD-004)
+- **Phase / Task**: Execute. T1-T29 done on branch `feat/in-app-messages` (T1 JS; T2-T13 Android; T14-T25 iOS; T26 docs; T27 privacy manifest comment; T28 example app; T29 review). Gates 2026-10-20: JS 39/39, Android `testDebugUnitTest` 488/0, iOS 523/0 (3 skipped) under the Mac Catalyst harness (official `xcodebuild test` blocked: no simulator runtime on the dev machine), example builds for Android and iOS Simulator green.
+- **Next step**: T30, manual validation on a physical Android device and iPhone against a running `zeep-notti` (`validation.md` is created then); then open the PR with the real gate output in its description.
+- **Blockers**: `features.in_app_active` per plan on the `license-server` not verified (required before production); iOS simulator runtime missing locally; open product/parity calls: `pt-PT` close label, image tap as a button role (TalkBack), 1x vs 2x downscale, absolute `text_align: right` vs `END`.
+- **Public surface**: only `Notti.trackEvent` and `Notti.InAppMessages.addClickListener` (+ `NottiInAppClick`/`NottiInAppAction`); `plugin/` and the Android manifest unchanged; the SDK opens no link (greps in T29 found none). Note: README documents `action.type` as `'url' | 'deeplink'` while the TS type is `string` (kept tolerant on purpose).
+
+## Handoff (previous: opened-event-reporting)
+
 - **Feature**: opened-event-reporting
 - **Phase / Task**: Specify (+ inline design) → Tasks T1-T4 → Execute done. Android 209 JVM tests, iOS 206 XCTest, JS gates green. PR #25 merged to `main` 2026-10-04 (rebase, head `fcb1b04`). No version bump yet.
 - **Released**: v0.6.0 on 2026-10-04 (npm `latest`), together with the profile-field echo ack (#26) and the pre-release review fixes (#27), after `zeep-notti` v0.11.0 shipped.

@@ -159,7 +159,7 @@ Both platforms keep the repo's flat layout (`android/src/main/java/com/notti/`, 
 | `ios/NottiInAppViews.swift` | UIKit views: `UIVisualEffectView`-free solid backgrounds, frames set in `layoutSubviews` from the pure metrics (`computeFrame`) and the overlay's `safeAreaInsets` (overridable in tests, where a view outside a window has none), mirroring the Android custom layouts instead of Auto Layout; `UIScrollView` for text. |
 | `ios/NottiInAppPresenter.swift` | `NottiInAppWindow` (hit-test passthrough), root view controller, scene resolution, lifecycle observers. |
 | `ios/NottiInAppImageLoader.swift` | See "Images". |
-| `ios/NottiCore.swift` (modify) | Optional `inApp` hooks injected like `sessionGate` (`:262-283`): `onSessionStarted()` in the `tryOpen` branch (`:994`), `onRegistered()` after `flushEventQueue()` (`:712`), `onNetworkAvailable()` in `NottiCore.onNetworkAvailable` (`:611-628`) and the foreground flush (`:1009`). |
+| `ios/NottiCore.swift` (modify) | Optional `inApp` hooks injected like `sessionGate` (`:262-283`): `onSessionStarted()` in the `tryOpen` branch (`:994`), `onRegistered()` after `flushEventQueue()` (`:712`), and the foreground flush (`:1009`). Like Android, the core does not forward `onNetworkAvailable()` (it also runs on every detected push): the coordinator gets the network signal straight from `NottiNetworkObserver` (`notifyProcess`), which also works with no core. |
 | `ios/NottiImpl.swift` (modify) | `trackEvent` -> coordinator; the `initialize` path calls `coordinator.onInitialized(appId, clientKey, baseUrl)` before the core is created (on iOS the first session opens only at `didBecomeActive`, after `didFinishLaunching` ran `.inactive`: the window DD-13 covers); `@objc public var emitInAppClickHandler: (([String: Any]) -> Void)?` (same pattern as `emitReceivedHandler`, `:77`, but with no `NottiEventBuffer` involvement); `processBackgroundObserver` (`:47-55`) also calls `onSessionEnded()`; the coordinator is forced into existence there like the observer (`_ = ...` touch at `:109`). |
 | `ios/Notti.mm` (modify) | One shim method `- (void)trackEvent:(NSString *)name { [_impl trackEvent:name]; }` next to `getDeviceId` (`:98`), and one handler wired in `-init` next to the others (`:13-21`): `_impl.emitInAppClickHandler = ^(NSDictionary *payload) { [weakSelf emitOnInAppMessageClicked:payload]; };`. Keeps the shim thin (AD-002). |
 | `ios/NottiNetworkObserver.swift` (modify) | Default closure (`:59`) also notifies the coordinator. |
@@ -387,6 +387,9 @@ Gates: Android `cd example/android && ./gradlew :react-native-notti:testDebugUni
 | Click emit | Companion bridge to the live module's `emitOnInAppMessageClicked` | `emitInAppClickHandler` from `Notti.mm` | Platform bridge shapes; same payload and rules. |
 | Text scaling | `sp` + `fontScale` | Dynamic Type | Platform mechanisms. |
 | System Back | consumed on `center`/`full`, not intercepted on bars (DD-10, A19) | no system Back button; the accessibility escape gesture on `center`/`full` acts as the close control (SDKIAM-63) | The button exists only on Android. |
+| Close target | 48 dp | 44 pt | Platform minimum touch target (Material / HIG). |
+| Bar body as an accessibility action | the card exposes `ACTION_CLICK` when the body tap exists (bars with a button) | not exposed; title and buttons stay individually reachable | Avoids a VoiceOver container hiding the title and buttons (decided in T25). |
+| Reduce Motion | entry/exit animation skipped when `ANIMATOR_DURATION_SCALE == 0` | also skips the swipe snap-back animation | Platform mechanisms; the Android snap-back has no equivalent setting. |
 
 ---
 
