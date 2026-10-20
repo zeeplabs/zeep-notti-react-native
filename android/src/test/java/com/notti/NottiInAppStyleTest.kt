@@ -164,6 +164,15 @@ class NottiInAppStyleTest {
   }
 
   @Test
+  fun `bar height also stays inside the safe area when it is shorter than 40 percent`() {
+    val tallInsets = InAppInsets(left = 0f, top = 150f, right = 0f, bottom = 150f)
+    for (format in listOf(InAppFormat.TOP, InAppFormat.BOTTOM)) {
+      assertEquals("$format", 393f - 300f - 32f, frame(format, true, landscape, tallInsets).maxHeight, 0.001f)
+      assertEquals("$format", 393f - 300f, frame(format, false, landscape, tallInsets).maxHeight, 0.001f)
+    }
+  }
+
+  @Test
   fun `center card is at most 90 percent wide, capped at 560, and ignores margin`() {
     val phoneCard = frame(InAppFormat.CENTER, true, phone)
     assertEquals(InAppGravity.CENTER, phoneCard.gravity)
