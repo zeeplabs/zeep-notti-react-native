@@ -16,6 +16,21 @@ struct InAppClick: Equatable {
   let action: InAppAction?
 }
 
+extension InAppClick {
+  /// The JS event payload: exactly `messageId`, `buttonId` and `action`
+  /// (`{type, value}`, or `NSNull` when the action was unknown, never absent).
+  /// `value` is exactly what the server sent.
+  var payload: [String: Any] {
+    var result: [String: Any] = ["messageId": messageId, "buttonId": buttonId]
+    if let action = action {
+      result["action"] = ["type": action.type, "value": action.value]
+    } else {
+      result["action"] = NSNull()
+    }
+    return result
+  }
+}
+
 /// `reason` values of a `dismiss` event (SDKIAM-43).
 enum InAppDismissReason {
   static let closeButton = "close_button"

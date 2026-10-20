@@ -637,7 +637,7 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 
 **Done when**:
 - [ ] Same bullets as T12: payload keys `messageId`, `buttonId`, `action` (dictionary or `NSNull`), value untouched, order click-enqueued -> emit -> close, no handler (module invalidated: `invalidate()` sets the handler to `nil`, `NottiImpl.swift:266`) -> reported + closed + one fixed warning + no buffering
-- [ ] `git grep -nE "UIApplication|openURL|canOpenURL|\.open\(" ios/NottiInApp*` returns nothing (also run in T29)
+- [ ] `git grep -nE "openURL|canOpenURL|UIApplication\.shared\.open|\.open\(" -- 'ios/NottiInApp*'` returns nothing (also run in T29). The original pattern also matched `UIApplication`, which the presenter and loader legitimately use for lifecycle and memory notifications; only URL-opening APIs are forbidden
 - [ ] `Notti.mm` change limited to the handler wiring (AD-002); the stub from T1 for `trackEvent` stays until T25
 - [ ] XCTest with a fake click sink and a handler spy for each bullet
 - [ ] Gate: iOS command
@@ -757,7 +757,7 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 - [ ] `git diff main -- src/` shows only `trackEvent` and `Notti.InAppMessages.addClickListener` (with `InAppClickPayload` and the `onInAppMessageClicked` emitter and the exported types) as public additions (SDKIAM-60)
 - [ ] `git diff main -- plugin/ android/src/main/AndroidManifest.xml` empty (SDKIAM-62)
 - [ ] `git grep -nE "PATCH|patchDevice" ` inside In-App files finds none (SDKIAM-53)
-- [ ] `git grep -nE "ACTION_VIEW|startActivity|Uri\.parse|UIApplication|openURL|canOpenURL" android/src/main/java/com/notti/NottiInApp* ios/NottiInApp*` finds none: the SDK opens no link (SDKIAM-32)
+- [ ] `git grep -nE "ACTION_VIEW|startActivity|Uri\.parse|openURL|canOpenURL|UIApplication\.shared\.open" -- "android/src/main/java/com/notti/NottiInApp*" "ios/NottiInApp*"` finds none: the SDK opens no link (SDKIAM-32)
 - [ ] Click payload and no-listener rule identical on both platforms (SDKIAM-67, SDKIAM-68)
 - [ ] Parity of the 2026-10-19 rules on both platforms: margin from the safe-area edge, `403`-only warning and `401` session stop, `eligible` 429 cap, `awaitingFirstSession`, late-response discard, config-change reset with `app_id` records, renderability; the only platform difference is the Android Back handling (listed in `design.md` "Platform differences")
 - [ ] Every SDKIAM requirement has a test (traceability) or a T30 scenario

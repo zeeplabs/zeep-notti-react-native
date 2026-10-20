@@ -81,6 +81,22 @@ public class NottiImpl: NSObject {
     didSet { NottiEventBuffer.shared.setHandler(.clicked, emitClickedHandler) }
   }
 
+  /// Set by `Notti.mm`'s `-init` to forward an In-App click into the Codegen
+  /// emitter `onInAppMessageClicked`. Deliberately not routed through
+  /// `NottiEventBuffer`: a click with no live module is reported and the
+  /// display closed, but never buffered or replayed to a later listener (A9,
+  /// SDKIAM-68). Cleared by `invalidate()`.
+  @objc public var emitInAppClickHandler: (([String: Any]) -> Void)?
+
+  /// Delivers an In-App click to the live module's JS listener. False when no
+  /// module can receive it (between RN reloads), so the coordinator logs its
+  /// fixed warning. The SDK opens nothing: the integrator handles the link.
+  static func emitInAppClick(_ click: InAppClick) -> Bool {
+    guard let handler = activeInstance?.emitInAppClickHandler else { return false }
+    handler(click.payload)
+    return true
+  }
+
   /// Plain reference-type cell so `init` (below) can hand `NottiCore` a
   /// closure that reads this box's `value` at call time, while
   /// `emitDeviceIdChangedHandler`'s `didSet` (running later, once `self` is
@@ -266,6 +282,7 @@ public class NottiImpl: NSObject {
     emitReceivedHandler = nil
     emitClickedHandler = nil
     emitDeviceIdChangedHandler = nil
+    emitInAppClickHandler = nil
     // Final review A: stop this core observing lifecycle, so it cannot end
     // the session the reloaded core adopts (double `session_count`).
     core.invalidate()

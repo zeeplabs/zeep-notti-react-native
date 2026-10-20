@@ -23,6 +23,7 @@
 		CD3ADF1D2C4060C7665594A5 /* NottiInAppStyleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 390072D7E90494BEB4779A29 /* NottiInAppStyleTests.swift */; };
 		FC0E0808B8BAB9559A4F013D /* NottiInAppViewsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 336014514822820D8AAE40F9 /* NottiInAppViewsTests.swift */; };
 		D97D33C801B056496E403A2B /* NottiInAppPresenterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1641DCE06A0B0085809960AC /* NottiInAppPresenterTests.swift */; };
+		52C097715F18A5626B5A7199 /* NottiInAppClickBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D28508AA58A81BA2130893DA /* NottiInAppClickBridgeTests.swift */; };
 		E32EC4D9F61BB4292A3A7CCA /* NottiInAppImageLoaderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2EF411A4F795CB52F09140B /* NottiInAppImageLoaderTests.swift */; };
 		A016EA8BACAAE20F06148424 /* NottiInAppCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B328D0EDE407C9185A4C2FF /* NottiInAppCoordinatorTests.swift */; };
 		0C80B921A6F3F58F76C31292 /* libPods-NottiExample.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 5DCACB8F33CDC322A6C60F78 /* libPods-NottiExample.a */; };
@@ -125,6 +126,7 @@
 		390072D7E90494BEB4779A29 /* NottiInAppStyleTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiInAppStyleTests.swift; sourceTree = "<group>"; };
 		336014514822820D8AAE40F9 /* NottiInAppViewsTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiInAppViewsTests.swift; sourceTree = "<group>"; };
 		1641DCE06A0B0085809960AC /* NottiInAppPresenterTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiInAppPresenterTests.swift; sourceTree = "<group>"; };
+		D28508AA58A81BA2130893DA /* NottiInAppClickBridgeTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiInAppClickBridgeTests.swift; sourceTree = "<group>"; };
 		F2EF411A4F795CB52F09140B /* NottiInAppImageLoaderTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiInAppImageLoaderTests.swift; sourceTree = "<group>"; };
 		5B328D0EDE407C9185A4C2FF /* NottiInAppCoordinatorTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiInAppCoordinatorTests.swift; sourceTree = "<group>"; };
 		DA4ACA366E1F5E06B947B616 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -290,6 +292,7 @@
 				390072D7E90494BEB4779A29 /* NottiInAppStyleTests.swift */,
 				336014514822820D8AAE40F9 /* NottiInAppViewsTests.swift */,
 				1641DCE06A0B0085809960AC /* NottiInAppPresenterTests.swift */,
+				D28508AA58A81BA2130893DA /* NottiInAppClickBridgeTests.swift */,
 				F2EF411A4F795CB52F09140B /* NottiInAppImageLoaderTests.swift */,
 				5B328D0EDE407C9185A4C2FF /* NottiInAppCoordinatorTests.swift */,
 				f87325434599b530175c4764 /* NottiNetworkObserverTests.swift */,
@@ -583,6 +586,7 @@
 				CD3ADF1D2C4060C7665594A5 /* NottiInAppStyleTests.swift in Sources */,
 				FC0E0808B8BAB9559A4F013D /* NottiInAppViewsTests.swift in Sources */,
 				D97D33C801B056496E403A2B /* NottiInAppPresenterTests.swift in Sources */,
+				52C097715F18A5626B5A7199 /* NottiInAppClickBridgeTests.swift in Sources */,
 				E32EC4D9F61BB4292A3A7CCA /* NottiInAppImageLoaderTests.swift in Sources */,
 				A016EA8BACAAE20F06148424 /* NottiInAppCoordinatorTests.swift in Sources */,
 				0c13ec34595b36506c09e32e /* NottiImpl.swift in Sources */,
