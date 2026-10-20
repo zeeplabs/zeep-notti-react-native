@@ -248,7 +248,7 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 - [ ] Defaults come from the injected semantic palette (Android theme attributes with the documented fallback; iOS semantic colors) and match the design table; `style: null` -> all defaults
 - [ ] Invalid color token -> that token's default, others applied
 - [ ] `text_align` absent/unknown -> left; `margin` absent -> true; inset 16 measured **from the safe-area edge** for top/bottom/full (all four sides on `full`), ignored for center; `margin: false` -> the frame equals the safe-area edges on all sides, horizontally too (landscape cutout/navigation insets included), never the raw screen edge; tested with non-zero safe-area insets on all four sides
-- [ ] `button_color`/`button_text_color` apply to all buttons; neither set -> first filled, second outlined
+- [ ] `button_color`/`button_text_color` apply to all buttons; neither set -> first filled, second tinted (design "Default look")
 - [ ] With only `background_color` set, `text_color` and the button colors stay at their semantic defaults (explicit test that no color is derived or adjusted)
 - [ ] Metrics: bar height <= 40% of container, bar width = safe-area width minus 16 per side when `margin`, card width <= 90% and <= 560, full inside safe area; table-tested at several container sizes (phone, small phone, tablet, landscape)
 - [ ] Gate: Android command
