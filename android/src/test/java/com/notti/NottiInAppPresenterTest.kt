@@ -2,10 +2,12 @@ package com.notti
 
 import android.app.Activity
 import android.content.Context
+import android.graphics.Bitmap
 import android.os.Looper
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageView
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import okhttp3.OkHttpClient
@@ -25,6 +27,7 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.android.controller.ActivityController
 import org.robolectric.annotation.Config
+import java.time.Duration
 
 /** Records presenter callbacks in order. */
 private class RecordingDisplayEvents : InAppDisplayEvents {
@@ -46,6 +49,19 @@ private class RecordingDisplayEvents : InAppDisplayEvents {
   override fun onDisplayFailed(displayId: String) {
     calls.add("failed:$displayId")
   }
+}
+
+/** Image source whose results the test delivers by hand. */
+private class ManualImages : InAppImageSource {
+  val pending = mutableListOf<(Bitmap?) -> Unit>()
+  var loads = 0
+
+  override fun load(url: String, maxSidePx: Int, done: (Bitmap?) -> Unit) {
+    loads++
+    pending.add(done)
+  }
+
+  fun deliver(bitmap: Bitmap?) = pending.removeAt(0)(bitmap)
 }
 
 /** Main-thread executor with virtual time for the display clock checks. */
@@ -396,6 +412,123 @@ class NottiInAppPresenterTest {
   private fun backKey(activity: Activity) {
     activity.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK))
     activity.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BACK))
+  }
+
+  // Image (SDKIAM-20, SDKIAM-35, SDKIAM-57)
+
+  private val withImage = ""","image_url":"https://img.test/a.png","image_action":{"type":"deeplink","value":"app://promo"}"""
+
+  private fun imagePresenter(images: ManualImages) = NottiInAppOverlayPresenter(tracker, events, images)
+
+  private fun bitmap() = Bitmap.createBitmap(40, 20, Bitmap.Config.ARGB_8888)
+
+  private fun imageIn(view: View?): ImageView? {
+    if (view is ImageView) return view
+    if (view is ViewGroup) {
+      for (i in 0 until view.childCount) imageIn(view.getChildAt(i))?.let { return it }
+    }
+    return null
+  }
+
+  private fun idleFor(ms: Long) = shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(ms))
+
+  @Test
+  fun `a loaded image is shown and tappable`() {
+    val images = ManualImages()
+    val presenter = imagePresenter(images)
+    val controller = resumed()
+    presenter.present(InAppDisplay("d1", message("center", withImage), null))
+    idle()
+    assertNull(overlayIn(controller.get()))
+
+    images.deliver(bitmap())
+    idle()
+
+    val image = imageIn(overlayIn(controller.get()))!!
+    image.performClick()
+    assertEquals("click:d1:image", events.calls.last())
+  }
+
+  @Test
+  fun `a failed image shows the message without an image and without an image target`() {
+    val images = ManualImages()
+    val presenter = imagePresenter(images)
+    val controller = resumed()
+    presenter.present(InAppDisplay("d1", message("center", withImage), null))
+    images.deliver(null)
+    idle()
+
+    assertTrue(overlayIn(controller.get()) != null)
+    assertNull(imageIn(overlayIn(controller.get())))
+    assertEquals(1, events.visible)
+  }
+
+  @Test
+  fun `the message waits at most three seconds, then shows without the late image`() {
+    val images = ManualImages()
+    val presenter = imagePresenter(images)
+    val controller = resumed()
+    presenter.present(InAppDisplay("d1", message("center", withImage), null))
+
+    idleFor(NottiInAppOverlayPresenter.IMAGE_WAIT_MS - 1)
+    assertNull(overlayIn(controller.get()))
+    idleFor(1)
+    idle()
+    assertTrue(overlayIn(controller.get()) != null)
+
+    images.deliver(bitmap())
+    idle()
+    assertNull(imageIn(overlayIn(controller.get())))
+    // Not on the next attach either: the choice was made when the wait ended.
+    controller.pause().resume()
+    idle()
+    assertNull(imageIn(overlayIn(controller.get())))
+    assertEquals(1, events.visible)
+  }
+
+  @Test
+  fun `a re-attach reuses the chosen image without a new load`() {
+    val images = ManualImages()
+    val presenter = imagePresenter(images)
+    val controller = resumed()
+    presenter.present(InAppDisplay("d1", message("center", withImage), null))
+    images.deliver(bitmap())
+    idle()
+
+    controller.pause().resume()
+    idle()
+
+    assertTrue(imageIn(overlayIn(controller.get())) != null)
+    assertEquals(1, images.loads)
+  }
+
+  @Test
+  fun `a teardown during the wait ignores the late result`() {
+    val images = ManualImages()
+    val presenter = imagePresenter(images)
+    val controller = resumed()
+    val shown = InAppDisplay("d1", message("center", withImage), null)
+    presenter.present(shown)
+
+    presenter.teardown(shown)
+    images.deliver(bitmap())
+    idleFor(NottiInAppOverlayPresenter.IMAGE_WAIT_MS)
+    idle()
+
+    assertNull(overlayIn(controller.get()))
+    assertTrue(events.calls.isEmpty())
+  }
+
+  @Test
+  fun `a message without an image does not wait`() {
+    val images = ManualImages()
+    val presenter = imagePresenter(images)
+    val controller = resumed()
+    presenter.present(display())
+    idle()
+
+    assertTrue(overlayIn(controller.get()) != null)
+    assertEquals(0, images.loads)
   }
 }
 

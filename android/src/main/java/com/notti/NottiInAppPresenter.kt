@@ -2,8 +2,12 @@ package com.notti
 
 import android.app.Activity
 import android.app.Application
+import android.content.res.Resources
+import android.graphics.Bitmap
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
@@ -70,8 +74,14 @@ class NottiInAppActivityTracker : Application.ActivityLifecycleCallbacks {
  */
 class NottiInAppOverlayPresenter(
   private val tracker: NottiInAppActivityTracker,
-  private val events: InAppDisplayEvents
+  private val events: InAppDisplayEvents,
+  private val images: InAppImageSource? = null
 ) : InAppPresenter, NottiInAppActivityTracker.Listener {
+
+  companion object {
+    /** Longest wait for the image before the message shows without it (A11). */
+    const val IMAGE_WAIT_MS = 3_000L
+  }
 
   private class Attachment(
     val activity: WeakReference<Activity>,
@@ -84,6 +94,13 @@ class NottiInAppOverlayPresenter(
 
   private var display: InAppDisplay? = null
   private var attachment: Attachment? = null
+  private val main = Handler(Looper.getMainLooper())
+
+  /** False while the image of [display] is awaited; the overlay is built only once it is true. */
+  private var prepared = false
+  /** Chosen once per display: every attach reuses it, a late image is never inserted. */
+  private var image: Bitmap? = null
+  private var imageWait: Runnable? = null
 
   /** Display id whose `onVisible` was already raised by this presenter. */
   private var visibleRaisedFor: String? = null
@@ -100,13 +117,53 @@ class NottiInAppOverlayPresenter(
     if (current === display) return
     if (current != null) teardownSilently()
     this.display = display
+    prepare(display)
+  }
+
+  /** Waits at most [IMAGE_WAIT_MS] for the image, then attaches with or without it (SDKIAM-20/57). */
+  private fun prepare(target: InAppDisplay) {
+    val url = target.message.imageUrl
+    val source = images
+    if (url == null || source == null) {
+      ready(target, null)
+      return
+    }
+    val wait = Runnable { ready(target, null) }
+    imageWait = wait
+    main.postDelayed(wait, IMAGE_WAIT_MS)
+    val maxSide = Resources.getSystem().displayMetrics.let { maxOf(it.widthPixels, it.heightPixels) }
+    try {
+      source.load(url, maxSide) { bitmap -> main.post { ready(target, bitmap) } }
+    } catch (e: Exception) {
+      ready(target, null)
+    }
+  }
+
+  /** First outcome wins: the image, its failure or the wait; anything later is ignored. */
+  private fun ready(target: InAppDisplay, bitmap: Bitmap?) {
+    if (display !== target || prepared) return
+    cancelImageWait()
+    prepared = true
+    image = bitmap
     attachIfPossible()
+  }
+
+  private fun cancelImageWait() {
+    imageWait?.let { main.removeCallbacks(it) }
+    imageWait = null
+  }
+
+  private fun forget() {
+    cancelImageWait()
+    display = null
+    prepared = false
+    image = null
   }
 
   override fun close(displayId: String) {
     if (display?.displayId != displayId) return
     detach(report = false)
-    display = null
+    forget()
   }
 
   override fun teardown(display: InAppDisplay) {
@@ -116,7 +173,7 @@ class NottiInAppOverlayPresenter(
   /** Removes the overlay, stops reporting and restores the host; no event (SDKIAM-70). */
   fun teardownSilently() {
     detach(report = false)
-    display = null
+    forget()
   }
 
   override fun onActivityResumed(activity: Activity) {
@@ -131,7 +188,7 @@ class NottiInAppOverlayPresenter(
 
   private fun attachIfPossible() {
     val target = display ?: return
-    if (attachment != null || target.state == InAppDisplayState.CLOSED) return
+    if (!prepared || attachment != null || target.state == InAppDisplayState.CLOSED) return
     // No resumed Activity: the display stays Preparing until one resumes.
     val activity = tracker.resumed ?: return
     if (activity.isFinishing) return
@@ -139,13 +196,13 @@ class NottiInAppOverlayPresenter(
     val displayId = target.displayId
 
     val views = try {
-      NottiInAppViewFactory.build(activity, target.message).also {
+      NottiInAppViewFactory.build(activity, target.message, image).also {
         NottiInAppViewFactory.bind(it, target.message, viewListener(displayId))
       }
     } catch (e: Exception) {
       // A visible display keeps its slot and is retried on the next resume.
       if (target.state == InAppDisplayState.PREPARING) {
-        display = null
+        forget()
         events.onDisplayFailed(displayId)
       }
       return
