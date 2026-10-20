@@ -77,7 +77,8 @@ class NottiCoreTest {
     deviceModelProvider: () -> String? = { null },
     timezoneProvider: () -> String? = { null },
     languageProvider: () -> String? = { null },
-    permissionStatusProvider: (callback: (String?) -> Unit) -> Unit = { cb -> cb(null) }
+    permissionStatusProvider: (callback: (String?) -> Unit) -> Unit = { cb -> cb(null) },
+    inApp: NottiInAppHooks = NottiInAppHooks.None
   ) = NottiCore(
     deviceStore = store,
     eventStore = eventStore,
@@ -106,7 +107,8 @@ class NottiCoreTest {
     deviceModelProvider = deviceModelProvider,
     timezoneProvider = timezoneProvider,
     languageProvider = languageProvider,
-    permissionStatusProvider = permissionStatusProvider
+    permissionStatusProvider = permissionStatusProvider,
+    inApp = inApp
   )
 
   /**
@@ -125,6 +127,60 @@ class NottiCoreTest {
         return MockResponse().setResponseCode(200).setBody(echo.toString())
       }
     }
+  }
+
+  /** Records the In-App hooks with what the server had received at that moment. */
+  private inner class RecordingInAppHooks : NottiInAppHooks {
+    val calls = mutableListOf<String>()
+    override fun onSessionStarted() {
+      calls.add("session")
+    }
+    override fun onRegistered() {
+      calls.add("registered after ${server.requestCount} requests")
+    }
+  }
+
+  @Test
+  fun `In-App hears one session start per opening of the session gate`() {
+    val hooks = RecordingInAppHooks()
+    val core = newCore(inApp = hooks)
+
+    core.onAppForegrounded()
+    core.onAppForegrounded()
+    awaitIdle()
+    assertEquals(listOf("session"), hooks.calls)
+
+    core.onAppBackgrounded()
+    core.onAppForegrounded()
+    awaitIdle()
+    assertEquals(listOf("session", "session"), hooks.calls)
+  }
+
+  @Test
+  fun `In-App hears a successful registration only after the push event queue was flushed`() {
+    val hooks = RecordingInAppHooks()
+    val eventStore = NottiEventStore(prefs)
+    eventStore.enqueue("n-1", "d-1", "clicked")
+    registerOk()
+    server.enqueue(MockResponse().setResponseCode(201))
+    val core = newCore(inApp = hooks, eventStore = eventStore)
+
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    assertEquals(listOf("registered after 2 requests"), hooks.calls)
+  }
+
+  @Test
+  fun `In-App hears nothing when the registration fails`() {
+    val hooks = RecordingInAppHooks()
+    server.enqueue(rejected())
+    val core = newCore(inApp = hooks)
+
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    assertTrue(hooks.calls.isEmpty())
   }
 
   @Test

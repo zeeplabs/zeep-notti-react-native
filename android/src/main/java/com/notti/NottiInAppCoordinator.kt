@@ -38,6 +38,22 @@ interface InAppPresenter {
   fun teardown(display: InAppDisplay)
 }
 
+/**
+ * What [NottiCore] tells In-App. Network and foreground/background reach the
+ * coordinator straight from their observers, which also run with no core.
+ */
+interface NottiInAppHooks {
+  /** A foreground session was opened (the process session gate flipped). */
+  fun onSessionStarted() = Unit
+
+  /** The device registration succeeded and the push event queue was flushed. */
+  fun onRegistered() = Unit
+
+  companion object {
+    val None: NottiInAppHooks = object : NottiInAppHooks {}
+  }
+}
+
 /** Delivers a click to JS. False when no listener can receive it (SDKIAM-68). */
 fun interface InAppClickSink {
   fun deliver(click: InAppClick): Boolean
@@ -519,6 +535,17 @@ object NottiInApp {
     instance ?: coordinator.also { instance = it }
 
   fun get(): NottiInAppCoordinator? = instance
+
+  /** Passed to every [NottiCore]; forwards to whichever coordinator is installed. */
+  val coreHooks: NottiInAppHooks = object : NottiInAppHooks {
+    override fun onSessionStarted() {
+      get()?.onSessionStarted()
+    }
+
+    override fun onRegistered() {
+      get()?.onRegistered()
+    }
+  }
 
   @Synchronized
   internal fun resetForTests() {

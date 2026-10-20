@@ -29,7 +29,11 @@ import android.util.Log
  */
 class NottiNetworkObserver(
   private val connectivityManager: ConnectivityManager,
-  private val onNetworkAvailable: () -> Unit = { NottiModule.activeCore?.onNetworkAvailable() }
+  private val onNetworkAvailable: () -> Unit = {
+    NottiModule.activeCore?.onNetworkAvailable()
+    // In-App retries its own queue and a failed `eligible`, with or without a core.
+    NottiInApp.get()?.onNetworkAvailable()
+  }
 ) {
 
   private val callback = object : ConnectivityManager.NetworkCallback() {

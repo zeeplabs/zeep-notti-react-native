@@ -13,10 +13,12 @@ import com.facebook.react.bridge.RuntimeExecutor
 import com.facebook.react.bridge.UIManager
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.turbomodule.core.interfaces.CallInvokerHolder
+import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -118,6 +120,98 @@ class NottiModuleTest {
     module.getInitialNotificationClick(second)
     assertNull(second.resolved)
     assertTrue(second.didResolve)
+  }
+
+  /** Installs a coordinator running on the caller's thread; [onPost] sees each hop to main. */
+  private fun installCoordinator(onPost: () -> Unit = {}): NottiInAppCoordinator {
+    NottiInApp.resetForTests()
+    val prefs = RuntimeEnvironment.getApplication().getSharedPreferences("notti_module_inapp", 0)
+    val coordinator = NottiInAppCoordinator(
+      store = NottiInAppEventStore(prefs),
+      clientFactory = { config -> NottiApiClient(OkHttpClient(), config.baseUrl, config.appId, config.clientKey) },
+      identity = { null },
+      executor = object : InAppExecutor {
+        override fun execute(task: () -> Unit) = Unit
+        override fun schedule(delayMs: Long, task: () -> Unit) = Unit
+      },
+      postToMain = { task -> onPost(); task() }
+    )
+    return NottiInApp.install(coordinator)
+  }
+
+  @Test
+  fun `initialize hands the normalized config to In-App before the core is created`() {
+    NottiModule.resetProcessWideStateForTest()
+    val coreAtPost = mutableListOf<NottiCore?>()
+    val coordinator = installCoordinator { coreAtPost.add(NottiModule.activeCore) }
+    try {
+      val module = NottiModule(FakeReactApplicationContext())
+      module.initialize("app-1", "key", "https://notti.example.com/", "")
+
+      assertEquals(InAppConfig("app-1", "key", "https://notti.example.com"), coordinator.session.config)
+      assertEquals(listOf<NottiCore?>(null), coreAtPost)
+      assertNotNull(NottiModule.activeCore)
+    } finally {
+      NottiInApp.resetForTests()
+    }
+  }
+
+  @Test
+  fun `the module's core opens the In-App session when it opens a foreground session`() {
+    NottiModule.resetProcessWideStateForTest()
+    val coordinator = installCoordinator()
+    try {
+      val module = NottiModule(FakeReactApplicationContext())
+      module.initialize("app-1", "key", "https://notti.example.com", "")
+
+      requireNotNull(NottiModule.activeCore).onAppForegrounded()
+
+      assertTrue(coordinator.session.isOpen)
+    } finally {
+      NottiModule.resetProcessWideStateForTest()
+      NottiInApp.resetForTests()
+    }
+  }
+
+  @Test
+  fun `initialize with an invalid config leaves In-App without one`() {
+    val coordinator = installCoordinator()
+    try {
+      val module = NottiModule(FakeReactApplicationContext())
+      module.initialize("app-1", "", "https://notti.example.com", "")
+      module.initialize("app-1", "key", "not a url", "")
+
+      assertNull(coordinator.session.config)
+    } finally {
+      NottiInApp.resetForTests()
+    }
+  }
+
+  @Test
+  fun `trackEvent forwards the name to In-App, so a call right after initialize is kept`() {
+    val coordinator = installCoordinator()
+    try {
+      val module = NottiModule(FakeReactApplicationContext())
+      module.trackEvent("before-initialize")
+      module.initialize("app-1", "key", "https://notti.example.com", "")
+      module.trackEvent("promo")
+      module.trackEvent(null)
+
+      assertEquals(listOf("promo"), coordinator.session.pending)
+    } finally {
+      NottiInApp.resetForTests()
+    }
+  }
+
+  @Test
+  fun `invalidate leaves the In-App coordinator installed`() {
+    val coordinator = installCoordinator()
+    try {
+      NottiModule(FakeReactApplicationContext()).invalidate()
+      assertSame(coordinator, NottiInApp.get())
+    } finally {
+      NottiInApp.resetForTests()
+    }
   }
 
   @Test

@@ -129,7 +129,9 @@ class NottiCore(
    * an RN reload (or the cold-start sync racing the lifecycle observer) never
    * opens a second session for the same foreground; tests get a fresh gate.
    */
-  private val sessionGate: SessionGate = SessionGate()
+  private val sessionGate: SessionGate = SessionGate(),
+  /** In-App notifications (session opened, device registered). No-op by default. */
+  private val inApp: NottiInAppHooks = NottiInAppHooks.None
 ) {
 
   /** See [sessionGate]. Thread-safe; flips on the lifecycle callback's thread. */
@@ -141,6 +143,10 @@ class NottiCore(
   }
 
   companion object {
+    /** `baseUrl` as every request uses it: parsed, no trailing slash; `null` when malformed. */
+    internal fun normalizeBaseUrl(baseUrl: String): String? =
+      baseUrl.toHttpUrlOrNull()?.toString()?.trimEnd('/')
+
     /**
      * Bound on the pending-mutation queue below: registration can legitimately
      * never complete (no push token, permanent 4xx), and an unbounded queue in
@@ -367,7 +373,7 @@ class NottiCore(
     // IllegalArgumentException on whatever thread the call landed on. A
     // trailing slash is also stripped here, since every path is built as
     // "$baseUrl/v1/..." and would otherwise produce a "//v1/..." request path.
-    val normalizedBaseUrl = baseUrl.toHttpUrlOrNull()?.toString()?.trimEnd('/')
+    val normalizedBaseUrl = normalizeBaseUrl(baseUrl)
     if (normalizedBaseUrl == null) {
       logger(
         "Notti.initialize: baseUrl \"$baseUrl\" is not a valid http(s) URL " +
@@ -437,7 +443,11 @@ class NottiCore(
       val now = clock()
       // Executor shut down (module invalidated): no session was started, so
       // the gate must not stay open and swallow the next real foreground.
-      if (!dispatch("sessionStart") { handleSessionStart(now) }) sessionGate.close()
+      if (dispatch("sessionStart") { handleSessionStart(now) }) {
+        inApp.onSessionStarted()
+      } else {
+        sessionGate.close()
+      }
     }
 
     // Flush the event queue unconditionally, before the registration-state
@@ -696,6 +706,7 @@ class NottiCore(
             syncPermissionStatusIfNeeded()
             resyncHeldEmailAndPhone()
             flushEventQueue()
+            inApp.onRegistered()
           }
           is ApiResult.Failure -> {
             registrationState = RegistrationState.FAILED

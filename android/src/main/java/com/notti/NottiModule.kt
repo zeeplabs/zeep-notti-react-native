@@ -131,7 +131,8 @@ class NottiModule(reactContext: ReactApplicationContext) :
       // has already torn down. Mirrors `emitNotificationReceived`'s companion
       // object bridge below.
       onDeviceIdChanged = { deviceId -> activeInstance?.emitDeviceIdChanged(deviceId) },
-      sessionGate = processSessionGate
+      sessionGate = processSessionGate,
+      inApp = NottiInApp.coreHooks
     ).also {
       ownCore = it
       activeCore = it
@@ -206,7 +207,17 @@ class NottiModule(reactContext: ReactApplicationContext) :
   internal var inAppClickEmitter: (WritableMap) -> Unit = { emitOnInAppMessageClicked(it) }
 
   override fun initialize(appId: String?, clientKey: String?, baseUrl: String?, sdkVersion: String?) {
-    core.initialize(appId.orEmpty(), clientKey.orEmpty(), baseUrl.orEmpty(), sdkVersion.orEmpty())
+    val id = appId.orEmpty()
+    val key = clientKey.orEmpty()
+    // Before the core exists: creating it replays the missed foreground, and
+    // that session start must reach a coordinator that already has the config
+    // (same main-thread FIFO as trackEvent, DD-13). Invalid input is left to
+    // the core, which logs it.
+    val normalizedBaseUrl = NottiCore.normalizeBaseUrl(baseUrl.orEmpty())
+    if (id.isNotBlank() && key.isNotBlank() && normalizedBaseUrl != null) {
+      NottiInApp.get()?.onInitialized(id, key, normalizedBaseUrl)
+    }
+    core.initialize(id, key, baseUrl.orEmpty(), sdkVersion.orEmpty())
   }
 
   override fun requestPermission(promise: Promise?) {
@@ -266,8 +277,10 @@ class NottiModule(reactContext: ReactApplicationContext) :
 
   override fun getDeviceId(): String? = core.getDeviceId()
 
-  // TODO(T13): replaced by the real in-app trigger wiring.
-  override fun trackEvent(name: String?) = Unit
+  /** Hands the name to the In-App coordinator, which hops to main; never sent or logged (SDKIAM-10). */
+  override fun trackEvent(name: String?) {
+    if (name != null) NottiInApp.get()?.trackEvent(name)
+  }
 
   /**
    * Hands JS the notification tap that cold-launched the process, once.
@@ -512,7 +525,7 @@ class NottiModule(reactContext: ReactApplicationContext) :
 
   companion object {
     const val NAME = NativeNottiSpec.NAME
-    private const val PREFS_NAME = "notti_prefs"
+    internal const val PREFS_NAME = "notti_prefs"
 
     /** See the doc-comment on [requestNativePermission] (A5). */
     private val nextPermissionRequestCode = AtomicInteger(8420)
