@@ -19,6 +19,7 @@ Notti is self-hosted or SaaS per deployment. By default `initialize` targets Not
 - [API reference](#api-reference)
 - [Bare React Native setup](#bare-react-native-setup)
 - [Rich push notifications (iOS)](#rich-push-notifications-ios)
+- [In-App messages](#in-app-messages)
 - [Data collected by the SDK](#data-collected-by-the-sdk)
 - [Privacy, App Store labels and LGPD](#privacy-app-store-labels-and-lgpd)
 - [Known limitations](#known-limitations)
@@ -43,6 +44,7 @@ Notti is self-hosted or SaaS per deployment. By default `initialize` targets Not
 - 🔁 **Safe by default** — mutations (tags, subscription, login) are serialized client-side; retried with exponential backoff on transient failure.
 - 🖼️ **Rich push (iOS)** — image/video/audio attachments via a Notification Service Extension helper, same setup model as OneSignal's.
 - 📈 **Engagement event reporting** — `received`/`opened`/`clicked` events reported automatically to Notti (open rate and CTR), with an on-disk retry queue. See [Data collected by the SDK](#data-collected-by-the-sdk).
+- 💬 **In-App messages** — messages authored in the Notti dashboard are fetched once per session and rendered natively (`top`, `center`, `bottom`, `full`); `Notti.trackEvent(name)` triggers event messages and `Notti.InAppMessages.addClickListener` hands link actions to your app. See [In-App messages](#in-app-messages).
 - 🧭 **Segment telemetry** — app version and session aggregates synced automatically; device country only after an explicit opt-in (`setLocationSharingEnabled`, default off).
 - 📇 **Device profile** — OS version, device model, SDK version, timezone, language and detailed push-permission status synced automatically; first-class email/phone via `User.setEmail`/`User.setPhone`.
 
@@ -156,6 +158,8 @@ Notti.getInitialNotificationClick().then((payload) => {
 | `Notti.getDeviceId(): string \| null` | Cached, synchronous read of the Notti-internal device id — the id your own backend needs to route notifications to this device. Returns `null` until registration assigns one; no network round-trip. Subscribe to `'deviceIdChanged'` (below) *before* calling this — registration can complete between the two calls, and there is no replay of a value already assigned. |
 | `Notti.addEventListener(eventName, callback)` | Subscribes to `'notificationReceived'` (foreground), `'notificationClicked'` (warm: app already running, backgrounded or foregrounded), or `'deviceIdChanged'` (fired when the device id is first assigned or later changes — reinstall, device change, revocation/renewal). Returns an `EventSubscription` — call `.remove()` to unsubscribe. Does **not** fire for a cold-start click — use `getInitialNotificationClick()` for that. |
 | `Notti.getInitialNotificationClick(): Promise<NotificationPayload \| null>` | Resolves the notification that cold-launched the app from a tap, or `null` if the app wasn't launched that way. Only resolves once per cold start — the native side clears it after this reads it. Call at startup, before/alongside `addEventListener`. |
+| `Notti.trackEvent(name: string): void` | Reports a host-app moment that can trigger an In-App message. Matched **locally**, exact and case-sensitive (no trimming): the dashboard only allows lower-case names of `[a-z0-9_.-]`, up to 64 characters, so `trackEvent('Checkout_Done')` will not match `checkout_done`. The name is **never sent to Notti** and never logged. A name reported after `initialize` and before the first session of the process opens is remembered and replayed with that session (at most 32 distinct names); a name reported before `initialize`, or in the background after a session already ran, is ignored. Never throws, returns nothing. |
+| `Notti.InAppMessages.addClickListener(handler): EventSubscription` | **Links are yours to handle. The SDK never opens a `url` or `deeplink`. Without a registered click listener, tapping a button reports the click, closes the message and does nothing else.** `handler` receives `NottiInAppClick` = `{ messageId: string; buttonId: string; action: { type: 'url' \| 'deeplink'; value: string } \| null }`, with `value` untouched. Register it at app start: a click with no listener is not buffered or replayed. Call `.remove()` on the returned subscription to unsubscribe. See [In-App messages](#in-app-messages). |
 
 All tag/external-id/subscription mutations are serialized client-side (one in-flight network call at a time, last-write-wins on the merged local state) — calling them back-to-back is safe.
 
@@ -297,6 +301,40 @@ Known constraints (Apple platform limits, not Notti-specific): APNs payloads are
 
 > **CocoaPods subspecs.** `Notti.podspec` is split into `Notti/Core` (the Turbo Module; `default_subspec`, so plain `pod 'Notti'`/autolinking keeps working) and `Notti/NotificationServiceExtension` (the helper above, no React dependency). If your Podfile pins subspecs explicitly, make sure the app target gets `Core`.
 
+## In-App messages
+
+> **Links are yours to handle.** The SDK never opens a `url` or `deeplink`. Without a registered click listener, tapping a button reports the click, closes the message and does nothing else. Register the listener at app start; a click that happens with no listener is not buffered or replayed.
+
+In-App messages are authored in the Notti dashboard and shown inside your app, natively (Android Views, iOS UIKit), with no extra JS code beyond the two calls below. They need a Notti backend with In-App rich messages enabled for your plan.
+
+```tsx
+import { Linking } from 'react-native';
+import Notti from 'react-native-notti';
+
+// At app start, once.
+const subscription = Notti.InAppMessages.addClickListener((click) => {
+  if (click.action?.type === 'deeplink') {
+    navigateTo(click.action.value); // your own navigation
+  } else if (click.action?.type === 'url') {
+    Linking.openURL(click.action.value);
+  }
+});
+
+// When the user reaches a moment an event message can target.
+Notti.trackEvent('checkout_done');
+```
+
+How it behaves:
+
+- **One fetch per session.** A session is the SDK's existing foreground session (see [Session heartbeat](#session-heartbeat-and-orphaned-sessions)). When it opens and the device is registered in this process, the SDK asks Notti what may be shown now. A second foreground after a background is a new session and a new fetch.
+- **One message at a time, once per session.** Only the first renderable `session_start` message is shown; the others stay eligible for the next session. `event` messages wait for a matching `trackEvent`, and a message is never shown twice in the same session. There is no persistent "already shown" state on the device: frequency rules live on the server.
+- **Layouts.** `top` and `bottom` bars (at most 40% of the screen height, no backdrop, the app underneath stays interactive), a `center` card over a dimmed backdrop, and `full` (edge to edge inside the safe areas). Placement always stays inside the safe areas; `margin` is measured from the safe-area edge. Layout and style tokens follow the dashboard; the default look follows the system light/dark theme.
+- **Plain text only.** Title and body are rendered as text: no HTML, no links detected, nothing executable. An optional image is downloaded by the device itself (see [Data collected](#data-collected-by-the-sdk)).
+- **Closing.** A close control is always present. Swipe (bars), tap on the backdrop (`center`) and the auto-dismiss timer (when set) also close. Rotation or a window resize keeps the same message and does not report a second impression.
+- **A click always reports and closes.** A tap on a button, the image or a bar body reports `click`, closes the message (no `dismiss` event) and calls your listener.
+- **Offline.** Impressions, clicks and dismissals are queued on disk (at most 100 events, dropped after 7 days) and sent when the network is back.
+- **Accessibility.** The close control has a label in English and Brazilian Portuguese (any other language falls back to English), message text follows the system font scale, and on iOS the snap-back animation is skipped under Reduce Motion.
+
 ## Data collected by the SDK
 
 Besides what device registration already sends (push token, platform, `external_user_id`, tags, subscription state), the SDK sends the data below to **your configured Notti instance** (`baseUrl`). Nothing is sent to third parties by the SDK itself, except the OS reverse-geocoding call described under [Opt-in country](#opt-in-country-setlocationsharingenabled).
@@ -310,6 +348,8 @@ There is currently **no API to disable** the items in this subsection: they are 
 | App version | Read once per launch (`CFBundleShortVersionString` on iOS, `versionName` on Android); sent via device `PATCH` when it differs from the last value the backend acknowledged. Sent as an opaque string. | `app_version` |
 | Session aggregates | A session is one foreground → background/terminate cycle of the host app. On session end the SDK increments a local counter, adds the foreground duration, and issues a device `PATCH` with the cumulative snapshot. Once the device is registered, **every move to background sends one session `PATCH` right away** (iOS runs it inside an OS background task). Only before registration completes are snapshots coalesced: the queued session `PATCH` is replaced by the newer one, so a single request goes out when registration succeeds. A session left open by a force-quit/crash is closed on the next launch (see [Session heartbeat](#session-heartbeat-and-orphaned-sessions)). Non-interactive wake-ups (extensions, background fetch) do not count. | `first_session_at`, `last_session_at` (ISO-8601 UTC), `session_count`, `session_time_seconds` |
 | Notification events (CTR) | See below. | `type`, `delivery_id`, `token` |
+| In-App messages | Only when your Notti app has In-App messages: one `POST {baseUrl}/v1/apps/{appId}/in-app-messages/eligible` per session, and one `POST .../in-app-messages/{id}/events` per display event (`impression`, `click`, `dismiss`). Authenticated with the client key. Sent for every integration of this version; there is no toggle. See below. | fetch: `device_id`, `token`; events: `event_id`, `type`, `button_id` (`click` only), `reason` (`dismiss` only), `occurred_at` |
+| In-App image request | When a message has an image, the device downloads `image_url` itself. This request goes to **a host chosen by the message author, not to Notti**: `https` only, no `Authorization` header, no cookies, no device id, no token; redirects to a non-`https` URL are refused; at most 5 MiB and 10 s; at most 5 images kept in memory, none on disk. A failure just shows the message without the image. | none from the SDK (the host sees the device's IP address and user agent, as with any download) |
 | Device profile | Read natively at initialize (and permission status again at each session start and after `requestPermission`); each field sent via device `PATCH` only when it differs from the last value the backend acknowledged. A field the OS can't provide is omitted, never fabricated. | `device_os`, `device_model`, `sdk_version`, `timezone_id` (IANA), `language` (ISO 639-1) |
 | Push permission status | The OS permission state, independent of `setSubscription`: `granted`, `denied`, `notDetermined`, `provisional` (iOS only). An unknown/transitional state is omitted. | `permission_status` |
 | Last unsubscribe | Timestamp of the most recent transition to unsubscribed, either `setSubscription(false)` or permission `granted` → `denied`. Never cleared by re-subscribing. | `last_unsubscribed_at` (ISO-8601 UTC) |
@@ -359,6 +399,10 @@ Delivery guarantees, as implemented:
 - The heartbeat key differs per platform: `notti_last_foreground_at_ms` (Android) and `notti_session_last_seen_at_ms` (iOS) — see [Locally persisted data](#locally-persisted-data-backup-and-deletion).
 - On both platforms a process-wide session gate (Android `NottiModule.processSessionGate`, iOS `NottiImpl.processSessionGate` / `NottiCore.SessionGate`) ensures a single session per foreground of the process. After a JS reload with the app in the foreground, the new core adopts the persisted open session instead of closing it as an orphan: `session_count` is not changed and only the heartbeat is resumed. The gate closes when the app goes to the background. On iOS, tearing the module down (`invalidate`) removes the old core's lifecycle observers and stops its heartbeat, so the old and the new core do not end the same session twice. On Android the gate also absorbs a duplicate foreground signal (cold-start sync racing the lifecycle observer).
 
+#### In-App message reporting
+
+`trackEvent` names are matched on the device and never leave it. The fetch body carries only `device_id` and the current push `token`, plus the `event_id`, `type`, `button_id`/`reason` and `occurred_at` of each display event (linked to the device, product-interaction nature like the CTR events). Each event gets a fresh UUID once and reuses it on retry, so the server can deduplicate. The SDK does not add any device `PATCH` for In-App, and message titles, bodies, image URLs, link values, button ids and `trackEvent` names are never written to logs.
+
 ### Retry policy
 
 All HTTP calls go through one shared retry loop (`executeWithRetry` on both platforms): device registration (`POST /devices`), every device `PATCH` (login, tags, subscription, telemetry, country clear) and CTR events.
@@ -366,7 +410,8 @@ All HTTP calls go through one shared retry loop (`executeWithRetry` on both plat
 - Up to **5 attempts**, exponential backoff with waits of 2s, 4s, 8s and 16s between attempts.
 - Retried: network errors, `5xx`, `408`, `429` and, for registration only, a `2xx` without a parseable device object (`PATCH` and events accept any `2xx`).
 - Terminal (no retry): any other `4xx`.
-- `Retry-After` is not honored.
+- `Retry-After` is not honored on these calls (the In-App routes do honor it, see below).
+- **In-App routes** use their own queue: events are sent in order, one at a time, with the same backoff; a `429` on `events` honors `Retry-After` (clamped to 1–300 s, 60 s when absent); any other `4xx` drops the event (and a terminal `4xx` on `eligible` ends the fetch for the session); a `429` on `eligible` waits `Retry-After` (60 s when absent, at most 3 waits) and gives up for the session when it asks for more than 60 s; `401` stops In-App for the session without re-registering; `403` stops In-App until the next registration and logs one fixed warning per session per route.
 - What happens after the attempts are exhausted depends on the caller: registration is retried on the next app foreground or token refresh; CTR events stay in the on-disk queue; a session `PATCH` is not retried itself (the next session end sends the new cumulative snapshot); a pending country clear stays pending.
 
 ### Pending-mutation queue before registration
@@ -399,7 +444,8 @@ Host-app requirements when you use country reporting:
 
 This section lists what the SDK does so you can fill in your own disclosures; it is not legal advice.
 
-- **App Store privacy "nutrition" labels** — for the data in [Data collected by the SDK](#data-collected-by-the-sdk), you will typically need to evaluate at least: **Usage Data → Product Interaction** (CTR events, session count/time, first/last session), **Identifiers → Device ID** (push token / Notti device id, and **User ID** if you call `login`), **Contact Info → Email Address / Phone Number** if you call `User.setEmail`/`User.setPhone` (declared in the SDK's `PrivacyInfo.xcprivacy` as linked, not tracking, App Functionality — Xcode's privacy report shows these entries for every app embedding the SDK, even if you never call these methods; adjust your own label to your actual use), **Diagnostics / Other Data** for the device profile (OS version, model, SDK version, timezone, language, permission status), and **Location → Coarse Location** if you enable `setLocationSharingEnabled`. Whether each item is "linked to the user" depends on whether you call `login` and how you use Notti data; whether it is used for tracking depends on your own use. Google Play's Data safety form has equivalent categories (App activity, Device or other IDs, Personal info → Email address / Phone number, Approximate location).
+- **App Store privacy "nutrition" labels** — for the data in [Data collected by the SDK](#data-collected-by-the-sdk), you will typically need to evaluate at least: **Usage Data → Product Interaction** (CTR events, In-App impressions/clicks/dismissals, session count/time, first/last session), **Identifiers → Device ID** (push token / Notti device id, and **User ID** if you call `login`), **Contact Info → Email Address / Phone Number** if you call `User.setEmail`/`User.setPhone` (declared in the SDK's `PrivacyInfo.xcprivacy` as linked, not tracking, App Functionality — Xcode's privacy report shows these entries for every app embedding the SDK, even if you never call these methods; adjust your own label to your actual use), **Diagnostics / Other Data** for the device profile (OS version, model, SDK version, timezone, language, permission status), and **Location → Coarse Location** if you enable `setLocationSharingEnabled`. Whether each item is "linked to the user" depends on whether you call `login` and how you use Notti data; whether it is used for tracking depends on your own use. Google Play's Data safety form has equivalent categories (App activity, Device or other IDs, Personal info → Email address / Phone number, Approximate location).
+- **In-App messages and the labels** — In-App events are the same kind of data as the CTR events (device-linked product interaction) and add no new data type to `PrivacyInfo.xcprivacy`. The final App Store label decision for the SDK is still pending on Notti's side and is not resolved here; treat the entries above as the working list. The image download reaches a host chosen by whoever authors the message, so review which hosts your team uses for images.
 - **LGPD (and similar laws)** — the SDK does not collect consent and does not decide a legal basis. The automatic telemetry has no toggle in this version; country reporting requires your explicit opt-in call. The integrator is responsible for having the legal basis, consent flow, privacy notice, retention and data-subject-request process for this data **validated by its own legal/DPO team** before shipping.
 - **Data minimization in the SDK** — country only (no coordinates sent to Notti); last cached fix only (no tracking); explicit server-side clear on opt-out; CTR payloads carry only `delivery_id`, `type` and the push token.
 
@@ -409,6 +455,10 @@ This section lists what the SDK does so you can fill in your own disclosures; it
 - **A pending country clear that gets a permanent `4xx` is re-sent on every trigger** (registration, app foreground, network regain), because the flag is only cleared on a 2xx.
 - **Android 13+ `permission_status` "never asked" vs "denied" is inferred.** Android does not expose "not determined" directly. The SDK reports `notDetermined` when `POST_NOTIFICATIONS` is not granted, the SDK's `requestPermission` never ran and the OS does not ask for a rationale. If you request the permission through another library and the user permanently denies it, the device may report `notDetermined`. When no Activity is available to ask for the rationale (e.g. a background registration), an undecidable state is omitted instead of guessed. If the user dismisses the SDK's permission dialog without choosing, the device reports `denied`.
 - **Profile fields are only marked synced when the backend echoes them.** `app_version`, `device_os`, `device_model`, `sdk_version`, `timezone_id` and `language` count as synced only when the `PATCH /devices` response echoes the exact value sent. Against a backend that does not store a field (`app_version` before `zeep-notti` v0.9.0, the other five before v0.10.0), that field is re-sent on every registration (app launch, token refresh, or retry after a failed registration) — one extra PATCH per field each time — until the backend is upgraded. Upgrading from SDK 0.5.0 or older triggers a one-time re-send of all six fields on the first registration.
+- **In-App messages need a backend with In-App rich messages.** On an older backend the routes answer `404`: the fetch is dropped for that session and queued events are discarded as rejected.
+- **In-App `eligible` and events can give up.** A `429` on `eligible` with `Retry-After` above 60 s makes the SDK skip In-App for that session; a message offered again after a lost impression can be shown twice across sessions (the queue is flushed in order before each fetch, once, without waiting). Events older than 7 days or beyond 100 queued are dropped.
+- **Android: the overlay is hidden under an RN `<Modal>`.** In-App messages are drawn over the current Activity, so a React Native `<Modal>` (its own window) covers them. On `center` and `full` the Android Back button is consumed (it neither closes the message nor navigates); bars do not intercept it.
+- **`margin` is measured from the safe-area edge**, not the raw screen edge, so on a notched device the inset starts below the notch or above the home indicator.
 - **Backends older than `zeep-notti` v0.11.0** reject `opened` with `422`; the SDK treats that as terminal and drops the `opened` event (the `clicked` of the same tap is still recorded).
 - **Not yet validated on real devices:** session close on cold start / process kill on both platforms; the iOS background task on a slow network; `CLLocationManager` usage without runtime warnings; the `aps-environment` value in an EAS `preview` build (see [`aps-environment` value](#aps-environment-value)).
 
@@ -551,6 +601,7 @@ Notti persists its state in `SharedPreferences` file `notti_prefs` (Android) and
 | `notti_permission_requested` (Android) | Whether the SDK's `requestPermission` has run (used to infer `notDetermined`) |
 | `notti_email`, `notti_phone` | Email/phone set via `User.setEmail`/`User.setPhone` (plaintext) |
 | `notti_last_synced_email`, `notti_last_synced_phone` | Email/phone last acknowledged by the backend (drives the durable clear) |
+| `notti_pending_inapp_events` | Queued In-App events (`event_id`, message id, `type`, `button_id`/`reason`, timestamp, app id) awaiting delivery, max 100, dropped after 7 days; cleared of other apps' events when the `appId` changes |
 | `notti_pending_events` | Queued CTR events (local id, `notification_id`, `delivery_id`, `type`, creation timestamp) awaiting delivery, max 32 |
 
 There is no SDK API to wipe this local data. Uninstalling the app removes it; `logout()` clears `notti_external_user_id`, `notti_email` and `notti_phone`. If you need a "delete my data" flow, delete the device's data on your Notti instance (server side) and clear the keys above yourself.
