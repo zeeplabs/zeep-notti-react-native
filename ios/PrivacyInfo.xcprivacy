@@ -23,7 +23,8 @@
 	  owns the App Store privacy "nutrition label" (M6, pre-release review
 	  round 3, and device-profile-fields review): the opt-in country
 	  (Coarse Location, reverse-geocoded from the host's existing CoreLocation
-	  fix), CTR events / session aggregates (Product Interaction) and the
+	  fix), CTR events / session aggregates / In-App message events
+	  (impression, click, dismiss) (Product Interaction) and the
 	  automatic device profile (device_os, device_model, sdk_version,
 	  timezone_id, language, permission_status, last_unsubscribed_at). The
 	  README's "Privacy, App Store labels and LGPD" section tells integrators
