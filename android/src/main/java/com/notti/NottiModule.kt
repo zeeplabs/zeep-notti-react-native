@@ -2,10 +2,12 @@ package com.notti
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Geocoder
 import android.location.LocationManager
 import android.os.Build
+import android.provider.Settings
 import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationManagerCompat
@@ -85,6 +87,9 @@ class NottiModule(reactContext: ReactApplicationContext) :
    * [readPermissionStatus]), which is platform plumbing, not core state.
    */
   private val deviceStore = NottiDeviceStore(prefs)
+
+  /** The port this instance installed, so [invalidate] never unhooks a newer module's. */
+  private var pushPermissionPort: InAppPushPermissionPort? = null
 
   /**
    * Shared by [NottiCore] (blocking HTTP + retry backoff) and the FCM-token
@@ -178,6 +183,7 @@ class NottiModule(reactContext: ReactApplicationContext) :
    */
   override fun invalidate() {
     NottiNotificationClickRelay.detach(clickEmitter)
+    NottiInApp.get()?.let { if (it.pushPermissionPort === pushPermissionPort) it.pushPermissionPort = null }
     synchronized(NottiModule::class.java) {
       if (activeInstance === this) activeInstance = null
       if (ownCore != null && activeCore === ownCore) activeCore = null
@@ -217,7 +223,37 @@ class NottiModule(reactContext: ReactApplicationContext) :
     if (id.isNotBlank() && key.isNotBlank() && normalizedBaseUrl != null) {
       NottiInApp.get()?.onInitialized(id, key, normalizedBaseUrl)
     }
+    wirePushPermissionPort()
     core.initialize(id, key, baseUrl.orEmpty(), sdkVersion.orEmpty())
+  }
+
+  /**
+   * Gives the In-App coordinator the OS side of the `push_permission` button.
+   * The prompt goes through [NottiCore.requestPermission] so the subscribed
+   * PATCH and the status refresh stay in one place; the `permissionRequested`
+   * flag is set by [requestNativePermission] only when the prompt is issued.
+   */
+  private fun wirePushPermissionPort() {
+    val coordinator = NottiInApp.get() ?: return
+    val port = NottiPushPermissionAction(
+      sdkInt = Build.VERSION.SDK_INT,
+      notificationsEnabled = { NotificationManagerCompat.from(reactApplicationContext).areNotificationsEnabled() },
+      promptAlreadyShown = { deviceStore.getPermissionRequested() },
+      hasActivity = { reactApplicationContext.currentActivity != null },
+      showPrompt = { core.requestPermission { } },
+      openNotificationSettings = { openAppNotificationSettings() },
+      logger = { message -> Log.e(NAME, message) }
+    )
+    pushPermissionPort = port
+    coordinator.pushPermissionPort = port
+  }
+
+  private fun openAppNotificationSettings() {
+    val activity = reactApplicationContext.currentActivity ?: return
+    activity.startActivity(
+      Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+        .putExtra(Settings.EXTRA_APP_PACKAGE, activity.packageName)
+    )
   }
 
   override fun requestPermission(promise: Promise?) {

@@ -174,6 +174,53 @@ class NottiModuleTest {
   }
 
   @Test
+  fun `initialize installs the push permission port and invalidate removes only its own`() {
+    NottiModule.resetProcessWideStateForTest()
+    val coordinator = installCoordinator()
+    try {
+      val first = NottiModule(FakeReactApplicationContext())
+      first.initialize("app-1", "key", "https://notti.example.com", "")
+      val firstPort = coordinator.pushPermissionPort
+      assertNotNull(firstPort)
+
+      // An RN reload builds the next module before the old one is invalidated.
+      val second = NottiModule(FakeReactApplicationContext())
+      second.initialize("app-1", "key", "https://notti.example.com", "")
+      val secondPort = coordinator.pushPermissionPort
+      assertNotNull(secondPort)
+
+      first.invalidate()
+      assertSame(secondPort, coordinator.pushPermissionPort)
+
+      second.invalidate()
+      assertNull(coordinator.pushPermissionPort)
+    } finally {
+      NottiModule.resetProcessWideStateForTest()
+      NottiInApp.resetForTests()
+    }
+  }
+
+  @Test
+  @Config(sdk = [33], shadows = [ShadowArguments::class])
+  fun `the push permission action without an activity shows no prompt and leaves the asked flag unset`() {
+    NottiModule.resetProcessWideStateForTest()
+    val coordinator = installCoordinator()
+    val prefs = RuntimeEnvironment.getApplication().getSharedPreferences(NottiModule.PREFS_NAME, 0)
+    prefs.edit().clear().commit()
+    try {
+      val module = NottiModule(FakeReactApplicationContext(failOnActivity = false))
+      module.initialize("app-1", "key", "https://notti.example.com", "")
+
+      coordinator.pushPermissionPort?.run()
+
+      assertFalse(NottiDeviceStore(prefs).getPermissionRequested())
+    } finally {
+      NottiModule.resetProcessWideStateForTest()
+      NottiInApp.resetForTests()
+    }
+  }
+
+  @Test
   fun `initialize with an invalid config leaves In-App without one`() {
     val coordinator = installCoordinator()
     try {
@@ -330,10 +377,11 @@ private class RecordingPromise : Promise {
  * either unused by the SDK<33 auto-grant path or deliberately throws to
  * prove that path never reaches it (see `getCurrentActivity` below).
  */
-private class FakeReactApplicationContext :
+private class FakeReactApplicationContext(private val failOnActivity: Boolean = true) :
   ReactApplicationContext(RuntimeEnvironment.getApplication()) {
 
   override fun getCurrentActivity(): Activity? {
+    if (!failOnActivity) return null
     throw AssertionError("requestNativePermission must resolve before reading currentActivity below API 33")
   }
 
