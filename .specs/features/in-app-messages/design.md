@@ -271,7 +271,7 @@ Pure metrics (unit-testable, both platforms), all relative to the overlay/window
 | `center` | centered | width <= 90% of container width, additionally capped at 560 (tablets; tunable); height <= 90% of the container height minus safe areas; 50% black backdrop; ignores `margin` |
 | `full` | fills the safe area, inset 16 on all four sides if `margin`, touching the safe-area edges if not | buttons pinned to the bottom; body area scrolls |
 
-Content structure: [image] -> title (heading) -> body, in a scroll container; buttons below it (pinned in `full`); close control overlaid at the top-trailing corner (over the image in `center`/`full`, with a scrim chip for contrast). Bars: thumbnail 56 dp/pt leading, text beside it. Two buttons: side by side when each fits on one line at the current font scale, else a column (both platforms measure, not guess).
+Content structure: [image] -> title (heading) -> body, in a scroll container; buttons below it (pinned in `full`); close control overlaid at the top-trailing corner (over the image in `center`/`full`, with a scrim chip for contrast) and inset 8 dp/pt from the card corner, so the rounded corner never clips it. Image sizing (commit `ae47972`): in the `center` card the image fills the width and is center-cropped to a 180 dp/pt cap; in `full` it takes the free room and is contained, never cropped. On Android the button row counts its own top gap, so `clipToPadding` no longer crops the top of the buttons. Bars: thumbnail 56 dp/pt leading, text beside it. Two buttons: side by side when each fits on one line at the current font scale, else a column (both platforms measure, not guess).
 
 ### Default look (semantic system colors, A13)
 

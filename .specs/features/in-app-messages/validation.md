@@ -139,6 +139,7 @@ Full wording and pass criteria for each scenario: `tasks.md`, task T30.
 ## Gaps to close here (from earlier tasks)
 
 - iOS: `testShortButtonsStackAtTheLargestTextSizeWhenTheyNoLongerFit`, `testTextUsesDynamicTypeFonts` (skipped under Mac Catalyst) and `testTheWindowNeverBecomesKeyAndPassesTouchesOutsideABar` passed in the official `xcodebuild test` on the iOS 27 simulator on 2026-10-21 (523 tests, 0 failures). `testTextUsesDynamicTypeFonts` was fixed in `1e6b370` (test read the label font outside a window).
+- Card and button layout (`ae47972`): `center` image center-cropped to 180 dp/pt, `full` image contained, close control inset 8 dp/pt, Android button row not clipped at the top. `design.md` now states it. The owner reported the layouts as passing on a physical Android 12 device and an iPhone; the `full` image and the close inset on the iPhone were part of that run but were not recorded separately.
 - Bar height limited by the safe area is now unit-tested on both platforms; still check on a device with a large cutout (scenario 22).
 - `features.in_app_active` on every plan of the license server: confirm before production.
 - Open product calls: `pt-PT` close label, image tap as a button role (TalkBack), 1x vs 2x downscale, absolute `text_align: right` vs `END`.
