@@ -226,12 +226,14 @@ class InAppButtonRow internal constructor(context: Context, private val spacingP
         )
       }
     }
-    setMeasuredDimension(width, height)
+    // The padding is part of the row (it is the gap above the buttons); without
+    // it here, `clipToPadding` would crop that much off the top of every button.
+    setMeasuredDimension(width, height + paddingTop + paddingBottom)
   }
 
   override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
     var x = 0
-    var y = 0
+    var y = paddingTop
     for (i in 0 until childCount) {
       val child = getChildAt(i)
       child.layout(x, y, x + child.measuredWidth, y + child.measuredHeight)
@@ -403,6 +405,8 @@ object NottiInAppViewFactory {
   private const val SPACING_DP = 8f
   private const val ELEVATION_DP = 6f
   private const val IMAGE_MAX_HEIGHT_DP = 180f
+  // Keeps the 48 dp close target (and its scrim chip) fully inside the rounded card corner.
+  private const val CLOSE_INSET_DP = 8f
   private const val CLOSE_GLYPH = "✕"
   private const val SCRIM = 0x66000000
 
@@ -462,15 +466,30 @@ object NottiInAppViewFactory {
       addView(body)
     }
 
+    val imageHeightCap = px(IMAGE_MAX_HEIGHT_DP)
     val imageView = image?.let { bitmap ->
-      ImageView(context).apply {
+      // Full width; height follows the aspect ratio up to the cap, and a taller
+      // image is center-cropped to it (same rule as iOS and the bar thumbnail).
+      // In `full` the image also takes the room the text leaves free (contained,
+      // never cropped): an exact height handed down by the layout wins over the cap.
+      object : ImageView(context) {
+        override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+          val width = MeasureSpec.getSize(widthMeasureSpec)
+          if (MeasureSpec.getMode(heightMeasureSpec) == MeasureSpec.EXACTLY) {
+            setMeasuredDimension(width, MeasureSpec.getSize(heightMeasureSpec))
+            return
+          }
+          val ratioHeight = if (bitmap.width > 0) (width.toLong() * bitmap.height / bitmap.width).toInt() else 0
+          setMeasuredDimension(width, minOf(imageHeightCap, ratioHeight))
+        }
+      }.apply {
         setImageBitmap(bitmap)
         importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
       }
     }
 
     val scrollContent = LinearLayout(context).apply { orientation = if (bar) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL }
-    val closeReserve = px(InAppMetrics.CLOSE_TARGET_DP - PADDING_DP)
+    val closeReserve = px(InAppMetrics.CLOSE_TARGET_DP - PADDING_DP + CLOSE_INSET_DP)
     if (bar) {
       imageView?.let {
         it.scaleType = ImageView.ScaleType.CENTER_CROP
@@ -483,13 +502,16 @@ object NottiInAppViewFactory {
       scrollContent.addView(textBlock, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
     } else {
       imageView?.let {
-        it.adjustViewBounds = true
-        it.maxHeight = px(IMAGE_MAX_HEIGHT_DP)
-        it.scaleType = ImageView.ScaleType.FIT_CENTER
+        // `full` shows the whole picture inside the free area (no crop); the card crops to its 180 dp cap.
+        it.scaleType = if (full) ImageView.ScaleType.FIT_CENTER else ImageView.ScaleType.CENTER_CROP
         scrollContent.addView(
           it,
-          LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-            bottomMargin = px(12f)
+          if (full) {
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f).apply { bottomMargin = px(12f) }
+          } else {
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+              bottomMargin = px(12f)
+            }
           }
         )
       }
@@ -498,7 +520,7 @@ object NottiInAppViewFactory {
       scrollContent.addView(textBlock, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
     }
     val scroll = ScrollView(context).apply {
-      isFillViewport = false
+      isFillViewport = full
       addView(scrollContent)
     }
     column.addView(scroll)
@@ -549,7 +571,13 @@ object NottiInAppViewFactory {
       isFocusable = true
     }
     val closeSize = px(InAppMetrics.CLOSE_TARGET_DP)
-    card.addView(close, FrameLayout.LayoutParams(closeSize, closeSize, Gravity.TOP or Gravity.END))
+    card.addView(
+      close,
+      FrameLayout.LayoutParams(closeSize, closeSize, Gravity.TOP or Gravity.END).apply {
+        topMargin = px(CLOSE_INSET_DP)
+        marginEnd = px(CLOSE_INSET_DP)
+      }
+    )
 
     return InAppMessageViews(root, card, title, body, imageView, buttonViews, buttonRow, close, style)
   }

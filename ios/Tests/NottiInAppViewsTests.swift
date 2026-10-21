@@ -350,6 +350,38 @@ final class NottiInAppViewsTests: XCTestCase {
     XCTAssertNotNil(views.close.configuration?.background.backgroundColor)
   }
 
+  func testCenterImageFillsTheWidthAndCropsATallPictureTo180() {
+    let tall = UIGraphicsImageRenderer(size: CGSize(width: 300, height: 800)).image { context in
+      UIColor.red.setFill()
+      context.fill(CGRect(x: 0, y: 0, width: 300, height: 800))
+    }
+    let views = build(message("center", image: true), image: tall)
+    layout(views, (393, 852))
+    XCTAssertEqual(views.image!.contentMode, .scaleAspectFill)
+    XCTAssertEqual(views.image!.frame.height, 180, accuracy: 0.5)
+    XCTAssertEqual(views.image!.frame.width, views.card.scroll.bounds.width)
+  }
+
+  func testFullImageTakesTheFreeRoomAndIsNotCropped() {
+    let tall = UIGraphicsImageRenderer(size: CGSize(width: 300, height: 800)).image { context in
+      UIColor.red.setFill()
+      context.fill(CGRect(x: 0, y: 0, width: 300, height: 800))
+    }
+    let views = build(message("full", image: true), image: tall)
+    layout(views, (393, 852))
+    XCTAssertEqual(views.image!.contentMode, .scaleAspectFit)
+    XCTAssertGreaterThan(views.image!.frame.height, 400)
+    XCTAssertLessThanOrEqual(views.image!.frame.maxY, views.card.textBlock.frame.minY)
+  }
+
+  func testCloseControlSitsFullyInsideTheCardCorner() {
+    let views = build(message("center", image: true), image: picture())
+    layout(views, (393, 852))
+    XCTAssertEqual(views.close.frame.minY, 8, accuracy: 0.5)
+    XCTAssertEqual(views.card.bounds.width - views.close.frame.maxX, 8, accuracy: 0.5)
+    XCTAssertEqual(views.close.frame.width, 44)
+  }
+
   func testNoImageMeansNoImageSlot() {
     let views = build(message("center", image: true))
     XCTAssertNil(views.image)
@@ -375,8 +407,8 @@ final class NottiInAppViewsTests: XCTestCase {
       XCTAssertTrue(views.close.superview === views.card, format)
       XCTAssertFalse(views.close.isHidden, format)
       XCTAssertGreaterThanOrEqual(views.close.frame.width, 44, format)
-      XCTAssertEqual(views.close.frame.maxX, views.card.bounds.width, accuracy: 0.5, format)
-      XCTAssertEqual(views.close.frame.minY, 0, format)
+      XCTAssertEqual(views.close.frame.maxX, views.card.bounds.width - 8, accuracy: 0.5, format)
+      XCTAssertEqual(views.close.frame.minY, 8, format)
     }
   }
 }

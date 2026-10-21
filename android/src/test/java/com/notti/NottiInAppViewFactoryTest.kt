@@ -14,6 +14,7 @@ import android.view.ViewGroup
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.ImageView
 import java.util.Locale
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -354,6 +355,66 @@ class NottiInAppViewFactoryTest {
     assertTrue(views.image!!.bottom <= (views.title.parent as View).top)
     assertEquals(InAppColors.WHITE, views.close.currentTextColor)
     assertNotNull(views.close.background)
+  }
+
+  @Test
+  fun `center image fills the card width and crops a tall picture to 180 dp`() {
+    RuntimeEnvironment.setQualifiers("w393dp-h852dp")
+    val tall = Bitmap.createBitmap(300, 800, Bitmap.Config.ARGB_8888)
+    val views = NottiInAppViewFactory.build(activity(), message("center", image = true), tall)
+    layout(views, 393, 852)
+    val image = views.image!!
+    assertEquals(ImageView.ScaleType.CENTER_CROP, image.scaleType)
+    assertEquals(180f, dp(image, image.height), 0.5f)
+    assertEquals((image.parent as View).width, image.width)
+  }
+
+  @Test
+  fun `center image keeps its aspect ratio when shorter than the cap`() {
+    RuntimeEnvironment.setQualifiers("w393dp-h852dp")
+    val wide = Bitmap.createBitmap(400, 100, Bitmap.Config.ARGB_8888)
+    val views = NottiInAppViewFactory.build(activity(), message("center", image = true), wide)
+    layout(views, 393, 852)
+    val image = views.image!!
+    assertEquals(image.width / 4f, image.height.toFloat(), 1f)
+  }
+
+  @Test
+  fun `full image takes the room the text leaves free instead of stopping at 180 dp`() {
+    RuntimeEnvironment.setQualifiers("w393dp-h852dp")
+    val tall = Bitmap.createBitmap(300, 800, Bitmap.Config.ARGB_8888)
+    val views = NottiInAppViewFactory.build(activity(), message("full", image = true), tall)
+    layout(views, 393, 852)
+    val image = views.image!!
+    assertTrue(dp(image, image.height) > 400f)
+    assertEquals(ImageView.ScaleType.FIT_CENTER, image.scaleType)
+    assertTrue(image.bottom <= (views.title.parent as View).top)
+  }
+
+  @Test
+  fun `close control sits fully inside the card corner`() {
+    RuntimeEnvironment.setQualifiers("w393dp-h852dp")
+    val views = NottiInAppViewFactory.build(activity(), message("center", image = true), bitmap())
+    layout(views, 393, 852)
+    val inset = 8 * views.root.resources.displayMetrics.density
+    assertEquals(inset, views.close.top.toFloat(), 1f)
+    assertEquals(views.card.width - inset, views.close.right.toFloat(), 1f)
+    assertEquals(48f, dp(views.close, views.close.width), 0.5f)
+  }
+
+  @Test
+  fun `buttons are laid out below the row gap and keep their full 48 dp height`() {
+    RuntimeEnvironment.setQualifiers("w393dp-h852dp")
+    val views = NottiInAppViewFactory.build(activity(), message("center", buttons = button("a", "Yes") + "," + button("b", "No")), null)
+    layout(views, 393, 852)
+    val row = views.buttonRow!!
+    val gap = 12 * views.root.resources.displayMetrics.density
+    views.buttons.forEach { button ->
+      assertEquals(gap, button.top.toFloat(), 1f)
+      assertTrue(dp(button, button.height) >= 47.5f)
+      assertTrue(button.bottom <= row.height - row.paddingBottom)
+    }
+    assertEquals(views.buttons.maxOf { it.height } + row.paddingTop + row.paddingBottom, row.height)
   }
 
   @Test

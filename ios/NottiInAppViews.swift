@@ -11,7 +11,9 @@ private enum InAppLayout {
   static let cornerRadius: CGFloat = 12
   static let buttonCornerRadius: CGFloat = 8
   /// Room kept clear for the close control beside the text.
-  static let closeReserve: CGFloat = InAppMetrics.closeTarget - padding
+  /// Keeps the close target (and its scrim chip) fully inside the rounded card corner.
+  static let closeInset: CGFloat = 8
+  static let closeReserve: CGFloat = InAppMetrics.closeTarget - padding + closeInset
   static let scrimAlpha: CGFloat = 0.4
 }
 
@@ -157,7 +159,7 @@ final class InAppCardView: UIView {
     let available = max(bounds.height - 2 * padding - fixed, 0)
     let scrollHeight = fill ? available : min(content, available)
     scroll.frame = CGRect(x: padding, y: padding, width: inner, height: scrollHeight)
-    scroll.contentSize = CGSize(width: inner, height: content)
+    scroll.contentSize = CGSize(width: inner, height: fill ? max(content, scrollHeight) : content)
     layoutContent(inner)
     if let row = buttonRow {
       row.frame = CGRect(
@@ -168,7 +170,8 @@ final class InAppCardView: UIView {
       )
     }
     let size = InAppMetrics.closeTarget
-    close.frame = CGRect(x: rightToLeft ? 0 : bounds.width - size, y: 0, width: size, height: size)
+    let inset = InAppLayout.closeInset
+    close.frame = CGRect(x: rightToLeft ? inset : bounds.width - size - inset, y: inset, width: size, height: size)
   }
 
   private func layoutContent(_ inner: CGFloat) {
@@ -185,7 +188,12 @@ final class InAppCardView: UIView {
       textBlock.frame = CGRect(x: x, y: 0, width: width, height: height)
     } else {
       var y: CGFloat = 0
-      let imageHeight = imageHeight(inner)
+      var imageHeight = imageHeight(inner)
+      // `full`: the image also takes the room the text leaves free (contained, never cropped).
+      if fill, image != nil, imageHeight > 0 {
+        let free = scroll.bounds.height - InAppLayout.imageGap - height
+        imageHeight = max(imageHeight, free)
+      }
       if let image = image, imageHeight > 0 {
         image.frame = CGRect(x: 0, y: 0, width: inner, height: imageHeight)
         y = imageHeight + InAppLayout.imageGap
@@ -582,7 +590,8 @@ enum NottiInAppViewFactory {
 
     let imageView = image.map { loaded -> UIImageView in
       let view = UIImageView(image: loaded)
-      view.contentMode = bar ? .scaleAspectFill : .scaleAspectFit
+      // The card crops to its 180 pt cap; `full` shows the whole picture in the free area.
+      view.contentMode = full ? .scaleAspectFit : .scaleAspectFill
       view.clipsToBounds = true
       view.isAccessibilityElement = false
       return view
