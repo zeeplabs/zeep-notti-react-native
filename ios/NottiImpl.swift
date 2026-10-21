@@ -309,6 +309,7 @@ public class NottiImpl: NSObject {
   @objc public func invalidate() {
     if NottiImpl.activeInstance === self {
       NottiImpl.activeInstance = nil
+      NottiInApp.get()?.pushPermissionPort = nil
     }
     if NottiImpl.activeCore === core {
       NottiImpl.activeCore = nil
@@ -360,7 +361,21 @@ public class NottiImpl: NSObject {
     if !appId.isEmpty, !clientKey.isEmpty, let normalized = NottiApiClient.validatedBaseUrl(baseUrl) {
       NottiInApp.get()?.onInitialized(appId: appId, clientKey: clientKey, baseUrl: normalized)
     }
+    wirePushPermissionPort()
     core.initialize(appId: appId, clientKey: clientKey, baseUrl: baseUrl, sdkVersion: sdkVersion)
+  }
+
+  /// Gives the In-App coordinator the OS side of the `push_permission` button.
+  /// The prompt goes through `NottiCore.requestPermission` (no JS callback), so
+  /// the subscribed PATCH and the status refresh stay in one place.
+  private func wirePushPermissionPort() {
+    let action = NottiPushPermissionAction(
+      readState: NottiPushPermissionAction.systemState,
+      requestPermission: { [weak self] in self?.core.requestPermission { _ in } },
+      openNotificationSettings: NottiPushPermissionAction.openSystemNotificationSettings,
+      logger: { message in NSLog("%@", message) }
+    )
+    NottiInApp.get()?.pushPermissionPort = { action.run() }
   }
 
   @objc(requestPermission:)
