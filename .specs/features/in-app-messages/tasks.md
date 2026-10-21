@@ -248,7 +248,7 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 - [ ] Defaults come from the injected semantic palette (Android theme attributes with the documented fallback; iOS semantic colors) and match the design table; `style: null` -> all defaults
 - [ ] Invalid color token -> that token's default, others applied
 - [ ] `text_align` absent/unknown -> left; `margin` absent -> true; inset 16 measured **from the safe-area edge** for top/bottom/full (all four sides on `full`), ignored for center; `margin: false` -> the frame equals the safe-area edges on all sides, horizontally too (landscape cutout/navigation insets included), never the raw screen edge; tested with non-zero safe-area insets on all four sides
-- [ ] `button_color`/`button_text_color` apply to all buttons; neither set -> first filled, second outlined
+- [ ] `button_color`/`button_text_color` apply to all buttons; neither set -> first filled, second tinted (design "Default look")
 - [ ] With only `background_color` set, `text_color` and the button colors stay at their semantic defaults (explicit test that no color is derived or adjusted)
 - [ ] Metrics: bar height <= 40% of container, bar width = safe-area width minus 16 per side when `margin`, card width <= 90% and <= 560, full inside safe area; table-tested at several container sizes (phone, small phone, tablet, landscape)
 - [ ] Gate: Android command
@@ -637,7 +637,7 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 
 **Done when**:
 - [ ] Same bullets as T12: payload keys `messageId`, `buttonId`, `action` (dictionary or `NSNull`), value untouched, order click-enqueued -> emit -> close, no handler (module invalidated: `invalidate()` sets the handler to `nil`, `NottiImpl.swift:266`) -> reported + closed + one fixed warning + no buffering
-- [ ] `git grep -nE "UIApplication|openURL|canOpenURL|\.open\(" ios/NottiInApp*` returns nothing (also run in T29)
+- [ ] `git grep -nE "openURL|canOpenURL|UIApplication\.shared\.open|\.open\(" -- 'ios/NottiInApp*'` returns nothing (also run in T29). The original pattern also matched `UIApplication`, which the presenter and loader legitimately use for lifecycle and memory notifications; only URL-opening APIs are forbidden
 - [ ] `Notti.mm` change limited to the handler wiring (AD-002); the stub from T1 for `trackEvent` stays until T25
 - [ ] XCTest with a fake click sink and a handler spy for each bullet
 - [ ] Gate: iOS command
@@ -665,6 +665,8 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 - [ ] End-to-end XCTest equivalent to T13's flow (stubbed server, request-log order, distinct `event_id`s, no device PATCH, no sensitive logs) including the cold-start race (`initialize` immediately followed by `trackEvent` before the first session still matches) and the different-config re-initialize reset
 - [ ] `git diff plugin/` empty; `Notti.mm` change limited to the shim method (AD-002)
 - [ ] Gates: iOS command; `pnpm run build:ios`
+
+**Implementation notes (2026-10-20)**: the coordinator is installed from `NottiImpl.init` through `NottiInAppSetup.install()`, before the core exists. `NottiInAppHooks` is `public` and `NottiCore` takes it as an optional (`nil` by default) because the core's initializer is public. The foreground signal is `willEnterForeground` and the background one `didEnterBackground` (design "Background"), both registered once per process in `NottiImpl`. `NottiNetworkObserver.shared` calls `notifyProcess()`; the one thing no test reaches is that the shared observer's closure points at it (the real path monitor cannot be driven), so that line is review-only.
 
 **Tests**: unit + integration
 **Gate**: full (iOS)
@@ -757,7 +759,7 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 - [ ] `git diff main -- src/` shows only `trackEvent` and `Notti.InAppMessages.addClickListener` (with `InAppClickPayload` and the `onInAppMessageClicked` emitter and the exported types) as public additions (SDKIAM-60)
 - [ ] `git diff main -- plugin/ android/src/main/AndroidManifest.xml` empty (SDKIAM-62)
 - [ ] `git grep -nE "PATCH|patchDevice" ` inside In-App files finds none (SDKIAM-53)
-- [ ] `git grep -nE "ACTION_VIEW|startActivity|Uri\.parse|UIApplication|openURL|canOpenURL" android/src/main/java/com/notti/NottiInApp* ios/NottiInApp*` finds none: the SDK opens no link (SDKIAM-32)
+- [ ] `git grep -nE "ACTION_VIEW|startActivity|Uri\.parse|openURL|canOpenURL|UIApplication\.shared\.open" -- "android/src/main/java/com/notti/NottiInApp*" "ios/NottiInApp*"` finds none: the SDK opens no link (SDKIAM-32)
 - [ ] Click payload and no-listener rule identical on both platforms (SDKIAM-67, SDKIAM-68)
 - [ ] Parity of the 2026-10-19 rules on both platforms: margin from the safe-area edge, `403`-only warning and `401` session stop, `eligible` 429 cap, `awaitingFirstSession`, late-response discard, config-change reset with `app_id` records, renderability; the only platform difference is the Android Back handling (listed in `design.md` "Platform differences")
 - [ ] Every SDKIAM requirement has a test (traceability) or a T30 scenario
@@ -784,14 +786,14 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 2. Each layout (`top`, `center`, `bottom`, `full`) renders inside its bounds on a small phone and a large phone/tablet, portrait and landscape.
 3. Dark mode and light mode with default style; then with only `background_color` set: text stays readable.
 4. Full style set: colors, `text_align` left/center/right, `margin` true/false (true: 16 from the safe-area edge; false: touches the safe-area edges on all sides, horizontally too, never under the notch/cutout/status bar/home indicator, also in landscape), button tokens apply to all buttons.
-5. Largest system font size / Dynamic Type: nothing unreachable; text scrolls; buttons and close control reachable.
+5. Largest system font size / Dynamic Type: nothing unreachable; text scrolls; buttons and close control reachable. iOS: the two Dynamic Type view tests (`testShortButtonsStack...`, `testTextUsesDynamicTypeFonts`) are skipped under Mac Catalyst, which ignores `preferredContentSizeCategory`; they must pass in `xcodebuild test` on an iOS simulator, and the fonts must follow a size change while a message is visible.
 6. Gestures: `top` swipe up, `bottom` swipe down, `center` backdrop tap, `full` no gesture, close button on all; verify the reported `reason` in the dashboard/server. Android Back: see scenario 26.
 7. Taps: each button, image with `image_action` (`image`), bar body (first button); each closes the message and reports only the click.
 8. Links: with the example's listener, a button with an `https` `url` and one with a `deeplink` each deliver the untouched action to JS (the example opens it) and the SDK itself opens nothing; with the listener removed, tapping reports the click (dashboard), closes the message and nothing opens; a tap before any listener exists is not replayed when one registers later; unknown action type delivers `action: null`.
 9. Auto dismiss: closes after N s with `auto`; backgrounding mid-countdown pauses it; manual close earlier reports `close_button`.
 10. Rotation during a visible message (both orientations, repeatedly): same message continues, no second `impression` in the dashboard.
 11. Android only: navigate between two Activities (or screens that recreate the Activity) while a message is visible; open an RN `<Modal>` while a message is visible (record behavior, R2).
-12. iOS only: iPad multi-scene or Stage Manager window if available; app with and without scene manifest; keyboard visible while a message appears.
+12. iOS only: iPad multi-scene or Stage Manager window if available; app with and without scene manifest; keyboard visible while a message appears. Also: the host keeps its orientation lock and status bar style while the `.alert` window is shown (the window's controller follows the host key window's controller, [Incerto]); the window never becomes key; `testTheWindowNeverBecomesKeyAndPassesTouchesOutsideABar` is skipped under Mac Catalyst (no running app) and must pass on an iOS simulator.
 13. RN reload (dev menu) while a message is visible and while only held: no second `eligible`, no duplicate message, `trackEvent` still works.
 14. Background/foreground cycle: a new session fetches once; the previously shown `once` message is not re-offered by the server; a message visible across the background continues.
 15. `trackEvent` matching: exact name shows the held message only when none is visible; wrong case does nothing; called before the fetch completes (A14: remembered and evaluated on arrival); called in a tight loop causes no network traffic.
@@ -815,6 +817,8 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 
 **Tests**: manual
 **Gate**: manual sign-off by the owner
+
+**Status**: SIGNED OFF by the owner 2026-10-21 (Android 12 physical device and an iPhone). The owner reported that all tests he ran passed; scenario results were not recorded one by one, so the "Done when" boxes below stay open on purpose. See `validation.md` for what is and is not evidenced.
 
 **Commit**: `docs(inapp): record device validation of in-app messages`
 

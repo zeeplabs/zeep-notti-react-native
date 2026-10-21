@@ -45,6 +45,14 @@ class NottiInitProvider : ContentProvider() {
     // the earliest point a Context is available to back the store.
     NottiModule.getEventStore(application)
 
+    // In-App: installed before any Activity so the tracker sees the first
+    // resume. Process-wide, it outlives RN reloads and module re-creation.
+    try {
+      NottiInAppSetup.install(application)
+    } catch (t: Throwable) {
+      Log.e(NottiModule.NAME, "Notti: could not set up In-App messages - ${t.message}")
+    }
+
     // Flush the queued event store when connectivity returns - the reporting
     // path for events enqueued while offline (T4). Registered once per
     // process; the observer itself swallows any rejection (SDK-03).
@@ -111,6 +119,10 @@ internal object NottiForegroundObserver : DefaultLifecycleObserver {
   @Volatile
   internal var coreProvider: () -> NottiCore? = { NottiModule.activeCore }
 
+  /** Where the callbacks find the In-App coordinator. Test seam, like [coreProvider]. */
+  @Volatile
+  internal var inAppProvider: () -> NottiInAppCoordinator? = { NottiInApp.get() }
+
   private val heartbeat = object : Runnable {
     override fun run() {
       coreProvider()?.recordForegroundHeartbeat()
@@ -120,13 +132,14 @@ internal object NottiForegroundObserver : DefaultLifecycleObserver {
 
   override fun onStart(owner: LifecycleOwner) {
     coreProvider()?.onAppForegrounded()
+    inAppProvider()?.onAppForegrounded()
     mainHandler.removeCallbacks(heartbeat)
     mainHandler.postDelayed(heartbeat, NottiCore.HEARTBEAT_INTERVAL_MS)
   }
 
   override fun onStop(owner: LifecycleOwner) {
     mainHandler.removeCallbacks(heartbeat)
-    handleProcessBackground(coreProvider(), NottiModule.processSessionGate)
+    handleProcessBackground(coreProvider(), NottiModule.processSessionGate, inAppProvider())
   }
 
   /**
@@ -137,9 +150,16 @@ internal object NottiForegroundObserver : DefaultLifecycleObserver {
    * whole background interval. The orphaned session itself is closed by the
    * next session start at its last heartbeat (SEGTEL-08).
    */
-  internal fun handleProcessBackground(core: NottiCore?, gate: NottiCore.SessionGate) {
+  internal fun handleProcessBackground(
+    core: NottiCore?,
+    gate: NottiCore.SessionGate,
+    inApp: NottiInAppCoordinator? = null
+  ) {
     gate.close()
     core?.onAppBackgrounded()
+    // Also with no core: the In-App session ends and the display clock pauses.
+    inApp?.onSessionEnded()
+    inApp?.onAppBackgrounded()
   }
 
   /**

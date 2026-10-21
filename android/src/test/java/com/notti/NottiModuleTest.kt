@@ -4,6 +4,7 @@ import android.app.Activity
 import com.facebook.react.bridge.Callback
 import com.facebook.react.bridge.CatalystInstance
 import com.facebook.react.bridge.JavaScriptContextHolder
+import com.facebook.react.bridge.JavaOnlyMap
 import com.facebook.react.bridge.JavaScriptModule
 import com.facebook.react.bridge.NativeModule
 import com.facebook.react.bridge.Promise
@@ -12,9 +13,12 @@ import com.facebook.react.bridge.RuntimeExecutor
 import com.facebook.react.bridge.UIManager
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.turbomodule.core.interfaces.CallInvokerHolder
+import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -118,6 +122,200 @@ class NottiModuleTest {
     assertTrue(second.didResolve)
   }
 
+  /** Installs a coordinator running on the caller's thread; [onPost] sees each hop to main. */
+  private fun installCoordinator(onPost: () -> Unit = {}): NottiInAppCoordinator {
+    NottiInApp.resetForTests()
+    val prefs = RuntimeEnvironment.getApplication().getSharedPreferences("notti_module_inapp", 0)
+    val coordinator = NottiInAppCoordinator(
+      store = NottiInAppEventStore(prefs),
+      clientFactory = { config -> NottiApiClient(OkHttpClient(), config.baseUrl, config.appId, config.clientKey) },
+      identity = { null },
+      executor = object : InAppExecutor {
+        override fun execute(task: () -> Unit) = Unit
+        override fun schedule(delayMs: Long, task: () -> Unit) = Unit
+      },
+      postToMain = { task -> onPost(); task() }
+    )
+    return NottiInApp.install(coordinator)
+  }
+
+  @Test
+  fun `initialize hands the normalized config to In-App before the core is created`() {
+    NottiModule.resetProcessWideStateForTest()
+    val coreAtPost = mutableListOf<NottiCore?>()
+    val coordinator = installCoordinator { coreAtPost.add(NottiModule.activeCore) }
+    try {
+      val module = NottiModule(FakeReactApplicationContext())
+      module.initialize("app-1", "key", "https://notti.example.com/", "")
+
+      assertEquals(InAppConfig("app-1", "key", "https://notti.example.com"), coordinator.session.config)
+      assertEquals(listOf<NottiCore?>(null), coreAtPost)
+      assertNotNull(NottiModule.activeCore)
+    } finally {
+      NottiInApp.resetForTests()
+    }
+  }
+
+  @Test
+  fun `the module's core opens the In-App session when it opens a foreground session`() {
+    NottiModule.resetProcessWideStateForTest()
+    val coordinator = installCoordinator()
+    try {
+      val module = NottiModule(FakeReactApplicationContext())
+      module.initialize("app-1", "key", "https://notti.example.com", "")
+
+      requireNotNull(NottiModule.activeCore).onAppForegrounded()
+
+      assertTrue(coordinator.session.isOpen)
+    } finally {
+      NottiModule.resetProcessWideStateForTest()
+      NottiInApp.resetForTests()
+    }
+  }
+
+  @Test
+  fun `initialize installs the push permission port and invalidate removes only its own`() {
+    NottiModule.resetProcessWideStateForTest()
+    val coordinator = installCoordinator()
+    try {
+      val first = NottiModule(FakeReactApplicationContext())
+      first.initialize("app-1", "key", "https://notti.example.com", "")
+      val firstPort = coordinator.pushPermissionPort
+      assertNotNull(firstPort)
+
+      // An RN reload builds the next module before the old one is invalidated.
+      val second = NottiModule(FakeReactApplicationContext())
+      second.initialize("app-1", "key", "https://notti.example.com", "")
+      val secondPort = coordinator.pushPermissionPort
+      assertNotNull(secondPort)
+
+      first.invalidate()
+      assertSame(secondPort, coordinator.pushPermissionPort)
+
+      second.invalidate()
+      assertNull(coordinator.pushPermissionPort)
+    } finally {
+      NottiModule.resetProcessWideStateForTest()
+      NottiInApp.resetForTests()
+    }
+  }
+
+  @Test
+  @Config(sdk = [33], shadows = [ShadowArguments::class])
+  fun `the push permission action without an activity shows no prompt and leaves the asked flag unset`() {
+    NottiModule.resetProcessWideStateForTest()
+    val coordinator = installCoordinator()
+    val prefs = RuntimeEnvironment.getApplication().getSharedPreferences(NottiModule.PREFS_NAME, 0)
+    prefs.edit().clear().commit()
+    try {
+      val module = NottiModule(FakeReactApplicationContext(failOnActivity = false))
+      module.initialize("app-1", "key", "https://notti.example.com", "")
+
+      coordinator.pushPermissionPort?.run()
+
+      assertFalse(NottiDeviceStore(prefs).getPermissionRequested())
+    } finally {
+      NottiModule.resetProcessWideStateForTest()
+      NottiInApp.resetForTests()
+    }
+  }
+
+  @Test
+  fun `initialize with an invalid config leaves In-App without one`() {
+    val coordinator = installCoordinator()
+    try {
+      val module = NottiModule(FakeReactApplicationContext())
+      module.initialize("app-1", "", "https://notti.example.com", "")
+      module.initialize("app-1", "key", "not a url", "")
+
+      assertNull(coordinator.session.config)
+    } finally {
+      NottiInApp.resetForTests()
+    }
+  }
+
+  @Test
+  fun `trackEvent forwards the name to In-App, so a call right after initialize is kept`() {
+    val coordinator = installCoordinator()
+    try {
+      val module = NottiModule(FakeReactApplicationContext())
+      module.trackEvent("before-initialize")
+      module.initialize("app-1", "key", "https://notti.example.com", "")
+      module.trackEvent("promo")
+      module.trackEvent(null)
+
+      assertEquals(listOf("promo"), coordinator.session.pending)
+    } finally {
+      NottiInApp.resetForTests()
+    }
+  }
+
+  @Test
+  fun `invalidate leaves the In-App coordinator installed`() {
+    val coordinator = installCoordinator()
+    try {
+      NottiModule(FakeReactApplicationContext()).invalidate()
+      assertSame(coordinator, NottiInApp.get())
+    } finally {
+      NottiInApp.resetForTests()
+    }
+  }
+
+  @Test
+  fun `an In-App click reaches the live module with exactly messageId, buttonId and action`() {
+    val module = NottiModule(FakeReactApplicationContext())
+    val emitted = mutableListOf<WritableMap>()
+    module.inAppClickEmitter = { emitted.add(it) }
+    // Reserved characters and escapes must arrive byte for byte.
+    val value = "https://shop.test/p?a=1&b=%20x#frag"
+
+    assertTrue(NottiModule.emitInAppClick(InAppClick("msg-1", "b2", InAppAction("url", value))))
+
+    val payload = emitted.single() as JavaOnlyMap
+    assertEquals(setOf("messageId", "buttonId", "action"), payload.toHashMap().keys)
+    assertEquals("msg-1", payload.getString("messageId"))
+    assertEquals("b2", payload.getString("buttonId"))
+    val action = payload.getMap("action") as JavaOnlyMap
+    assertEquals(setOf("type", "value"), action.toHashMap().keys)
+    assertEquals("url", action.getString("type"))
+    assertEquals(value, action.getString("value"))
+  }
+
+  @Test
+  fun `an In-App click without a usable action carries action null rather than omitting it`() {
+    val module = NottiModule(FakeReactApplicationContext())
+    val emitted = mutableListOf<WritableMap>()
+    module.inAppClickEmitter = { emitted.add(it) }
+
+    // The parser turns an unknown action type into no action (T2).
+    val parsed = parseEligibleResponse(
+      """{"messages":[{"id":"m1","format":"center","title":"t","body":"b",""" +
+        """"buttons":[{"id":"b1","label":"Go","action":{"type":"sms","value":"x"}}]}]}"""
+    )!!.single()
+    assertTrue(NottiModule.emitInAppClick(InAppClick("m1", "b1", parsed.buttons.single().action)))
+
+    val payload = emitted.single()
+    assertTrue(payload.hasKey("action"))
+    assertTrue(payload.isNull("action"))
+  }
+
+  @Test
+  fun `an In-App click with no live module is not delivered and never replayed to a later module`() {
+    val old = NottiModule(FakeReactApplicationContext())
+    old.inAppClickEmitter = { throw AssertionError("torn-down module must not emit") }
+    old.invalidate()
+
+    assertFalse(NottiModule.emitInAppClick(InAppClick("m1", "b1", null)))
+
+    val module = NottiModule(FakeReactApplicationContext())
+    val emitted = mutableListOf<WritableMap>()
+    module.inAppClickEmitter = { emitted.add(it) }
+    assertTrue(emitted.isEmpty())
+
+    NottiModule.emitInAppClick(InAppClick("m2", "b1", null))
+    assertEquals(listOf("m2"), emitted.map { it.getString("messageId") })
+  }
+
   @Test
   fun `constructing the module does not replay the buffered cold-start click as an event`() {
     NottiNotificationClickRelay.reset()
@@ -179,10 +377,11 @@ private class RecordingPromise : Promise {
  * either unused by the SDK<33 auto-grant path or deliberately throws to
  * prove that path never reaches it (see `getCurrentActivity` below).
  */
-private class FakeReactApplicationContext :
+private class FakeReactApplicationContext(private val failOnActivity: Boolean = true) :
   ReactApplicationContext(RuntimeEnvironment.getApplication()) {
 
   override fun getCurrentActivity(): Activity? {
+    if (!failOnActivity) return null
     throw AssertionError("requestNativePermission must resolve before reading currentActivity below API 33")
   }
 

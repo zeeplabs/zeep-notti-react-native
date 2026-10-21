@@ -56,8 +56,16 @@ public final class NottiNetworkObserver {
   /// the live core through the `activeCore` static, so it works before
   /// `NottiImpl` exists.
   internal static let shared = NottiNetworkObserver(
-    onNetworkAvailable: { NottiImpl.activeCore?.onNetworkAvailable() }
+    onNetworkAvailable: { NottiNetworkObserver.notifyProcess() }
   )
+
+  /// What the shared observer does on regained connectivity: the live core
+  /// flushes its push events; In-App retries its own queue and a failed
+  /// `eligible`, with or without a core. Test seam.
+  internal static func notifyProcess(core: NottiCore? = NottiImpl.activeCore, inApp: NottiInAppCoordinator? = NottiInApp.get()) {
+    core?.onNetworkAvailable()
+    inApp?.onNetworkAvailable()
+  }
 
   private let monitor: NottiPathMonitoring
   private let onNetworkAvailable: () -> Void

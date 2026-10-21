@@ -60,4 +60,42 @@ final class NottiNetworkObserverTests: XCTestCase {
 
     XCTAssertEqual(monitor.cancelCount, 1)
   }
+
+  // MARK: - Process wiring (T25)
+
+  /// Counts the work In-App hands its executor; never runs it (no network).
+  private final class CountingExecutor: InAppExecutor {
+    private(set) var executed = 0
+    func execute(_ task: @escaping () -> Void) { executed += 1 }
+    func schedule(delayMs: Int64, _ task: @escaping () -> Void) {}
+  }
+
+  private func configuredCoordinator(_ executor: CountingExecutor) -> NottiInAppCoordinator {
+    let suite = "NottiNetworkObserverTests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
+    let coordinator = NottiInAppCoordinator(
+      store: NottiInAppEventStore(defaults: defaults),
+      clientFactory: { NottiApiClient(baseUrl: $0.baseUrl, appId: $0.appId, clientKey: $0.clientKey) },
+      identity: { InAppIdentity(deviceId: "device-1", token: "apns-token") },
+      executor: executor,
+      postToMain: { $0() }
+    )
+    coordinator.onInitialized(appId: "app-1", clientKey: "key", baseUrl: "https://example.invalid")
+    return coordinator
+  }
+
+  func test_regainedConnectivityAlsoReachesInAppWithNoCore() {
+    let executor = CountingExecutor()
+    let target = configuredCoordinator(executor)
+    XCTAssertEqual(executor.executed, 0)
+
+    NottiNetworkObserver.notifyProcess(core: nil, inApp: target)
+
+    XCTAssertEqual(executor.executed, 1, "In-App flushes its own queue even with no core")
+  }
+
+  func test_regainedConnectivityWithNoCoordinatorDoesNotTrap() {
+    NottiNetworkObserver.notifyProcess(core: nil, inApp: nil)
+  }
 }

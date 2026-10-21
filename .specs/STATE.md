@@ -34,6 +34,8 @@
 - **Date**: 2026-10-18
 - **Status**: proposed (spec, design and tasks written 2026-10-18; nothing implemented). No open questions remain in `spec.md` (all closed 2026-10-18). The four style defaults (`text_align` absent = left, `margin` absent = true with 16 pt inset, button tokens apply to all buttons, `style: null` = defaults) are approved (Julio, 2026-10-18).
 
+- **Amendment (2026-10-21)**: the built-in `push_permission` button action (spec `in-app-button-actions`, server repo `.specs/features/in-app-button-actions/`) is the one thing the SDK runs on a click. It takes no author data, never reaches the JS listener (`action: null`) and runs without a listener. Android: `NottiPushPermissionAction.kt`; iOS: `NottiPushPermissionAction.swift`. Server gate: `MinSDKVersionPushPermission` and the dashboard `PUSH_PERMISSION_MIN_SDK` stay empty until the SDK release that includes it.
+
 ## Pre-release review v0.3.0..HEAD (rule changes)
 
 Status: implementado nas duas plataformas (Android + iOS), com testes unitários, no working tree — **ainda não commitado**; gates não reexecutados nesta passada de docs.
@@ -53,6 +55,15 @@ Status: implementado nas duas plataformas (Android + iOS), com testes unitários
 - **Validações pendentes em device real:** fechamento de sessão em cold start/kill nas duas plataformas; background task do iOS com rede lenta; `CLLocationManager` sem warning de runtime; valor de `aps-environment` em build EAS `preview`.
 
 ## Handoff
+
+- **Feature**: in-app-messages (SDK side, AD-004)
+- **Phase / Task**: Execute. T1-T29 done on branch `feat/in-app-messages` (T1 JS; T2-T13 Android; T14-T25 iOS; T26 docs; T27 privacy manifest comment; T28 example app; T29 review). Gates 2026-10-21: JS 40/40, Android `testDebugUnitTest` 488/0, iOS official `xcodebuild test` (scheme `NottiTests`, iPhone 17, iOS 27 simulator) 523/0, example builds for Android and iOS Simulator green.
+- **Next step**: T30, manual validation on a physical Android device and iPhone against a running `zeep-notti` (`validation.md` is created then); then open the PR with the real gate output in its description.
+- **Blockers**: none known. `features.in_app_active` enabled on all plans of the `license-server` (reported by Julio 2026-10-21, not verified from this repo). Open product call: image tap as a button role (TalkBack), to confirm on a device in T30. Decided: `pt-PT` uses "Fechar", `text_align` stays absolute, image downscale stays 1x (`maxSidePx` = longest screen side in physical pixels on both platforms: `NottiInAppPresenter.kt:134`, `NottiInAppPresenter.swift:263`).
+- **Decision (Julio, 2026-10-20)**: iOS `NottiInAppHooks` stays a `public protocol` (required by the public `NottiCore.init`); closures were considered and rejected. Not a supported entry point for integrators: the JS surface is unchanged.
+- **Public surface**: only `Notti.trackEvent` and `Notti.InAppMessages.addClickListener` (+ `NottiInAppClick`/`NottiInAppAction`); `plugin/` and the Android manifest unchanged; the SDK opens no link (greps in T29 found none). Note: README documents `action.type` as `'url' | 'deeplink'` while the TS type is `string` (kept tolerant on purpose).
+
+## Handoff (previous: opened-event-reporting)
 
 - **Feature**: opened-event-reporting
 - **Phase / Task**: Specify (+ inline design) → Tasks T1-T4 → Execute done. Android 209 JVM tests, iOS 206 XCTest, JS gates green. PR #25 merged to `main` 2026-10-04 (rebase, head `fcb1b04`). No version bump yet.

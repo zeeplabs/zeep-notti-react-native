@@ -2,14 +2,17 @@ package com.notti
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Geocoder
 import android.location.LocationManager
 import android.os.Build
+import android.provider.Settings
 import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReadableArray
@@ -85,6 +88,9 @@ class NottiModule(reactContext: ReactApplicationContext) :
    */
   private val deviceStore = NottiDeviceStore(prefs)
 
+  /** The port this instance installed, so [invalidate] never unhooks a newer module's. */
+  private var pushPermissionPort: InAppPushPermissionPort? = null
+
   /**
    * Shared by [NottiCore] (blocking HTTP + retry backoff) and the FCM-token
    * `Task` listener below, so neither ever runs on the main looper.
@@ -130,7 +136,8 @@ class NottiModule(reactContext: ReactApplicationContext) :
       // has already torn down. Mirrors `emitNotificationReceived`'s companion
       // object bridge below.
       onDeviceIdChanged = { deviceId -> activeInstance?.emitDeviceIdChanged(deviceId) },
-      sessionGate = processSessionGate
+      sessionGate = processSessionGate,
+      inApp = NottiInApp.coreHooks
     ).also {
       ownCore = it
       activeCore = it
@@ -176,6 +183,7 @@ class NottiModule(reactContext: ReactApplicationContext) :
    */
   override fun invalidate() {
     NottiNotificationClickRelay.detach(clickEmitter)
+    NottiInApp.get()?.let { if (it.pushPermissionPort === pushPermissionPort) it.pushPermissionPort = null }
     synchronized(NottiModule::class.java) {
       if (activeInstance === this) activeInstance = null
       if (ownCore != null && activeCore === ownCore) activeCore = null
@@ -198,8 +206,54 @@ class NottiModule(reactContext: ReactApplicationContext) :
 
   internal fun emitDeviceIdChanged(deviceId: String) = emitOnDeviceIdChanged(deviceId)
 
+  /**
+   * Emits an In-App click. A field so tests can observe the payload: the
+   * generated emitter is backed by a native callback a unit test cannot set.
+   */
+  internal var inAppClickEmitter: (WritableMap) -> Unit = { emitOnInAppMessageClicked(it) }
+
   override fun initialize(appId: String?, clientKey: String?, baseUrl: String?, sdkVersion: String?) {
-    core.initialize(appId.orEmpty(), clientKey.orEmpty(), baseUrl.orEmpty(), sdkVersion.orEmpty())
+    val id = appId.orEmpty()
+    val key = clientKey.orEmpty()
+    // Before the core exists: creating it replays the missed foreground, and
+    // that session start must reach a coordinator that already has the config
+    // (same main-thread FIFO as trackEvent, DD-13). Invalid input is left to
+    // the core, which logs it.
+    val normalizedBaseUrl = NottiCore.normalizeBaseUrl(baseUrl.orEmpty())
+    if (id.isNotBlank() && key.isNotBlank() && normalizedBaseUrl != null) {
+      NottiInApp.get()?.onInitialized(id, key, normalizedBaseUrl)
+    }
+    wirePushPermissionPort()
+    core.initialize(id, key, baseUrl.orEmpty(), sdkVersion.orEmpty())
+  }
+
+  /**
+   * Gives the In-App coordinator the OS side of the `push_permission` button.
+   * The prompt goes through [NottiCore.requestPermission] so the subscribed
+   * PATCH and the status refresh stay in one place; the `permissionRequested`
+   * flag is set by [requestNativePermission] only when the prompt is issued.
+   */
+  private fun wirePushPermissionPort() {
+    val coordinator = NottiInApp.get() ?: return
+    val port = NottiPushPermissionAction(
+      sdkInt = Build.VERSION.SDK_INT,
+      notificationsEnabled = { NotificationManagerCompat.from(reactApplicationContext).areNotificationsEnabled() },
+      promptAlreadyShown = { deviceStore.getPermissionRequested() },
+      hasActivity = { reactApplicationContext.currentActivity != null },
+      showPrompt = { core.requestPermission { } },
+      openNotificationSettings = { openAppNotificationSettings() },
+      logger = { message -> Log.e(NAME, message) }
+    )
+    pushPermissionPort = port
+    coordinator.pushPermissionPort = port
+  }
+
+  private fun openAppNotificationSettings() {
+    val activity = reactApplicationContext.currentActivity ?: return
+    activity.startActivity(
+      Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+        .putExtra(Settings.EXTRA_APP_PACKAGE, activity.packageName)
+    )
   }
 
   override fun requestPermission(promise: Promise?) {
@@ -258,6 +312,11 @@ class NottiModule(reactContext: ReactApplicationContext) :
   }
 
   override fun getDeviceId(): String? = core.getDeviceId()
+
+  /** Hands the name to the In-App coordinator, which hops to main; never sent or logged (SDKIAM-10). */
+  override fun trackEvent(name: String?) {
+    if (name != null) NottiInApp.get()?.trackEvent(name)
+  }
 
   /**
    * Hands JS the notification tap that cold-launched the process, once.
@@ -502,7 +561,7 @@ class NottiModule(reactContext: ReactApplicationContext) :
 
   companion object {
     const val NAME = NativeNottiSpec.NAME
-    private const val PREFS_NAME = "notti_prefs"
+    internal const val PREFS_NAME = "notti_prefs"
 
     /** See the doc-comment on [requestNativePermission] (A5). */
     private val nextPermissionRequestCode = AtomicInteger(8420)
@@ -528,6 +587,18 @@ class NottiModule(reactContext: ReactApplicationContext) :
      * when no module existed yet - now the null-check happens first, before
      * any parsing/allocation is even attempted.
      */
+    /**
+     * In-App click bridge (SDKIAM-67/68). False when no module is live (e.g.
+     * between RN reloads): the click is neither buffered nor replayed to a
+     * later module (A9). JS subscriptions are not visible natively, so a
+     * live module without a JS listener counts as delivered and RN drops it.
+     */
+    internal fun emitInAppClick(click: InAppClick): Boolean {
+      val instance = activeInstance ?: return false
+      instance.inAppClickEmitter(click.toWritableMap())
+      return true
+    }
+
     internal fun emitNotificationReceived(remoteMessage: RemoteMessage) {
       val instance = activeInstance ?: return
       instance.emitReceived(parseRemoteMessage(remoteMessage).toWritableMap())
@@ -618,4 +689,20 @@ class NottiModule(reactContext: ReactApplicationContext) :
     }
 
   }
+}
+
+/** Keys `messageId`, `buttonId`, `action`; `action` is `null`, never absent. Values pass through untouched. */
+internal fun InAppClick.toWritableMap(): WritableMap {
+  val map = Arguments.createMap()
+  map.putString("messageId", messageId)
+  map.putString("buttonId", buttonId)
+  if (action == null) {
+    map.putNull("action")
+  } else {
+    val actionMap = Arguments.createMap()
+    actionMap.putString("type", action.type)
+    actionMap.putString("value", action.value)
+    map.putMap("action", actionMap)
+  }
+  return map
 }

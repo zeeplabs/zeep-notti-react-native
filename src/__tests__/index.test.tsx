@@ -13,10 +13,12 @@ const mockClearEmail = jest.fn();
 const mockSetPhone = jest.fn();
 const mockClearPhone = jest.fn();
 const mockGetDeviceId = jest.fn();
+const mockTrackEvent = jest.fn();
 const mockGetInitialNotificationClick = jest.fn();
 const mockOnNotificationReceived = jest.fn();
 const mockOnNotificationClicked = jest.fn();
 const mockOnDeviceIdChanged = jest.fn();
+const mockOnInAppMessageClicked = jest.fn();
 
 jest.mock('../NativeNotti', () => ({
   __esModule: true,
@@ -35,6 +37,7 @@ jest.mock('../NativeNotti', () => ({
     setPhone: (...args: unknown[]) => mockSetPhone(...args),
     clearPhone: (...args: unknown[]) => mockClearPhone(...args),
     getDeviceId: (...args: unknown[]) => mockGetDeviceId(...args),
+    trackEvent: (...args: unknown[]) => mockTrackEvent(...args),
     getInitialNotificationClick: (...args: unknown[]) =>
       mockGetInitialNotificationClick(...args),
     onNotificationReceived: (...args: unknown[]) =>
@@ -42,12 +45,19 @@ jest.mock('../NativeNotti', () => ({
     onNotificationClicked: (...args: unknown[]) =>
       mockOnNotificationClicked(...args),
     onDeviceIdChanged: (...args: unknown[]) => mockOnDeviceIdChanged(...args),
+    onInAppMessageClicked: (...args: unknown[]) =>
+      mockOnInAppMessageClicked(...args),
   },
 }));
 
-jest.mock('react-native-notti/package.json', () => ({ version: '0.4.0' }));
+jest.mock('../version', () => ({ SDK_VERSION: '0.4.0' }));
 
-import { Notti, type NotificationPayload } from '../index';
+import {
+  Notti,
+  type NotificationPayload,
+  type NottiInAppAction,
+  type NottiInAppClick,
+} from '../index';
 
 describe('Notti facade', () => {
   beforeEach(() => {
@@ -83,21 +93,6 @@ describe('Notti facade', () => {
       'key-1',
       'https://app.zeepnotti.app',
       '0.4.0'
-    );
-  });
-
-  it('initialize forwards an empty sdkVersion when the package version cannot be resolved', () => {
-    jest.resetModules();
-    jest.doMock('react-native-notti/package.json', () => ({}));
-    const freshNotti = require('../index').Notti as typeof Notti;
-    freshNotti.initialize('app-1', 'key-1', {
-      baseUrl: 'https://push.example.com',
-    });
-    expect(mockInitialize).toHaveBeenCalledWith(
-      'app-1',
-      'key-1',
-      'https://push.example.com',
-      ''
     );
   });
 
@@ -278,5 +273,91 @@ describe('Notti facade', () => {
 
     expect(mockOnDeviceIdChanged).toHaveBeenCalledWith(callback);
     expect(result).toBe(subscription);
+  });
+
+  it('trackEvent forwards the exact string to NativeNotti.trackEvent', () => {
+    Notti.trackEvent('checkout_done');
+
+    expect(mockTrackEvent).toHaveBeenCalledTimes(1);
+    expect(mockTrackEvent).toHaveBeenCalledWith('checkout_done');
+  });
+
+  it('trackEvent does not trim or change the case of the name', () => {
+    Notti.trackEvent('  Checkout_Done ');
+
+    expect(mockTrackEvent).toHaveBeenCalledWith('  Checkout_Done ');
+  });
+
+  it('InAppMessages.addClickListener delivers the payload unchanged until remove()', () => {
+    const listeners = new Set<(payload: NottiInAppClick) => void>();
+    mockOnInAppMessageClicked.mockImplementation((...args: unknown[]) => {
+      const handler = args[0] as (payload: NottiInAppClick) => void;
+      listeners.add(handler);
+      return { remove: () => listeners.delete(handler) };
+    });
+    const handler = jest.fn();
+    const payload: NottiInAppClick = {
+      messageId: '00000000-0000-0000-0000-000000000000',
+      buttonId: 'fixture',
+      action: { type: 'url', value: 'https://example.invalid/path' },
+    };
+
+    const subscription = Notti.InAppMessages.addClickListener(handler);
+    listeners.forEach((l) => l(payload));
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler).toHaveBeenCalledWith(payload);
+
+    subscription.remove();
+    listeners.forEach((l) => l(payload));
+
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('InAppMessages.addClickListener hands a push_permission click through with action null, untouched', () => {
+    const listeners = new Set<(payload: NottiInAppClick) => void>();
+    mockOnInAppMessageClicked.mockImplementation((...args: unknown[]) => {
+      const handler = args[0] as (payload: NottiInAppClick) => void;
+      listeners.add(handler);
+      return { remove: () => listeners.delete(handler) };
+    });
+    const handler = jest.fn();
+    const payload: NottiInAppClick = {
+      messageId: '00000000-0000-0000-0000-000000000000',
+      buttonId: 'fixture',
+      action: null,
+    };
+
+    Notti.InAppMessages.addClickListener(handler);
+    listeners.forEach((l) => l(payload));
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    const received = handler.mock.calls[0]?.[0] as NottiInAppClick;
+    expect(received).toBe(payload);
+    expect(received.action).toBeNull();
+  });
+
+  it('NottiInAppAction is a closed union, so a switch over its type is exhaustive', () => {
+    const describeAction = (action: NottiInAppAction | null | undefined) => {
+      if (!action) return 'none';
+      switch (action.type) {
+        case 'url':
+          return 'url';
+        case 'deeplink':
+          return 'deeplink';
+        default: {
+          const unreachable: never = action.type;
+          return unreachable;
+        }
+      }
+    };
+
+    expect(
+      describeAction({ type: 'url', value: 'https://example.invalid' })
+    ).toBe('url');
+    expect(describeAction({ type: 'deeplink', value: 'example://x' })).toBe(
+      'deeplink'
+    );
+    expect(describeAction(null)).toBe('none');
   });
 });

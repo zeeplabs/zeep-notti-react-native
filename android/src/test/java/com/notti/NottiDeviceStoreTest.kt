@@ -291,6 +291,27 @@ class NottiDeviceStoreTest {
   }
 
   @Test
+  fun `clearProfileFieldAcks forgets every profile ack and the permission status`() {
+    store.setAppVersion("1.0.0")
+    store.setLastSyncedDeviceOs("15.0")
+    store.setLastSyncedDeviceModel("Pixel 8")
+    store.setLastSyncedSdkVersion("0.6.0")
+    store.setLastSyncedTimezoneId("America/Sao_Paulo")
+    store.setLastSyncedLanguage("pt")
+    store.setLastSyncedPermissionStatus("granted")
+
+    store.clearProfileFieldAcks()
+
+    assertNull(store.getAppVersion())
+    assertNull(store.getLastSyncedDeviceOs())
+    assertNull(store.getLastSyncedDeviceModel())
+    assertNull(store.getLastSyncedSdkVersion())
+    assertNull(store.getLastSyncedTimezoneId())
+    assertNull(store.getLastSyncedLanguage())
+    assertNull(store.getLastSyncedPermissionStatus())
+  }
+
+  @Test
   fun `device profile fields round-trip through SharedPreferences`() {
     store.setLastSyncedDeviceOs("15.0")
     store.setLastSyncedDeviceModel("Pixel 8")

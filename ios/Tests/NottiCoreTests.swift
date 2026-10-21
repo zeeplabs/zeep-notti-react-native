@@ -75,7 +75,8 @@ final class NottiCoreTests: XCTestCase {
     logs: LogSink? = nil,
     onDeviceIdChanged: @escaping (String) -> Void = { _ in },
     eventStore: NottiEventStore? = nil,
-    sessionGate: NottiCore.SessionGate = NottiCore.SessionGate()
+    sessionGate: NottiCore.SessionGate = NottiCore.SessionGate(),
+    inApp: NottiInAppHooks? = nil
   ) -> NottiCore {
     let session = stubSession()
     let core = NottiCore(
@@ -100,7 +101,8 @@ final class NottiCoreTests: XCTestCase {
       heartbeatInterval: heartbeatInterval,
       logger: { message in logs?.append(message) },
       onDeviceIdChanged: onDeviceIdChanged,
-      sessionGate: sessionGate
+      sessionGate: sessionGate,
+      inApp: inApp
     )
     cores.append(core)
     return core
@@ -724,6 +726,73 @@ final class NottiCoreTests: XCTestCase {
     XCTAssertEqual(store.getTags(), [:])
   }
 
+  // MARK: - In-App hooks (T25)
+
+  /// Records what In-App was told, with how many requests the server had seen
+  /// when it heard it.
+  private final class RecordingInAppHooks: NottiInAppHooks {
+    private let lock = NSLock()
+    private var recorded: [String] = []
+    var calls: [String] { lock.lock(); defer { lock.unlock() }; return recorded }
+    private func record(_ call: String) { lock.lock(); recorded.append(call); lock.unlock() }
+    func onSessionStarted() { record("session") }
+    func onRegistered() { record("registered after \(StubURLProtocol.recordedRequests().count) requests") }
+  }
+
+  func test_inAppHearsOneSessionStartPerOpeningOfTheSessionGate() {
+    let hooks = RecordingInAppHooks()
+    let core = newCore(inApp: hooks)
+
+    NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+    NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+    drain(core)
+    XCTAssertEqual(hooks.calls, ["session"], "a repeat activation is the same session")
+
+    NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
+    NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+    drain(core)
+    XCTAssertEqual(hooks.calls, ["session", "session"])
+  }
+
+  func test_inAppIsNotToldAboutASessionAnotherCoreOfTheProcessAlreadyOpened() {
+    // A JS reload builds a new core while the foreground session is open: it
+    // adopts that session, so In-App keeps its held messages and its display.
+    let gate = NottiCore.SessionGate()
+    XCTAssertTrue(gate.tryOpen())
+    let hooks = RecordingInAppHooks()
+    let core = newCore(sessionGate: gate, inApp: hooks)
+
+    NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+    drain(core)
+
+    XCTAssertTrue(hooks.calls.isEmpty)
+  }
+
+  func test_inAppHearsASuccessfulRegistrationOnlyAfterThePushEventQueueWasFlushed() {
+    let hooks = RecordingInAppHooks()
+    let eventStore = NottiEventStore(defaults: defaults)
+    _ = eventStore.enqueue(notificationId: "n-1", deliveryId: "d-1", type: "received")
+    let core = newCore(eventStore: eventStore, inApp: hooks)
+
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    StubURLProtocol.enqueue(.status(200)) // event report
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    XCTAssertEqual(hooks.calls, ["registered after 2 requests"])
+  }
+
+  func test_inAppHearsNothingWhenTheRegistrationFails() {
+    let hooks = RecordingInAppHooks()
+    for _ in 0..<5 { StubURLProtocol.enqueue(.status(200, body: "<html>captive portal</html>")) }
+    let core = newCore(inApp: hooks)
+
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core, timeout: 20)
+
+    XCTAssertTrue(hooks.calls.isEmpty)
+  }
+
   // MARK: - Offline event queue flush (SDKCTR-09/SDKCTR-12)
 
   func test_flushEventQueueBeforeInitializeIsANoOpAndKeepsTheEvent() {
@@ -1245,6 +1314,30 @@ final class NottiCoreTests: XCTestCase {
     XCTAssertEqual(bodies[0]["app_version"] as? String, "1.2.3")
     XCTAssertEqual(bodies[1]["app_version"] as? String, "2.0.0")
     XCTAssertEqual(store.getAppVersion(), "2.0.0")
+  }
+
+  func test_aRegistrationThatAnswersWithANewDeviceIdResendsTheProfileFields() {
+    let sameRow = #"{"id":"device-1","tags":{}}"#
+    let newRow = #"{"id":"device-2","tags":{}}"#
+    StubURLProtocol.enqueue(.status(200, body: sameRow)) // registration 1
+    StubURLProtocol.enqueue(.echoDevice()) // app_version PATCH
+    StubURLProtocol.enqueue(.status(200, body: sameRow)) // registration 2, same row
+    StubURLProtocol.enqueue(.status(200, body: newRow)) // registration 3, new row
+    StubURLProtocol.enqueue(.echoDevice()) // app_version PATCH again
+    let core = newCore(versionProvider: { "1.2.3" })
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+    XCTAssertEqual(patchBodies(StubURLProtocol.recordedRequests()).count, 1)
+
+    core.onTokenRefreshed("apns-2")
+    drain(core)
+    XCTAssertEqual(patchBodies(StubURLProtocol.recordedRequests()).count, 1, "same row keeps its acks")
+
+    core.onTokenRefreshed("apns-3")
+    drain(core)
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertEqual(bodies.count, 2, "a new row gets the fields again")
+    XCTAssertEqual(bodies[1]["app_version"] as? String, "1.2.3")
   }
 
   // MARK: - Device profile fields (T7, DPF-01..09)

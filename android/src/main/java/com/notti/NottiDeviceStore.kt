@@ -266,6 +266,26 @@ class NottiDeviceStore(private val prefs: SharedPreferences) {
   }
 
 
+  /**
+   * Forgets every server-acked profile value and the synced permission status.
+   * Called when registration answers with a device id different from the stored
+   * one: the server row is new (deleted and re-created, or a sandbox reset), so
+   * nothing this device "already synced" exists there. Without it the diff would
+   * never re-send the fields and the row would stay empty. Held email/phone are
+   * not touched; they re-sync on every registration.
+   */
+  fun clearProfileFieldAcks() {
+    prefs.edit()
+      .remove(KEY_APP_VERSION)
+      .remove(KEY_LAST_SYNCED_DEVICE_OS)
+      .remove(KEY_LAST_SYNCED_DEVICE_MODEL)
+      .remove(KEY_LAST_SYNCED_SDK_VERSION)
+      .remove(KEY_LAST_SYNCED_TIMEZONE_ID)
+      .remove(KEY_LAST_SYNCED_LANGUAGE)
+      .remove(KEY_LAST_SYNCED_PERMISSION_STATUS)
+      .apply()
+  }
+
   fun getLastSyncedDeviceOs(): String? = prefs.getString(KEY_LAST_SYNCED_DEVICE_OS, null)
 
   fun setLastSyncedDeviceOs(value: String?) {

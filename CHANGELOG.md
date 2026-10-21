@@ -105,6 +105,16 @@ entries once released.
 
 ## [Unreleased]
 
+### Features
+
+* **In-App messages** (Android and iOS): messages authored in the Notti dashboard are fetched once per foreground session, rendered natively (`top`, `center`, `bottom`, `full`) and measured with `impression`, `click` and `dismiss` events queued on disk. New: `Notti.trackEvent(name)` and `Notti.InAppMessages.addClickListener(handler)`; additive, no existing signature changes. Requires a Notti backend with In-App rich messages.
+* **The SDK never opens a link.** A tap reports the click, closes the message and hands the untouched `url`/`deeplink` to the click listener; without a listener nothing opens. See the README "In-App messages" section.
+
+### Notes
+
+* **Deliberate divergence from the backend contract:** on `403` from the In-App routes the SDK does **not** re-register the device (the contract says to). It logs one fixed warning per session per route and In-App stays inactive on that device until the next registration (cold start or token refresh). A `401` stops In-App for the session without re-registering and logs only the generic line. Registration already runs at launch and on token refresh, and a rejected client key is not fixed by registering again.
+* New local storage key `notti_pending_inapp_events` and a new request to the image host chosen by the message author; see "Data collected by the SDK" and "Locally persisted data" in the README.
+
 ## Upgrade notes for 0.6.0 (released)
 
 ### ⚠️ Attention when upgrading

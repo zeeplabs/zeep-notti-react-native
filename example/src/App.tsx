@@ -1,5 +1,5 @@
-import { useEffect } from 'react';
-import { Button, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Button, Linking, StyleSheet, Text, View } from 'react-native';
 import { Notti } from 'react-native-notti';
 
 // Manual smoke-test wiring (T18) - placeholders only, never real
@@ -11,6 +11,11 @@ const NOTTI_CLIENT_KEY = 'REPLACE_WITH_YOUR_CLIENT_KEY';
 const NOTTI_BASE_URL = 'https://your-notti-instance.example.com';
 
 export default function App() {
+  // The SDK never opens a link: this app decides what a `deeplink` or `url`
+  // action does. A real app would hand `deeplink` to its navigation; the
+  // example just shows it on screen.
+  const [lastDeeplink, setLastDeeplink] = useState<string | null>(null);
+
   useEffect(() => {
     Notti.initialize(NOTTI_APP_ID, NOTTI_CLIENT_KEY, {
       baseUrl: NOTTI_BASE_URL,
@@ -51,10 +56,22 @@ export default function App() {
     // user record.
     console.log('Notti getDeviceId', Notti.getDeviceId());
 
+    // Register at app start: a click with no listener is not buffered. Log the
+    // `buttonId` only - never the message id or the action value.
+    const inAppClicked = Notti.InAppMessages.addClickListener((click) => {
+      console.log('Notti in-app click, button:', click.buttonId);
+      if (click.action?.type === 'url') {
+        Linking.openURL(click.action.value).catch(() => {});
+      } else if (click.action?.type === 'deeplink') {
+        setLastDeeplink(click.action.value);
+      }
+    });
+
     return () => {
       received.remove();
       clicked.remove();
       deviceIdChanged.remove();
+      inAppClicked.remove();
     };
   }, []);
 
@@ -86,6 +103,11 @@ export default function App() {
         title="Disable subscription"
         onPress={() => Notti.setSubscription(false)}
       />
+      <Button
+        title="Track event: checkout_done"
+        onPress={() => Notti.trackEvent('checkout_done')}
+      />
+      {lastDeeplink ? <Text>Last deeplink: {lastDeeplink}</Text> : null}
       <Button
         title="Log device id"
         onPress={() => console.log('Notti getDeviceId', Notti.getDeviceId())}
