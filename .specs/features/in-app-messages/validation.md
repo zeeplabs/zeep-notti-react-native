@@ -134,7 +134,7 @@ Full wording and pass criteria for each scenario: `tasks.md`, task T30.
 
 ## Gaps to close here (from earlier tasks)
 
-- iOS: `testShortButtonsStackAtTheLargestTextSizeWhenTheyNoLongerFit`, `testTextUsesDynamicTypeFonts` (skipped under Mac Catalyst) and `testTheWindowNeverBecomesKeyAndPassesTouchesOutsideABar` must pass in `xcodebuild test` on an iOS simulator. The local machine has no simulator runtime (Xcode > Settings > Components).
+- iOS: `testShortButtonsStackAtTheLargestTextSizeWhenTheyNoLongerFit`, `testTextUsesDynamicTypeFonts` (skipped under Mac Catalyst) and `testTheWindowNeverBecomesKeyAndPassesTouchesOutsideABar` passed in the official `xcodebuild test` on the iOS 27 simulator on 2026-10-21 (523 tests, 0 failures). `testTextUsesDynamicTypeFonts` was fixed in `1e6b370` (test read the label font outside a window).
 - Bar height limited by the safe area is now unit-tested on both platforms; still check on a device with a large cutout (scenario 22).
 - `features.in_app_active` on every plan of the license server: confirm before production.
 - Open product calls: `pt-PT` close label, image tap as a button role (TalkBack), 1x vs 2x downscale, absolute `text_align: right` vs `END`.
