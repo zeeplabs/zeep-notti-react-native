@@ -76,6 +76,10 @@ public protocol NottiInAppHooks: AnyObject {
 /// Delivers a click to JS. False when no listener can receive it (SDKIAM-68).
 typealias InAppClickSink = (InAppClick) -> Bool
 
+/// Runs the OS side of a `push_permission` button, after the click is reported
+/// and the message closed.
+typealias InAppPushPermissionPort = () -> Void
+
 /// Retry and pause constants of both routes, adjustable in one place.
 enum InAppTiming {
   /// Requests per transient failure streak (2/4/8/16 s between them).
@@ -138,6 +142,8 @@ final class NottiInAppCoordinator: InAppDisplayEvents {
   var presenter: InAppPresenter?
   /// Set to the live module's emitter by the wiring; the SDK itself never opens a link (A9).
   var clickSink: InAppClickSink?
+  /// Nil until the platform action is wired; a `push_permission` tap then only reports and closes.
+  var pushPermissionPort: InAppPushPermissionPort?
 
   private let store: NottiInAppEventStore
   private let clientFactory: (InAppConfig) -> NottiApiClient
@@ -251,9 +257,13 @@ final class NottiInAppCoordinator: InAppDisplayEvents {
       guard let display = self.session.display, self.session.markClosed(displayId) else { return }
       let messageId = display.message.id
       self.enqueue(messageId: messageId, type: InAppEventType.click, buttonId: buttonId)
-      let delivered = self.clickSink?(InAppClick(messageId: messageId, buttonId: buttonId, action: action)) ?? false
-      if !delivered { self.logger(Self.noListenerWarning) }
+      let runsPushPermission = action?.type == InAppAction.pushPermissionType
+      // The listener never sees a push_permission action: it is not a link to handle.
+      let reported = InAppClick(messageId: messageId, buttonId: buttonId, action: runsPushPermission ? nil : action)
+      let delivered = self.clickSink?(reported) ?? false
+      if !delivered && !runsPushPermission { self.logger(Self.noListenerWarning) }
       self.presenter?.close(displayId)
+      if runsPushPermission { self.pushPermissionPort?() }
       self.requestFlush()
     }
   }

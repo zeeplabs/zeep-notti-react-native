@@ -14,9 +14,12 @@ enum InAppTextAlign: Equatable {
   case right
 }
 
-/// A link the integrator handles (the SDK never opens it). `type` is `url` or
-/// `deeplink`; `value` is exactly what the server sent, never rewritten.
+/// A tap action. `type` is `url` or `deeplink` (a link the integrator handles;
+/// the SDK never opens it, `value` is exactly what the server sent) or
+/// `pushPermissionType` (button only, no value, run by the SDK itself).
 struct InAppAction: Equatable {
+  static let pushPermissionType = "push_permission"
+
   let type: String
   let value: String
 }
@@ -125,7 +128,7 @@ private func parseMessage(_ object: [String: Any]) -> InAppMessage {
     title: title,
     body: body,
     imageUrl: imageUrl,
-    imageAction: imageUrl != nil ? parseAction(object["image_action"]) : nil,
+    imageAction: imageUrl != nil ? parseAction(object["image_action"], allowPushPermission: false) : nil,
     style: parseStyle(object["style"] as? [String: Any]),
     dismissAfterSeconds: parseDismissSeconds(object["dismiss_after_seconds"]),
     trigger: trigger,
@@ -186,14 +189,17 @@ private func parseTrigger(_ object: [String: Any]?) -> InAppTrigger {
   }
 }
 
-private func parseAction(_ raw: Any?) -> InAppAction? {
+private func parseAction(_ raw: Any?, allowPushPermission: Bool = true) -> InAppAction? {
   guard
     let object = raw as? [String: Any],
-    let type = object["type"] as? String,
-    type == "url" || type == "deeplink"
+    let type = object["type"] as? String
   else {
     return nil
   }
+  if type == InAppAction.pushPermissionType {
+    return allowPushPermission ? InAppAction(type: type, value: "") : nil
+  }
+  guard type == "url" || type == "deeplink" else { return nil }
   let value = stringOrEmpty(object["value"])
   return value.isEmpty ? nil : InAppAction(type: type, value: value)
 }

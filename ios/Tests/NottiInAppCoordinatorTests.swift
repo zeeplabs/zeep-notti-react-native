@@ -601,6 +601,59 @@ final class NottiInAppCoordinatorTests: XCTestCase {
     XCTAssertFalse(logs.contains(NottiInAppCoordinator.noListenerWarning))
   }
 
+  func test_aPushPermissionTapReportsOneClickClosesTellsTheListenerNilAndRunsThePortOnce() throws {
+    var seen: [String] = []
+    coordinator.clickSink = { [unowned self] click in
+      seen.append("listener action=\(String(describing: click.action)) closed=\(self.presenter.closed.count)")
+      return true
+    }
+    coordinator.pushPermissionPort = { [unowned self] in
+      let clicks = self.store.all().filter { $0.type == InAppEventType.click }.count
+      seen.append("port closed=\(self.presenter.closed.count) clicks=\(clicks)")
+    }
+    enqueue(messages(sessionStart("s1")))
+    initialize()
+    startAndRegister()
+    let display = try XCTUnwrap(showVisible())
+    let action = InAppAction(type: InAppAction.pushPermissionType, value: "")
+    coordinator.onDisplayClicked(display.displayId, buttonId: "b1", action: action)
+    coordinator.onDisplayClicked(display.displayId, buttonId: "b1", action: action)
+
+    XCTAssertEqual(seen, ["listener action=nil closed=0", "port closed=1 clicks=1"])
+    XCTAssertEqual(presenter.closed, [display.displayId])
+    XCTAssertFalse(logs.contains(NottiInAppCoordinator.noListenerWarning))
+  }
+
+  func test_aPushPermissionTapStillRunsThePortWithNoListener() throws {
+    coordinator.clickSink = nil
+    var runs = 0
+    coordinator.pushPermissionPort = { runs += 1 }
+    enqueue(messages(sessionStart("s1")))
+    initialize()
+    startAndRegister()
+    let display = try XCTUnwrap(showVisible())
+    coordinator.onDisplayClicked(
+      display.displayId, buttonId: "b1", action: InAppAction(type: InAppAction.pushPermissionType, value: ""))
+    XCTAssertEqual(runs, 1)
+    XCTAssertEqual(store.all().last?.type, InAppEventType.click)
+    XCTAssertEqual(presenter.closed, [display.displayId])
+  }
+
+  func test_aLinkClickStillReachesTheListenerWithItsActionAndNeverRunsThePort() throws {
+    var runs = 0
+    coordinator.pushPermissionPort = { runs += 1 }
+    var clicks: [InAppClick] = []
+    coordinator.clickSink = { clicks.append($0); return true }
+    enqueue(messages(sessionStart("s1")))
+    initialize()
+    startAndRegister()
+    let display = try XCTUnwrap(showVisible())
+    coordinator.onDisplayClicked(
+      display.displayId, buttonId: "b1", action: InAppAction(type: "url", value: "https://x.test"))
+    XCTAssertEqual(runs, 0)
+    XCTAssertEqual(clicks.first?.action, InAppAction(type: "url", value: "https://x.test"))
+  }
+
   /// Until the module bridge is wired (T24/T25) there is no default sink:
   /// clicks are still reported and warned (SDKIAM-68).
   func test_aFreshCoordinatorHasNoClickSink() {

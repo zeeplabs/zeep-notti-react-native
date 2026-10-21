@@ -276,6 +276,23 @@ final class NottiInAppModelsTests: XCTestCase {
     XCTAssertNil(parsed?.imageAction)
   }
 
+  func test_aPushPermissionButtonParsesWithNoValue() {
+    let parsed = parseOne(
+      #""buttons": [{"id": "b1", "label": "Allow", "action": {"type": "push_permission"}}]"#
+    )
+    XCTAssertEqual(parsed?.buttons.first?.action, InAppAction(type: InAppAction.pushPermissionType, value: ""))
+    XCTAssertEqual(parsed?.renderable, true)
+  }
+
+  func test_aPushPermissionImageActionIsDropped() {
+    let parsed = parseOne(
+      #""image_url": "https://example.invalid/i.png""#,
+      #""image_action": {"type": "push_permission"}"#
+    )
+    XCTAssertEqual(parsed?.imageUrl, "https://example.invalid/i.png")
+    XCTAssertNil(parsed?.imageAction)
+  }
+
   // MARK: - style
 
   func test_nullOrMissingStyleYieldsTheDefaults() {

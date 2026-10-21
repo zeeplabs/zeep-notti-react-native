@@ -301,6 +301,29 @@ class NottiInAppModelsTest {
     assertNull(parsed.imageAction)
   }
 
+  @Test
+  fun `a push permission button parses with no value`() {
+    val parsed = parseOne(
+      "\"buttons\": [{\"id\": \"b1\", \"label\": \"Allow\", \"action\": {\"type\": \"push_permission\"}}]"
+    )
+    assertEquals(InAppAction(InAppAction.PUSH_PERMISSION, ""), parsed.buttons[0].action)
+    assertTrue(parsed.renderable)
+  }
+
+  @Test
+  fun `a push permission image action is dropped and other unknown types still are`() {
+    val parsed = parseOne(
+      "\"image_url\": \"https://example.invalid/i.png\"",
+      "\"image_action\": {\"type\": \"push_permission\"}"
+    )
+    assertEquals("https://example.invalid/i.png", parsed.imageUrl)
+    assertNull(parsed.imageAction)
+    val share = parseOne(
+      "\"buttons\": [{\"id\": \"b1\", \"label\": \"Go\", \"action\": {\"type\": \"share\", \"value\": \"x\"}}]"
+    )
+    assertNull(share.buttons[0].action)
+  }
+
   // --- style --------------------------------------------------------------
 
   @Test

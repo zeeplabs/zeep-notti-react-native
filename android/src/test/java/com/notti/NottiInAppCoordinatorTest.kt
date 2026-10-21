@@ -571,6 +571,72 @@ class NottiInAppCoordinatorTest {
   }
 
   @Test
+  fun `a push permission tap reports one click, closes, tells the listener null and runs the port once`() {
+    val seen = mutableListOf<String>()
+    coordinator.clickSink = InAppClickSink { click ->
+      seen.add("listener action=${click.action} closed=${presenter.closed.size}")
+      true
+    }
+    coordinator.pushPermissionPort = InAppPushPermissionPort {
+      seen.add("port closed=${presenter.closed.size} clicks=${store.all().count { it.type == InAppEventType.CLICK }}")
+    }
+    server.enqueue(messages(sessionStart("s1")))
+    init()
+    startAndRegister()
+    val display = showVisible()
+    val action = InAppAction(InAppAction.PUSH_PERMISSION, "")
+    coordinator.onDisplayClicked(display.displayId, "b1", action)
+    coordinator.onDisplayClicked(display.displayId, "b1", action)
+
+    assertEquals(listOf("listener action=null closed=0", "port closed=1 clicks=1"), seen)
+    assertEquals(1, store.all().count { it.type == InAppEventType.CLICK })
+    assertEquals(listOf(display.displayId), presenter.closed)
+    assertFalse(logs.contains(NottiInAppCoordinator.NO_LISTENER_WARNING))
+  }
+
+  @Test
+  fun `a push permission tap still runs the port when no listener is registered`() {
+    coordinator.clickSink = null
+    var runs = 0
+    coordinator.pushPermissionPort = InAppPushPermissionPort { runs++ }
+    server.enqueue(messages(sessionStart("s1")))
+    init()
+    startAndRegister()
+    val display = showVisible()
+    coordinator.onDisplayClicked(display.displayId, "b1", InAppAction(InAppAction.PUSH_PERMISSION, ""))
+    assertEquals(1, runs)
+    assertEquals(InAppEventType.CLICK, store.all().last().type)
+    assertEquals(listOf(display.displayId), presenter.closed)
+  }
+
+  @Test
+  fun `a failing push permission port does not break the close or the flush`() {
+    coordinator.pushPermissionPort = InAppPushPermissionPort { throw IllegalStateException("boom") }
+    server.enqueue(messages(sessionStart("s1")))
+    init()
+    startAndRegister()
+    val display = showVisible()
+    coordinator.onDisplayClicked(display.displayId, "b1", InAppAction(InAppAction.PUSH_PERMISSION, ""))
+    assertEquals(listOf(display.displayId), presenter.closed)
+    assertTrue(logs.any { it.contains("push permission action failed") })
+  }
+
+  @Test
+  fun `a link click still reaches the listener with its action and never runs the port`() {
+    var runs = 0
+    coordinator.pushPermissionPort = InAppPushPermissionPort { runs++ }
+    val clicks = mutableListOf<InAppClick>()
+    coordinator.clickSink = InAppClickSink { clicks.add(it); true }
+    server.enqueue(messages(sessionStart("s1")))
+    init()
+    startAndRegister()
+    val display = showVisible()
+    coordinator.onDisplayClicked(display.displayId, "b1", InAppAction("url", "https://x.test"))
+    assertEquals(0, runs)
+    assertEquals(InAppAction("url", "https://x.test"), clicks.single().action)
+  }
+
+  @Test
   fun `the default click sink reports no listener when no module is live`() {
     val fresh = NottiInAppCoordinator(
       store = store,

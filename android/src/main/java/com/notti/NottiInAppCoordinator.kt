@@ -54,6 +54,11 @@ interface NottiInAppHooks {
   }
 }
 
+/** Runs the OS side of a `push_permission` button, after the click is reported and the message closed. */
+fun interface InAppPushPermissionPort {
+  fun run()
+}
+
 /** Delivers a click to JS. False when no listener can receive it (SDKIAM-68). */
 fun interface InAppClickSink {
   fun deliver(click: InAppClick): Boolean
@@ -133,6 +138,8 @@ class NottiInAppCoordinator(
   var presenter: InAppPresenter? = null
   /** Defaults to the live module's emitter; the SDK itself never opens a link (A9). */
   var clickSink: InAppClickSink? = InAppClickSink { NottiModule.emitInAppClick(it) }
+  /** Null until the platform action is wired; a `push_permission` tap then only reports and closes. */
+  var pushPermissionPort: InAppPushPermissionPort? = null
 
   private var client: NottiApiClient? = null
 
@@ -202,14 +209,25 @@ class NottiInAppCoordinator(
     if (!session.markClosed(displayId)) return@onMain
     val messageId = display.message.id
     enqueue(messageId, InAppEventType.CLICK, buttonId = buttonId)
+    val runsPushPermission = action?.type == InAppAction.PUSH_PERMISSION
     val delivered = try {
-      clickSink?.deliver(InAppClick(messageId, buttonId, action)) ?: false
+      // The listener never sees a push_permission action: it is not a link to handle.
+      clickSink?.deliver(InAppClick(messageId, buttonId, if (runsPushPermission) null else action)) ?: false
     } catch (e: Exception) {
       false
     }
-    if (!delivered) logger(NO_LISTENER_WARNING)
+    if (!delivered && !runsPushPermission) logger(NO_LISTENER_WARNING)
     presenter?.close(displayId)
+    if (runsPushPermission) runPushPermission()
     requestFlush()
+  }
+
+  private fun runPushPermission() {
+    try {
+      pushPermissionPort?.run()
+    } catch (e: Exception) {
+      logger("Notti.inapp: push permission action failed (${e.javaClass.simpleName})")
+    }
   }
 
   override fun onDisplayDismissed(displayId: String, reason: String) = onMain { dismiss(displayId, reason) }

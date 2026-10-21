@@ -10,10 +10,15 @@ enum class InAppFormat { TOP, CENTER, BOTTOM, FULL }
 enum class InAppTextAlign { LEFT, CENTER, RIGHT }
 
 /**
- * A link the integrator handles (the SDK never opens it). [type] is `url` or
- * `deeplink`; [value] is exactly what the server sent, never rewritten.
+ * A tap action. [type] is `url` or `deeplink` (a link the integrator handles;
+ * the SDK never opens it, [value] is exactly what the server sent) or
+ * [PUSH_PERMISSION] (button only, no value, run by the SDK itself).
  */
-data class InAppAction(val type: String, val value: String)
+data class InAppAction(val type: String, val value: String) {
+  companion object {
+    const val PUSH_PERMISSION = "push_permission"
+  }
+}
 
 /**
  * Look tokens of a message. Colors are opaque ARGB ints, `null` meaning "use
@@ -110,7 +115,7 @@ private fun parseMessage(obj: JSONObject): InAppMessage {
     title = title,
     body = body,
     imageUrl = imageUrl,
-    imageAction = if (imageUrl != null) parseAction(obj.opt("image_action")) else null,
+    imageAction = if (imageUrl != null) parseAction(obj.opt("image_action"), allowPushPermission = false) else null,
     style = parseStyle(obj.opt("style") as? JSONObject),
     dismissAfterSeconds = parseDismissSeconds(obj.opt("dismiss_after_seconds")),
     trigger = trigger,
@@ -145,9 +150,12 @@ private fun parseTrigger(obj: JSONObject?): InAppTrigger {
   }
 }
 
-private fun parseAction(raw: Any?): InAppAction? {
+private fun parseAction(raw: Any?, allowPushPermission: Boolean = true): InAppAction? {
   val obj = raw as? JSONObject ?: return null
   val type = obj.opt("type") as? String
+  if (type == InAppAction.PUSH_PERMISSION) {
+    return if (allowPushPermission) InAppAction(type, "") else null
+  }
   if (type != "url" && type != "deeplink") return null
   val value = obj.stringOrEmpty("value")
   if (value.isEmpty()) return null
