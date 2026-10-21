@@ -4,6 +4,7 @@ import NativeNotti, {
   type InAppClickAction,
   type InAppClickPayload,
 } from './NativeNotti';
+import { SDK_VERSION } from './version';
 
 // SPEC_DEVIATION: T4 replaced NativeNotti.ts's scaffolded `multiply` method
 // with the real v1 Spec, orphaning the `multiply`/`multiply.native` files
@@ -67,26 +68,6 @@ const User = {
 
 /** Default `baseUrl` for Notti's SaaS mode. Self-hosted deployments must pass their own. */
 const SAAS_BASE_URL = 'https://app.zeepnotti.app';
-
-/**
- * The SDK package version, resolved once at module load from the package
- * manifest (`./package.json` is exported, so the version is readable at
- * runtime). Forwarded to native `initialize` as `sdk_version` - the package
- * version is the single source of truth, and a native hardcoded copy would
- * drift across releases. Passed as a constant, not business logic (AD-001).
- * On any resolution failure (bundler edge case), an empty string is passed
- * and native treats it as `null` -> the field is omitted.
- */
-const SDK_VERSION: string = (() => {
-  try {
-    const pkg = require('react-native-notti/package.json') as {
-      version?: string;
-    };
-    return typeof pkg.version === 'string' ? pkg.version : '';
-  } catch {
-    return '';
-  }
-})();
 
 export interface InitializeOptions {
   /**

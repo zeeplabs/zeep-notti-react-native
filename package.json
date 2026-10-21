@@ -167,6 +167,9 @@
     "github": {
       "release": false
     },
+    "hooks": {
+      "after:bump": "node scripts/sync-sdk-version.js"
+    },
     "plugins": {
       "@release-it/conventional-changelog": {
         "infile": "CHANGELOG.md",

@@ -50,7 +50,7 @@ jest.mock('../NativeNotti', () => ({
   },
 }));
 
-jest.mock('react-native-notti/package.json', () => ({ version: '0.4.0' }));
+jest.mock('../version', () => ({ SDK_VERSION: '0.4.0' }));
 
 import {
   Notti,
@@ -93,21 +93,6 @@ describe('Notti facade', () => {
       'key-1',
       'https://app.zeepnotti.app',
       '0.4.0'
-    );
-  });
-
-  it('initialize forwards an empty sdkVersion when the package version cannot be resolved', () => {
-    jest.resetModules();
-    jest.doMock('react-native-notti/package.json', () => ({}));
-    const freshNotti = require('../index').Notti as typeof Notti;
-    freshNotti.initialize('app-1', 'key-1', {
-      baseUrl: 'https://push.example.com',
-    });
-    expect(mockInitialize).toHaveBeenCalledWith(
-      'app-1',
-      'key-1',
-      'https://push.example.com',
-      ''
     );
   });
 
