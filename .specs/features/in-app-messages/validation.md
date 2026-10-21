@@ -1,6 +1,10 @@
 # In-App messages: device validation (T30)
 
-**Status: NOT RUN.** This is the checklist for the owner's manual run on physical devices. Nothing below has been verified on a device. Fill the cells, attach evidence, then commit with `docs(inapp): record device validation of in-app messages`.
+**Status: SIGNED OFF by the owner on 2026-10-21, without a per-scenario record.** Julio ran the scenarios on a physical Android device (Android 12, API 31) and on an iPhone and reported that every test he ran passed on both. He did not give a result per scenario, so the cells below stay `not run` unless a result was stated explicitly; do not read `not run` as a failure, nor as evidence of a pass. Only scenario 2 (every layout position) was reported by name. The same session also validated the `push_permission` button on iOS and Android 12; Android 13+ is still untested (see `in-app-button-actions`).
+
+Not covered by any evidence here: a long `logcat` capture for scenario 19 (the buffer kept under 2 minutes; that window showed no `Notti` lines, no crash and no token, key or event name), a test proxy for scenario 17, a second app for scenario 27, and a device with API 33 or higher for scenario 26 on predictive back.
+
+This was the checklist for the owner's manual run on physical devices.
 
 Rules: no real user data in evidence (synthetic token, title and event names); anything that fails becomes a fix task before release; sign-off is the owner's.
 
@@ -11,8 +15,8 @@ Rules: no real user data in evidence (synthetic token, title and event names); a
 | SDK version / commit | |
 | `zeep-notti` version and URL (staging) | |
 | Plan with `features.in_app_active` on (not yet verified server side) | |
-| Android device, OS/API | |
-| iPhone model, iOS | |
+| Android device, OS/API | Physical device, Android 12 (API 31), serial known to the owner |
+| iPhone model, iOS | Physical iPhone; model and iOS version not recorded |
 | iPad / tablet (optional) | |
 | Test proxy for `429`/`5xx`/`403`/`401` and image capture | |
 | Example app credentials | placeholders replaced locally, never committed |
@@ -26,7 +30,7 @@ Result: `pass`, `fail`, `n/a` or `not run`. Evidence: file name in a `validation
 | # | Scenario | Platforms | Android result | iOS result | Evidence / notes |
 | --- | --- | --- | --- | --- | --- |
 | 1 | Cold start: one `session_start` message after registration, one `eligible` | both | not run | not run | |
-| 2 | Each layout inside its bounds, small and large phone/tablet, portrait and landscape | both | not run | not run | |
+| 2 | Each layout inside its bounds, small and large phone/tablet, portrait and landscape | both | pass | pass | Reported by the owner on 2026-10-21 for every layout position; no screenshots attached. |
 | 3 | Dark and light mode; only `background_color` set stays readable | both | not run | not run | |
 | 4 | Full style set: colors, `text_align`, `margin` true/false, button tokens | both | not run | not run | |
 | 5 | Largest font size / Dynamic Type: nothing unreachable (iOS: the 2 skipped Dynamic Type tests must pass on a simulator) | both | not run | not run | |
@@ -143,4 +147,4 @@ Full wording and pass criteria for each scenario: `tasks.md`, task T30.
 
 | Owner | Date | Decision |
 | --- | --- | --- |
-| | | |
+| Julio | 2026-10-21 | Signed off T30: all tests run on Android 12 and on the iPhone passed. Per-scenario results and evidence were not recorded. |

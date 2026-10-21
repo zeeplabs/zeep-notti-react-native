@@ -818,6 +818,8 @@ T1 gates everything because `NativeNottiSpec` (Android codegen) gains an abstrac
 **Tests**: manual
 **Gate**: manual sign-off by the owner
 
+**Status**: SIGNED OFF by the owner 2026-10-21 (Android 12 physical device and an iPhone). The owner reported that all tests he ran passed; scenario results were not recorded one by one, so the "Done when" boxes below stay open on purpose. See `validation.md` for what is and is not evidenced.
+
 **Commit**: `docs(inapp): record device validation of in-app messages`
 
 ---
