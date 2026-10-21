@@ -315,6 +315,14 @@ final class NottiInAppViewsTests: XCTestCase {
     XCTAssertTrue(regularViews.body.adjustsFontForContentSizeCategory)
     try requireDynamicType()
     let largeViews = build(message("center"), traits: largest)
+    // A label that adjusts for content size re-resolves its font against its
+    // own trait collection, so host it in a window carrying the large category.
+    guard #available(iOS 17.0, *) else { throw XCTSkip("Trait overrides need iOS 17") }
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
+    window.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge
+    window.addSubview(largeViews.root)
+    largeViews.root.frame = window.bounds
+    largeViews.root.layoutIfNeeded()
     XCTAssertGreaterThan(largeViews.body.font.pointSize, regularViews.body.font.pointSize)
   }
 
