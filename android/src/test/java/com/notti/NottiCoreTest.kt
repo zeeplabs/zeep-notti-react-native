@@ -684,6 +684,44 @@ class NottiCoreTest {
   }
 
   @Test
+  fun `a registration that answers with a new device id re-sends every profile field`() {
+    var deviceId = "device-1"
+    val patches = mutableListOf<JSONObject>()
+    server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+      override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest): MockResponse {
+        val echo = JSONObject().put("id", deviceId).put("tags", JSONObject())
+        if (request.method == "PATCH") {
+          val sent = JSONObject(request.body.clone().readUtf8())
+          patches.add(sent)
+          sent.keys().forEach { key -> if (key != "token") echo.put(key, sent.get(key)) }
+        }
+        return MockResponse().setResponseCode(200).setBody(echo.toString())
+      }
+    }
+    val core = newCore(versionProvider = { "1.2.3" })
+
+    core.initialize("app-1", "key", validBaseUrl, "0.6.0")
+    awaitIdle()
+    awaitIdle()
+    assertEquals(listOf("1.2.3"), patches.mapNotNull { it.optString("app_version").ifEmpty { null } })
+    assertEquals(listOf("0.6.0"), patches.mapNotNull { it.optString("sdk_version").ifEmpty { null } })
+
+    // Same device id: acks hold, nothing is re-sent.
+    core.onTokenRefreshed("fcm-2")
+    awaitIdle()
+    awaitIdle()
+    assertEquals(1, patches.count { it.has("sdk_version") })
+
+    // The server answers with a new row: the fields must go out again.
+    deviceId = "device-2"
+    core.onTokenRefreshed("fcm-3")
+    awaitIdle()
+    awaitIdle()
+    assertEquals(2, patches.count { it.has("sdk_version") })
+    assertEquals(2, patches.count { it.has("app_version") })
+  }
+
+  @Test
   fun `registration success with a null version provider enqueues nothing and does not crash`() {
     server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}"""))
     val core = newCore(versionProvider = { null })

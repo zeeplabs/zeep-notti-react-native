@@ -1316,6 +1316,30 @@ final class NottiCoreTests: XCTestCase {
     XCTAssertEqual(store.getAppVersion(), "2.0.0")
   }
 
+  func test_aRegistrationThatAnswersWithANewDeviceIdResendsTheProfileFields() {
+    let sameRow = #"{"id":"device-1","tags":{}}"#
+    let newRow = #"{"id":"device-2","tags":{}}"#
+    StubURLProtocol.enqueue(.status(200, body: sameRow)) // registration 1
+    StubURLProtocol.enqueue(.echoDevice()) // app_version PATCH
+    StubURLProtocol.enqueue(.status(200, body: sameRow)) // registration 2, same row
+    StubURLProtocol.enqueue(.status(200, body: newRow)) // registration 3, new row
+    StubURLProtocol.enqueue(.echoDevice()) // app_version PATCH again
+    let core = newCore(versionProvider: { "1.2.3" })
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+    XCTAssertEqual(patchBodies(StubURLProtocol.recordedRequests()).count, 1)
+
+    core.onTokenRefreshed("apns-2")
+    drain(core)
+    XCTAssertEqual(patchBodies(StubURLProtocol.recordedRequests()).count, 1, "same row keeps its acks")
+
+    core.onTokenRefreshed("apns-3")
+    drain(core)
+    let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertEqual(bodies.count, 2, "a new row gets the fields again")
+    XCTAssertEqual(bodies[1]["app_version"] as? String, "1.2.3")
+  }
+
   // MARK: - Device profile fields (T7, DPF-01..09)
 
   func test_registrationWithProfileProvidersPatchesAllSixFields() {

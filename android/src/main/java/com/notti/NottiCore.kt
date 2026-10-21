@@ -691,6 +691,10 @@ class NottiCore(
             val previousDeviceId = deviceStore.getDeviceId()
             deviceStore.setDeviceId(result.response.id)
             if (result.response.id != previousDeviceId) {
+              // A different id after a stored one means a new server row: acks
+              // from the old row are meaningless there. The first registration
+              // (no stored id) keeps whatever was recorded before it.
+              if (previousDeviceId != null) deviceStore.clearProfileFieldAcks()
               onDeviceIdChanged(result.response.id)
             }
             deviceStore.setLastToken(token)

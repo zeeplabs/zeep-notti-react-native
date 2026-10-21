@@ -174,6 +174,26 @@ final class NottiDeviceStoreTests: XCTestCase {
     XCTAssertEqual(store.getLastSyncedDeviceOs(), "16.0")
   }
 
+  func test_clearProfileFieldAcksForgetsEveryProfileAckAndThePermissionStatus() {
+    store.setAppVersion("1.2.3")
+    store.setLastSyncedDeviceOs("15.0")
+    store.setLastSyncedDeviceModel("iPhone15,2")
+    store.setLastSyncedSdkVersion("0.6.0")
+    store.setLastSyncedTimezoneId("America/Sao_Paulo")
+    store.setLastSyncedLanguage("pt")
+    store.setLastSyncedPermissionStatus("granted")
+
+    store.clearProfileFieldAcks()
+
+    XCTAssertNil(store.getAppVersion())
+    XCTAssertNil(store.getLastSyncedDeviceOs())
+    XCTAssertNil(store.getLastSyncedDeviceModel())
+    XCTAssertNil(store.getLastSyncedSdkVersion())
+    XCTAssertNil(store.getLastSyncedTimezoneId())
+    XCTAssertNil(store.getLastSyncedLanguage())
+    XCTAssertNil(store.getLastSyncedPermissionStatus())
+  }
+
   func test_deviceProfileFieldsRoundTripThroughUserDefaults() {
     store.setLastSyncedDeviceOs("15.0")
     store.setLastSyncedDeviceModel("iPhone15,2")
