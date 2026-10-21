@@ -314,6 +314,29 @@ describe('Notti facade', () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
+  it('InAppMessages.addClickListener hands a push_permission click through with action null, untouched', () => {
+    const listeners = new Set<(payload: NottiInAppClick) => void>();
+    mockOnInAppMessageClicked.mockImplementation((...args: unknown[]) => {
+      const handler = args[0] as (payload: NottiInAppClick) => void;
+      listeners.add(handler);
+      return { remove: () => listeners.delete(handler) };
+    });
+    const handler = jest.fn();
+    const payload: NottiInAppClick = {
+      messageId: '00000000-0000-0000-0000-000000000000',
+      buttonId: 'fixture',
+      action: null,
+    };
+
+    Notti.InAppMessages.addClickListener(handler);
+    listeners.forEach((l) => l(payload));
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    const received = handler.mock.calls[0]?.[0] as NottiInAppClick;
+    expect(received).toBe(payload);
+    expect(received.action).toBeNull();
+  });
+
   it('NottiInAppAction is a closed union, so a switch over its type is exhaustive', () => {
     const describeAction = (action: NottiInAppAction | null | undefined) => {
       if (!action) return 'none';

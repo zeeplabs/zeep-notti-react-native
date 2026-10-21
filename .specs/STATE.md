@@ -34,6 +34,8 @@
 - **Date**: 2026-10-18
 - **Status**: proposed (spec, design and tasks written 2026-10-18; nothing implemented). No open questions remain in `spec.md` (all closed 2026-10-18). The four style defaults (`text_align` absent = left, `margin` absent = true with 16 pt inset, button tokens apply to all buttons, `style: null` = defaults) are approved (Julio, 2026-10-18).
 
+- **Amendment (2026-10-21)**: the built-in `push_permission` button action (spec `in-app-button-actions`, server repo `.specs/features/in-app-button-actions/`) is the one thing the SDK runs on a click. It takes no author data, never reaches the JS listener (`action: null`) and runs without a listener. Android: `NottiPushPermissionAction.kt`; iOS: `NottiPushPermissionAction.swift`. Server gate: `MinSDKVersionPushPermission` and the dashboard `PUSH_PERMISSION_MIN_SDK` stay empty until the SDK release that includes it.
+
 ## Pre-release review v0.3.0..HEAD (rule changes)
 
 Status: implementado nas duas plataformas (Android + iOS), com testes unitários, no working tree — **ainda não commitado**; gates não reexecutados nesta passada de docs.

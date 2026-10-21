@@ -16,7 +16,10 @@ export type { NotificationPayload };
 /**
  * The Codegen spec types `type` as `string` (it cannot express a literal
  * union). Native code only ever delivers `url` or `deeplink`: any other action
- * type reaches the listener as `action: null`.
+ * type reaches the listener as `action: null`. That includes the built-in
+ * `push_permission` button action, which the SDK runs itself (it asks for the
+ * OS notification permission, or opens the app's notification settings) and
+ * never hands to the integrator.
  */
 export type NottiInAppAction = Omit<InAppClickAction, 'type'> & {
   type: 'url' | 'deeplink';
@@ -139,13 +142,14 @@ function trackEvent(name: string): void {
 
 /**
  * In-App message API. The SDK never opens a link: the integrator handles
- * `action` in the click listener.
+ * `action` in the click listener. A click with `action: null` needs no handling;
+ * for a `push_permission` button the SDK has already acted.
  */
 const InAppMessages = {
   addClickListener(
     handler: (click: NottiInAppClick) => void
   ): EventSubscription {
-    // Safe: native filters `action.type` to `url` | `deeplink` (see above).
+    // Safe: native filters `action.type` to `url` | `deeplink`; `push_permission` arrives as null (see above).
     return NativeNotti.onInAppMessageClicked(
       handler as (click: InAppClickPayload) => void
     );
