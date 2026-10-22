@@ -75,7 +75,9 @@ the gates that apply, and report failures with the actual output.
   Always confirm the message with the user before committing; never `--no-verify`.
 - **Release**: `pnpm release` (release-it) bumps version, writes `CHANGELOG.md`, tags `vX.Y.Z`. The
   tag triggers `.github/workflows/release.yml`, which publishes to npm via trusted publishing. Don't
-  publish manually and don't hand-write `chore: release` commits.
+  publish manually and don't hand-write `chore: release` commits. Before releasing, rename
+  `## [Unreleased]` in `CHANGELOG.md` to `## Upgrade notes for X.Y.Z (released)` in its own commit:
+  release-it never renames it (see CONTRIBUTING.md).
 - **Public API changes** (`src/index.tsx`, `NativeNotti.ts`, plugin props, integrator setup steps):
   update `README.md` and add upgrade notes under `[Unreleased]` in `CHANGELOG.md`. Breaking changes
   need `!` + `BREAKING CHANGE:` footer.
