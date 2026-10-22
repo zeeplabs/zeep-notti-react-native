@@ -163,6 +163,7 @@ class NottiInAppCoordinator(
   }
 
   fun onRegistered() = onMain {
+    session.markRegistered()
     requestFlush()
     maybeFetch(allowTransientRetry = false)
   }
@@ -309,26 +310,49 @@ class NottiInAppCoordinator(
     val config = session.config ?: return
     val api = client ?: return
     if (!session.isOpen || session.keyRejected) return
+    // A cached id with a rotated token would 403 and end the session's fetch (A6).
+    if (!session.registeredInProcess) return
     if (!allowTransientRetry && session.fetch != InAppFetchState.Idle) return
     val pausedUntil = session.eligiblePausedUntilMs
-    if (pausedUntil != null && monotonicMs() < pausedUntil) return
+    if (pausedUntil != null) {
+      val remainingMs = pausedUntil - monotonicMs()
+      if (remainingMs > 0) {
+        // A 429 pause outlives the session that got it: fetch once it elapses (SDKIAM-05).
+        scheduleFetchAfterPause(remainingMs)
+        return
+      }
+    }
     val id = identity() ?: return
     val generation = session.tryStartFetch() ?: return
     val epoch = configEpoch
-    val preFlush = !flushRunning
-    if (preFlush) flushRunning = true
+    // The executor is serial, so this single pass never overlaps a running
+    // flush; it only leaves that flush's flag alone (SDKIAM-03, SDKIAM-50).
+    // An events 429 pause is shared by every trigger, this one included (SDKIAM-49).
+    val eventsPausedUntil = session.eventsPausedUntilMs
+    val preFlush = eventsPausedUntil == null || monotonicMs() >= eventsPausedUntil
+    val ownsFlushFlag = preFlush && !flushRunning
+    if (ownsFlushFlag) flushRunning = true
 
     executor.execute {
-      if (preFlush) {
-        val outcome = runFlushPass(api, config.appId, id, singleAttempt = true, headFailures = 0)
-        postToMain { onMainSafe { handleFlushOutcome(epoch, outcome) } }
-        if (outcome == InAppFlushOutcome.Unauthorized) {
-          // A rejected key ends every In-App request of the session (A16).
-          postToMain { onMainSafe { session.onFetchGaveUp(generation, transient = false) } }
-          return@execute
-        }
+      if (!preFlush) {
+        sendEligible(api, id, generation, transientFailures = 0, waits = 0)
+        return@execute
+      }
+      val outcome = runFlushPass(api, config.appId, id, singleAttempt = true, headFailures = 0)
+      postToMain { onMainSafe { handleFlushOutcome(epoch, outcome, ownsFlushFlag) } }
+      if (outcome == InAppFlushOutcome.Unauthorized) {
+        // A rejected key ends every In-App request of the session (A16).
+        postToMain { onMainSafe { session.onFetchGaveUp(generation, transient = false) } }
+        return@execute
       }
       sendEligible(api, id, generation, transientFailures = 0, waits = 0)
+    }
+  }
+
+  private fun scheduleFetchAfterPause(delayMs: Long) {
+    val generation = session.fetchGeneration
+    executor.schedule(delayMs) {
+      onMain { if (generation == session.fetchGeneration) maybeFetch(allowTransientRetry = false) }
     }
   }
 
@@ -441,8 +465,13 @@ class NottiInAppCoordinator(
     }
   }
 
-  private fun handleFlushOutcome(epoch: Long, outcome: InAppFlushOutcome) {
+  /** [ownsFlag] is false for a pre-fetch pass that ran while another flush held the flag. */
+  private fun handleFlushOutcome(epoch: Long, outcome: InAppFlushOutcome, ownsFlag: Boolean = true) {
     val current = epoch == configEpoch
+    if (!ownsFlag) {
+      if (current) reportFlushOutcome(outcome)
+      return
+    }
     if (outcome is InAppFlushOutcome.Backoff && current) {
       // Still running: retry the same head (same event_id) after the backoff.
       executor.schedule(InAppTiming.backoffMs(outcome.failures)) {
@@ -453,28 +482,30 @@ class NottiInAppCoordinator(
       return
     }
     flushRunning = false
-    if (current) {
-      when (outcome) {
-        is InAppFlushOutcome.Paused -> {
-          val seconds = (outcome.retryAfterSeconds ?: InAppTiming.DEFAULT_RETRY_AFTER_SECONDS)
-            .coerceIn(InAppTiming.EVENTS_MIN_RETRY_AFTER_SECONDS, InAppTiming.EVENTS_MAX_RETRY_AFTER_SECONDS)
-          val delayMs = seconds * 1000L
-          logger("Notti.inapp: events failed (HTTP 429)")
-          session.eventsPausedUntilMs = monotonicMs() + delayMs
-          executor.schedule(delayMs) { onMain { requestFlush() } }
-        }
-        InAppFlushOutcome.Unauthorized -> {
-          logger("Notti.inapp: events failed (HTTP 401)")
-          session.markKeyRejected()
-        }
-        InAppFlushOutcome.Forbidden -> warnInactive(InAppRoute.EVENTS)
-        InAppFlushOutcome.Failed -> logger("Notti.inapp: events failed (network or server error)")
-        else -> Unit
-      }
-    }
+    if (current) reportFlushOutcome(outcome)
     if (flushAgain) {
       flushAgain = false
       requestFlush()
+    }
+  }
+
+  private fun reportFlushOutcome(outcome: InAppFlushOutcome) {
+    when (outcome) {
+      is InAppFlushOutcome.Paused -> {
+        val seconds = (outcome.retryAfterSeconds ?: InAppTiming.DEFAULT_RETRY_AFTER_SECONDS)
+          .coerceIn(InAppTiming.EVENTS_MIN_RETRY_AFTER_SECONDS, InAppTiming.EVENTS_MAX_RETRY_AFTER_SECONDS)
+        val delayMs = seconds * 1000L
+        logger("Notti.inapp: events failed (HTTP 429)")
+        session.eventsPausedUntilMs = monotonicMs() + delayMs
+        executor.schedule(delayMs) { onMain { requestFlush() } }
+      }
+      InAppFlushOutcome.Unauthorized -> {
+        logger("Notti.inapp: events failed (HTTP 401)")
+        session.markKeyRejected()
+      }
+      InAppFlushOutcome.Forbidden -> warnInactive(InAppRoute.EVENTS)
+      InAppFlushOutcome.Failed -> logger("Notti.inapp: events failed (network or server error)")
+      else -> Unit
     }
   }
 

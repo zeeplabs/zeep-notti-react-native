@@ -158,6 +158,9 @@ final class NottiInAppCoordinator: InAppDisplayEvents {
   private var configEpoch: Int64 = 0
   private var flushRunning = false
   private var flushAgain = false
+  /// A core session report arrived while the app was in background: the next
+  /// foreground opens that session, even the first one of the process.
+  private var sessionReportDeferred = false
 
   init(
     store: NottiInAppEventStore,
@@ -186,10 +189,17 @@ final class NottiInAppCoordinator: InAppDisplayEvents {
     postToMain { self.handleInitialized(config) }
   }
 
+  /// Idempotent: the core reports the session from its work queue, which can
+  /// lag behind `onAppForegrounded` (already opened it) or `onAppBackgrounded`
+  /// (the app left before the late signal arrived).
   func onSessionStarted() {
     postToMain {
-      self.session.onSessionStarted()
-      self.maybeFetch(allowTransientRetry: false)
+      guard !self.session.isOpen else { return }
+      guard self.session.appForeground else {
+        self.sessionReportDeferred = true
+        return
+      }
+      self.startSession()
     }
   }
 
@@ -201,6 +211,7 @@ final class NottiInAppCoordinator: InAppDisplayEvents {
 
   func onRegistered() {
     postToMain {
+      self.session.markRegistered()
       self.requestFlush()
       self.maybeFetch(allowTransientRetry: false)
     }
@@ -213,9 +224,17 @@ final class NottiInAppCoordinator: InAppDisplayEvents {
     }
   }
 
+  /// Returning from background opens the next session here, on main, instead
+  /// of waiting for the core's work queue, which may be blocked by a retrying
+  /// request. The first session of the process still comes from the core
+  /// (A14 ordering with `initialize`).
   func onAppForegrounded() {
     postToMain {
       self.session.setAppForeground(true)
+      let reported = self.session.hasOpenedSession || self.sessionReportDeferred
+      if reported, self.session.config != nil, !self.session.isOpen {
+        self.startSession()
+      }
       self.scheduleClockCheck()
       self.requestFlush()
     }
@@ -279,6 +298,12 @@ final class NottiInAppCoordinator: InAppDisplayEvents {
 
   // MARK: - Main-thread handlers
 
+  private func startSession() {
+    sessionReportDeferred = false
+    session.onSessionStarted()
+    maybeFetch(allowTransientRetry: false)
+  }
+
   private func handleInitialized(_ config: InAppConfig) {
     switch session.onInitialized(config) {
     case .unchanged:
@@ -340,17 +365,30 @@ final class NottiInAppCoordinator: InAppDisplayEvents {
   private func maybeFetch(allowTransientRetry: Bool) {
     guard let config = session.config, let api = client else { return }
     guard session.isOpen, !session.keyRejected else { return }
+    // A cached id with a rotated token would 403 and end the session's fetch (A6).
+    guard session.registeredInProcess else { return }
     if !allowTransientRetry && session.fetch != .idle { return }
-    if let pausedUntil = session.eligiblePausedUntilMs, monotonicMs() < pausedUntil { return }
+    if let pausedUntil = session.eligiblePausedUntilMs {
+      let remainingMs = pausedUntil - monotonicMs()
+      if remainingMs > 0 {
+        // A 429 pause outlives the session that got it: fetch once it elapses (SDKIAM-05).
+        scheduleFetchAfterPause(remainingMs)
+        return
+      }
+    }
     guard let id = identity(), let generation = session.tryStartFetch() else { return }
     let epoch = configEpoch
-    let preFlush = !flushRunning
-    if preFlush { flushRunning = true }
+    // An events 429 pause is shared by every trigger, this one included (SDKIAM-49).
+    let preFlush = session.eventsPausedUntilMs.map { monotonicMs() >= $0 } ?? true
+    // The executor is serial, so this single pass never overlaps a running
+    // flush; it only leaves that flush's flag alone (SDKIAM-03, SDKIAM-50).
+    let ownsFlushFlag = preFlush && !flushRunning
+    if ownsFlushFlag { flushRunning = true }
 
     executor.execute {
       if preFlush {
         let outcome = self.runFlushPass(api, appId: config.appId, id: id, singleAttempt: true, headFailures: 0)
-        self.postToMain { self.handleFlushOutcome(epoch: epoch, outcome) }
+        self.postToMain { self.handleFlushOutcome(epoch: epoch, outcome, ownsFlag: ownsFlushFlag) }
         if outcome == .unauthorized {
           // A rejected key ends every In-App request of the session (A16).
           self.postToMain { self.session.onFetchGaveUp(generation: generation, transient: false) }
@@ -358,6 +396,15 @@ final class NottiInAppCoordinator: InAppDisplayEvents {
         }
       }
       self.sendEligible(api, id: id, generation: generation, transientFailures: 0, waits: 0)
+    }
+  }
+
+  private func scheduleFetchAfterPause(_ delayMs: Int64) {
+    let generation = session.fetchGeneration
+    executor.schedule(delayMs: delayMs) {
+      self.postToMain {
+        if generation == self.session.fetchGeneration { self.maybeFetch(allowTransientRetry: false) }
+      }
     }
   }
 
@@ -460,8 +507,13 @@ final class NottiInAppCoordinator: InAppDisplayEvents {
     }
   }
 
-  private func handleFlushOutcome(epoch: Int64, _ outcome: InAppFlushOutcome) {
+  /// `ownsFlag` is false for a pre-fetch pass that ran while another flush held the flag.
+  private func handleFlushOutcome(epoch: Int64, _ outcome: InAppFlushOutcome, ownsFlag: Bool = true) {
     let current = epoch == configEpoch
+    if !ownsFlag {
+      if current { reportFlushOutcome(outcome) }
+      return
+    }
     if case .backoff(let failures) = outcome, current {
       // Still running: retry the same head (same event_id) after the backoff.
       executor.schedule(delayMs: InAppTiming.backoffMs(failures)) {
@@ -476,30 +528,32 @@ final class NottiInAppCoordinator: InAppDisplayEvents {
       return
     }
     flushRunning = false
-    if current {
-      switch outcome {
-      case .paused(let retryAfter):
-        let seconds = min(
-          max(retryAfter ?? InAppTiming.defaultRetryAfterSeconds, InAppTiming.eventsMinRetryAfterSeconds),
-          InAppTiming.eventsMaxRetryAfterSeconds)
-        let delayMs = Int64(seconds) * 1000
-        logger("Notti.inapp: events failed (HTTP 429)")
-        session.eventsPausedUntilMs = monotonicMs() + delayMs
-        executor.schedule(delayMs: delayMs) { self.postToMain { self.requestFlush() } }
-      case .unauthorized:
-        logger("Notti.inapp: events failed (HTTP 401)")
-        session.markKeyRejected()
-      case .forbidden:
-        warnInactive(.events)
-      case .failed:
-        logger("Notti.inapp: events failed (network or server error)")
-      case .done, .backoff:
-        break
-      }
-    }
+    if current { reportFlushOutcome(outcome) }
     if flushAgain {
       flushAgain = false
       requestFlush()
+    }
+  }
+
+  private func reportFlushOutcome(_ outcome: InAppFlushOutcome) {
+    switch outcome {
+    case .paused(let retryAfter):
+      let seconds = min(
+        max(retryAfter ?? InAppTiming.defaultRetryAfterSeconds, InAppTiming.eventsMinRetryAfterSeconds),
+        InAppTiming.eventsMaxRetryAfterSeconds)
+      let delayMs = Int64(seconds) * 1000
+      logger("Notti.inapp: events failed (HTTP 429)")
+      session.eventsPausedUntilMs = monotonicMs() + delayMs
+      executor.schedule(delayMs: delayMs) { self.postToMain { self.requestFlush() } }
+    case .unauthorized:
+      logger("Notti.inapp: events failed (HTTP 401)")
+      session.markKeyRejected()
+    case .forbidden:
+      warnInactive(.events)
+    case .failed:
+      logger("Notti.inapp: events failed (network or server error)")
+    case .done, .backoff:
+      break
     }
   }
 
