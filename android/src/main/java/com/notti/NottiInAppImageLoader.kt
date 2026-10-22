@@ -28,13 +28,14 @@ fun interface InAppImageSource {
 class NottiInAppImageLoader(
   private val client: OkHttpClient = newClient(),
   private val executor: Executor = defaultExecutor,
-  private val maxBytes: Long = MAX_BYTES
+  private val maxBytes: Long = MAX_BYTES,
+  cacheBytes: Int = defaultCacheBytes()
 ) : InAppImageSource {
 
   companion object {
     const val TIMEOUT_MS = 10_000L
     const val MAX_BYTES = 5L * 1024 * 1024
-    const val CACHE_ENTRIES = 5
+    const val MAX_CACHE_BYTES = 32 * 1024 * 1024
 
     private val defaultExecutor: Executor by lazy {
       Executors.newSingleThreadExecutor { runnable ->
@@ -56,16 +57,32 @@ class NottiInAppImageLoader(
 
     internal fun isHttps(url: String): Boolean = url.toHttpUrlOrNull()?.isHttps == true
 
-    /** Largest power-of-two sample size that keeps the longest side >= [maxSide]. */
+    /**
+     * Smallest power-of-two sample size that brings the longest side down to
+     * [maxSide] or less (a decoder rounds a partial pixel up, hence the ceil).
+     * A 4800 px square on a 2400 px screen decodes at 2400 px, ~23 MB ARGB,
+     * instead of ~92 MB at full size.
+     */
     internal fun sampleSize(width: Int, height: Int, maxSide: Int): Int {
       var sample = 1
       val longest = maxOf(width, height)
-      while (maxSide > 0 && longest / (sample * 2) >= maxSide) sample *= 2
+      while (maxSide > 0 && (longest + sample - 1) / sample > maxSide) sample *= 2
       return sample
     }
+
+    /**
+     * 1/16 of the heap, capped at [MAX_CACHE_BYTES]: a few card-sized images
+     * on any device, while the host app keeps the rest. An image larger than
+     * the whole cache is shown but not kept.
+     */
+    internal fun defaultCacheBytes(maxHeap: Long = Runtime.getRuntime().maxMemory()): Int =
+      (maxHeap / 16).coerceIn(1L, MAX_CACHE_BYTES.toLong()).toInt()
   }
 
-  private val cache = LruCache<String, Bitmap>(CACHE_ENTRIES)
+  /** Bounded in bytes, not entries: one full-screen bitmap weighs as much as dozens of small ones. */
+  private val cache = object : LruCache<String, Bitmap>(cacheBytes) {
+    override fun sizeOf(key: String, value: Bitmap): Int = value.allocationByteCount
+  }
 
   override fun load(url: String, maxSidePx: Int, done: (Bitmap?) -> Unit) {
     cache.get(url)?.let {
@@ -78,12 +95,15 @@ class NottiInAppImageLoader(
       return
     }
     executor.execute {
+      // Throwable, not Exception: an OutOfMemoryError while decoding would
+      // otherwise kill this thread, and with it the host app, before [done].
       val bitmap = try {
         fetch(url, maxSidePx)
-      } catch (e: Exception) {
+      } catch (e: Throwable) {
         null
       }
-      if (bitmap != null) cache.put(url, bitmap)
+      // An oversize put would evict every other entry and then itself.
+      if (bitmap != null && bitmap.allocationByteCount <= cache.maxSize()) cache.put(url, bitmap)
       done(bitmap)
     }
   }
