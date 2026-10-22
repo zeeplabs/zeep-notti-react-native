@@ -23,6 +23,9 @@ public class NottiImpl: NSObject {
 
   @objc public static weak var activeInstance: NottiImpl?
   static var activeCore: NottiCore?
+  /// Instance whose `NottiPushPermissionAction` is the coordinator's
+  /// `pushPermissionPort`. Main-thread only, like the port itself.
+  private static weak var pushPermissionPortOwner: NottiImpl?
 
   /// Process-wide "a session is open" flag (final review A), shared by every
   /// `NottiCore` this process builds - a JS reload creates a new module/core
@@ -309,6 +312,13 @@ public class NottiImpl: NSObject {
   @objc public func invalidate() {
     if NottiImpl.activeInstance === self {
       NottiImpl.activeInstance = nil
+    }
+    // The coordinator reads the port on main; this runs on the module queue.
+    // Cleared only if this instance still owns it: a newer module's
+    // `wirePushPermissionPort` hop may already have run.
+    DispatchQueue.main.async {
+      guard NottiImpl.pushPermissionPortOwner === self else { return }
+      NottiImpl.pushPermissionPortOwner = nil
       NottiInApp.get()?.pushPermissionPort = nil
     }
     if NottiImpl.activeCore === core {
@@ -375,7 +385,13 @@ public class NottiImpl: NSObject {
       openNotificationSettings: NottiPushPermissionAction.openSystemNotificationSettings,
       logger: { message in NSLog("%@", message) }
     )
-    NottiInApp.get()?.pushPermissionPort = { action.run() }
+    // `initialize` runs on the module queue; the coordinator reads the port on
+    // main, so it is written there too (no data race).
+    DispatchQueue.main.async { [weak self] in
+      guard let self = self else { return }
+      NottiImpl.pushPermissionPortOwner = self
+      NottiInApp.get()?.pushPermissionPort = { action.run() }
+    }
   }
 
   @objc(requestPermission:)
