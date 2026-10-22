@@ -108,7 +108,10 @@ final class InAppOverlayView: UIView {
 /// The message card: scrollable content first, buttons below it, never taller
 /// than the frame allows, so the buttons stay reachable and the text scrolls
 /// (SDKIAM-24). On `full` the content takes all the height and the buttons
-/// are pinned to the bottom. The close control sits at the top-trailing corner.
+/// are pinned to the bottom. When the buttons alone are taller than the card
+/// (a bar in landscape at an accessibility text size), they move into the
+/// scroll view after the text, so every one can still be scrolled to and
+/// tapped. The close control sits at the top-trailing corner.
 final class InAppCardView: UIView {
 
   let bar: Bool
@@ -120,6 +123,9 @@ final class InAppCardView: UIView {
   let image: UIImageView?
   let buttonRow: InAppButtonRow?
   let close: UIButton
+
+  /// The buttons do not fit below the scroll view: they scroll with the text.
+  private(set) var buttonsScroll = false
 
   init(bar: Bool, fill: Bool, title: UILabel, body: UILabel, image: UIImageView?, buttonRow: InAppButtonRow?, close: UIButton) {
     self.bar = bar
@@ -156,15 +162,24 @@ final class InAppCardView: UIView {
     let inner = max(bounds.width - 2 * padding, 0)
     let fixed = fixedHeight(inner)
     let content = contentHeight(inner)
-    let available = max(bounds.height - 2 * padding - fixed, 0)
-    let scrollHeight = fill ? available : min(content, available)
+    let room = max(bounds.height - 2 * padding, 0)
+    placeButtons(inScroll: buttonRow != nil && fixed > room)
+    let scrollHeight: CGFloat
+    if buttonsScroll {
+      scrollHeight = room
+      scroll.contentSize = CGSize(width: inner, height: content + fixed)
+    } else {
+      let available = max(room - fixed, 0)
+      scrollHeight = fill ? available : min(content, available)
+      scroll.contentSize = CGSize(width: inner, height: fill ? max(content, scrollHeight) : content)
+    }
     scroll.frame = CGRect(x: padding, y: padding, width: inner, height: scrollHeight)
-    scroll.contentSize = CGSize(width: inner, height: fill ? max(content, scrollHeight) : content)
     layoutContent(inner)
     if let row = buttonRow {
+      // In the scroll view the row follows the content, in its coordinates.
       row.frame = CGRect(
-        x: padding,
-        y: padding + scrollHeight + InAppLayout.buttonTopGap,
+        x: buttonsScroll ? 0 : padding,
+        y: (buttonsScroll ? content : padding + scrollHeight) + InAppLayout.buttonTopGap,
         width: inner,
         height: fixed - InAppLayout.buttonTopGap
       )
@@ -172,6 +187,21 @@ final class InAppCardView: UIView {
     let size = InAppMetrics.closeTarget
     let inset = InAppLayout.closeInset
     close.frame = CGRect(x: rightToLeft ? inset : bounds.width - size - inset, y: inset, width: size, height: size)
+  }
+
+  /// Moves the button row between the card and the scroll view (rotation,
+  /// text size change); the close control stays on top.
+  private func placeButtons(inScroll: Bool) {
+    guard let row = buttonRow else { return }
+    let changed = inScroll != buttonsScroll
+    buttonsScroll = inScroll
+    if inScroll, row.superview !== scroll {
+      scroll.addSubview(row)
+    } else if !inScroll, row.superview !== self {
+      insertSubview(row, belowSubview: close)
+    }
+    // The content just got shorter or taller: start again from its top.
+    if changed { scroll.contentOffset = .zero }
   }
 
   private func layoutContent(_ inner: CGFloat) {
@@ -189,8 +219,9 @@ final class InAppCardView: UIView {
     } else {
       var y: CGFloat = 0
       var imageHeight = imageHeight(inner)
-      // `full`: the image also takes the room the text leaves free (contained, never cropped).
-      if fill, image != nil, imageHeight > 0 {
+      // `full`: the image also takes the room the text leaves free (contained,
+      // never cropped). Not when the buttons scroll: they follow the content.
+      if fill, !buttonsScroll, image != nil, imageHeight > 0 {
         let free = scroll.bounds.height - InAppLayout.imageGap - height
         imageHeight = max(imageHeight, free)
       }

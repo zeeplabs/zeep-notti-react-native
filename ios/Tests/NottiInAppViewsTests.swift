@@ -255,6 +255,76 @@ final class NottiInAppViewsTests: XCTestCase {
     XCTAssertTrue(largeViews.buttonRow!.stacked)
   }
 
+  /// Two stacked buttons at the largest text size, taller on their own than a
+  /// landscape bar (40% of 393 ≈ 157 pt).
+  private let overflowButtons = [("a", "Turn on notifications now"), ("b", "Remind me again later")]
+
+  func testButtonsTallerThanALandscapeBarScrollWithTheTextAndEachCanBeReachedAndTapped() throws {
+    try requireDynamicType()
+    for format in ["top", "bottom"] {
+      let views = build(message(format, buttons: overflowButtons), traits: largest)
+      layout(views, (852, 393))
+      let card = views.card
+      let scroll = card.scroll
+      let row = try XCTUnwrap(views.buttonRow)
+      // The scenario: the buttons alone exceed the card's height cap.
+      XCTAssertLessThanOrEqual(card.bounds.height, 393 * 0.4 + 0.5, format)
+      XCTAssertTrue(row.stacked, format)
+      XCTAssertGreaterThan(row.bounds.height + 12, card.bounds.height - 32, format)
+
+      XCTAssertTrue(card.buttonsScroll, format)
+      XCTAssertTrue(row.superview === scroll, format)
+      XCTAssertEqual(scroll.frame.maxY, card.bounds.height - 16, accuracy: 0.5, format)
+      XCTAssertLessThanOrEqual(row.frame.maxY, scroll.contentSize.height + 0.5, format)
+      XCTAssertGreaterThanOrEqual(row.frame.minY, card.textBlock.frame.maxY, format)
+      XCTAssertTrue(views.close.superview === card, format)
+
+      for (index, button) in views.buttons.enumerated() {
+        let label = "\(format) button \(index)"
+        let inScroll = button.convert(button.bounds, to: scroll)
+        // Scrolled as a user would: the button's top at the top, within the content.
+        let maxOffset = max(scroll.contentSize.height - scroll.bounds.height, 0)
+        scroll.contentOffset = CGPoint(x: 0, y: min(max(inScroll.minY, 0), maxOffset))
+        let visible = inScroll.intersection(scroll.bounds)
+        // Fully shown, or filling the whole viewport when taller than it.
+        XCTAssertEqual(visible.height, min(inScroll.height, scroll.bounds.height), accuracy: 0.5, label)
+        let inCard = scroll.convert(visible, to: card)
+        XCTAssertGreaterThanOrEqual(inCard.minY, -0.5, label)
+        XCTAssertLessThanOrEqual(inCard.maxY, card.bounds.height + 0.5, label)
+        let hit = card.hitTest(CGPoint(x: inCard.midX, y: inCard.midY), with: nil)
+        XCTAssertTrue(hit?.isDescendant(of: button) ?? false, label)
+      }
+    }
+  }
+
+  func testButtonsMoveBackBelowTheTextWhenTheyFitAgain() throws {
+    try requireDynamicType()
+    let views = build(message("top", buttons: overflowButtons), traits: largest)
+    layout(views, (852, 393))
+    XCTAssertTrue(views.card.buttonsScroll)
+    views.card.scroll.contentOffset = CGPoint(x: 0, y: 40)
+    // Resized to a larger window: a 40% bar now has room for the buttons.
+    layout(views, (1024, 1366))
+    let row = try XCTUnwrap(views.buttonRow)
+    XCTAssertFalse(views.card.buttonsScroll)
+    XCTAssertTrue(row.superview === views.card)
+    XCTAssertEqual(row.frame.maxY, views.card.bounds.height - 16, accuracy: 0.5)
+    XCTAssertEqual(views.card.scroll.contentOffset, .zero)
+    // The close control stays above the row.
+    let subviews = views.card.subviews
+    XCTAssertLessThan(subviews.firstIndex(of: row)!, subviews.firstIndex(of: views.close)!)
+  }
+
+  func testButtonsThatFitStayOutsideTheScrollView() {
+    for format in ["top", "bottom", "center", "full"] {
+      let views = build(message(format, body: longBody, buttons: [("a", "Accept"), ("b", "Later")]))
+      layout(views, (852, 393))
+      XCTAssertFalse(views.card.buttonsScroll, format)
+      XCTAssertTrue(views.buttonRow!.superview === views.card, format)
+      XCTAssertEqual(views.buttonRow!.frame.maxY, views.card.bounds.height - 16, accuracy: 0.5, format)
+    }
+  }
+
   func testButtonLabelsAreVerbatimAndButtonsAreAtLeast44Tall() {
     let views = build(message("center", buttons: [("a", "Mixed Case")]))
     layout(views, (393, 852))

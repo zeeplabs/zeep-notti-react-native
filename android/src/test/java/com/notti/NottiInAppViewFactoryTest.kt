@@ -417,6 +417,140 @@ class NottiInAppViewFactoryTest {
     assertEquals(views.buttons.maxOf { it.height } + row.paddingTop + row.paddingBottom, row.height)
   }
 
+  // Buttons taller than the room (SDKIAM-24)
+
+  /** Two-line labels at font scale 2 in landscape: stacked, and the row is taller than a bar's room. */
+  private val wrapLabel = "A very long button label that cannot share a line with another one"
+  /** Long enough to be taller than the room of `full` in landscape too. */
+  private val tallLabel = "$wrapLabel, and then a second sentence that makes it wrap again and again"
+
+  private fun overflowButtons(label: String) = button("a", "$label (a)") + "," + button("b", "$label (b)")
+
+  private fun column(views: InAppMessageViews): InAppColumnLayout = views.root.column
+
+  private fun scrollOf(views: InAppMessageViews): android.widget.ScrollView = views.card.scroll as android.widget.ScrollView
+
+  /** Rect of [view] in card pixels, scroll offset included. */
+  private fun inCard(views: InAppMessageViews, view: View): Rect {
+    val rect = Rect()
+    view.getDrawingRect(rect)
+    views.card.offsetDescendantRectToMyCoords(view, rect)
+    return rect
+  }
+
+  /** Every button, once scrolled to, is fully inside the scroll viewport and so inside the card. */
+  private fun assertButtonsReachable(views: InAppMessageViews, label: String) {
+    val scroll = scrollOf(views)
+    val viewport = inCard(views, scroll)
+    for (b in views.buttons) {
+      scroll.scrollToDescendant(b)
+      val rect = inCard(views, b)
+      assertTrue("$label button $rect outside viewport $viewport", viewport.contains(rect))
+      assertTrue("$label button $rect outside card", rect.top >= 0 && rect.bottom <= views.card.height)
+    }
+    scroll.scrollTo(0, 0)
+  }
+
+  @Test
+  fun `bars in landscape at font scale 2 keep their cap and scroll to buttons taller than the room`() {
+    RuntimeEnvironment.setQualifiers("w852dp-h393dp-land")
+    RuntimeEnvironment.setFontScale(2f)
+    val context = activity()
+    for (format in listOf("top", "bottom")) {
+      val views = NottiInAppViewFactory.build(context, message(format, body = longBody, buttons = overflowButtons(wrapLabel)))
+      layout(views, 852, 393)
+      val label = format
+      assertTrue(label, views.buttonRow!!.stacked)
+      assertTrue(label, column(views).buttonsInScroll)
+      assertTrue(label, scrollOf(views).isAncestorOf(views.buttonRow))
+      // 40% of 393 dp.
+      assertTrue("$label height ${dp(views.card, views.card.height)}", dp(views.card, views.card.height) <= 393 * 0.4f + 1f)
+      // The row follows the text inside the scroll, and the close control stays above it.
+      assertTrue(label, inCard(views, views.buttonRow).top >= inCard(views, views.body).bottom)
+      assertEquals(label, views.card.childCount - 1, views.card.indexOfChild(views.close))
+      assertButtonsReachable(views, label)
+    }
+  }
+
+  private fun android.view.ViewGroup.isAncestorOf(view: View): Boolean {
+    var parent = view.parent
+    while (parent != null) {
+      if (parent === this) return true
+      parent = parent.parent
+    }
+    return false
+  }
+
+  @Test
+  fun `full in landscape at font scale 2 scrolls to buttons taller than the room, the image stays above them`() {
+    RuntimeEnvironment.setQualifiers("w852dp-h393dp-land")
+    RuntimeEnvironment.setFontScale(2f)
+    val views = NottiInAppViewFactory.build(
+      activity(),
+      message("full", body = "Short", buttons = overflowButtons(tallLabel), image = true),
+      Bitmap.createBitmap(300, 800, Bitmap.Config.ARGB_8888)
+    )
+    layout(views, 852, 393)
+    assertTrue(column(views).buttonsInScroll)
+    assertTrue(scrollOf(views).isAncestorOf(views.buttonRow!!))
+    // Exact height of `full`: the column never grows past the card, so nothing is clipped.
+    assertEquals(393f - insets.top - insets.bottom - 32f, dp(views.card, views.card.height), 1f)
+    assertTrue(column(views).height <= views.card.height)
+    // The image keeps its capped size (no fill) and sits above the text and the buttons.
+    val image = views.image!!
+    assertTrue(dp(image, image.height) <= 180.5f)
+    assertTrue(inCard(views, image).bottom <= inCard(views, views.title).top)
+    assertTrue(inCard(views, views.buttonRow).top >= inCard(views, views.body).bottom)
+    assertButtonsReachable(views, "full")
+  }
+
+  @Test
+  fun `buttons that fit stay below the scroll on every layout`() {
+    RuntimeEnvironment.setQualifiers("w393dp-h852dp")
+    val context = activity()
+    for (format in listOf("top", "bottom", "center", "full")) {
+      val views = NottiInAppViewFactory.build(
+        context,
+        message(format, body = longBody, buttons = button("a", "Accept") + "," + button("b", "Later"))
+      )
+      layout(views, 393, 852)
+      assertFalse(format, column(views).buttonsInScroll)
+      assertEquals(format, column(views), views.buttonRow!!.parent)
+      assertFalse(format, scrollOf(views).isAncestorOf(views.buttonRow))
+      // Pinned below the scroll, at the bottom of the column.
+      assertEquals(format, column(views).height - column(views).paddingBottom, views.buttonRow.bottom)
+      assertEquals(format, scrollOf(views).bottom, views.buttonRow.top)
+    }
+  }
+
+  @Test
+  fun `buttons move back below the scroll when they fit again and return when they do not`() {
+    RuntimeEnvironment.setQualifiers("w852dp-h393dp-land")
+    RuntimeEnvironment.setFontScale(2f)
+    val views = NottiInAppViewFactory.build(activity(), message("bottom", body = longBody, buttons = overflowButtons(wrapLabel)))
+    val scroll = scrollOf(views)
+
+    layout(views, 852, 393)
+    assertTrue(column(views).buttonsInScroll)
+    scroll.scrollTo(0, scroll.getChildAt(0).height)
+    assertTrue(scroll.scrollY > 0)
+
+    // Larger window (tablet landscape): the row fits under the text again.
+    layout(views, 1366, 1024)
+    assertFalse(column(views).buttonsInScroll)
+    assertEquals(column(views), views.buttonRow!!.parent)
+    assertEquals(column(views).height - column(views).paddingBottom, views.buttonRow.bottom)
+    assertTrue(dp(views.card, views.card.height) <= 1024 * 0.4f + 1f)
+    assertEquals(0, scroll.scrollY)
+    for (b in views.buttons) assertTrue(inCard(views, b).bottom <= views.card.height)
+
+    layout(views, 852, 393)
+    assertTrue(column(views).buttonsInScroll)
+    assertTrue(scroll.isAncestorOf(views.buttonRow))
+    assertTrue(dp(views.card, views.card.height) <= 393 * 0.4f + 1f)
+    assertButtonsReachable(views, "back")
+  }
+
   @Test
   fun `no bitmap means no image slot`() {
     val views = NottiInAppViewFactory.build(activity(), message("center", image = true))
@@ -464,9 +598,10 @@ class NottiInAppViewFactoryTest {
     buttons: String = "",
     body: String = "Body",
     bitmap: Bitmap? = null,
-    imageAction: Boolean = false
+    imageAction: Boolean = false,
+    qualifiers: String = "+w393dp-h852dp"
   ): Pair<InAppMessageViews, Recorder> {
-    RuntimeEnvironment.setQualifiers("+w393dp-h852dp")
+    RuntimeEnvironment.setQualifiers(qualifiers)
     val msg = message(format, body = body, buttons = buttons, image = bitmap != null, imageAction = imageAction)
     val activity = activity()
     val views = NottiInAppViewFactory.build(activity, msg, bitmap)
@@ -572,6 +707,41 @@ class NottiInAppViewFactoryTest {
     assertTrue(scroll.canScrollVertically(-1))
     drag(views, px(views.card, 80f))
     assertTrue(recorder.closes.isEmpty())
+  }
+
+  @Test
+  fun `buttons that scroll with the text are reached by dragging and still tapped as buttons`() {
+    RuntimeEnvironment.setFontScale(2f)
+    val (views, recorder) = bound(
+      "top",
+      buttons = overflowButtons(wrapLabel),
+      body = longBody,
+      qualifiers = "w852dp-h393dp-land"
+    )
+    assertTrue(views.root.column.buttonsInScroll)
+    val scroll = views.card.scroll as android.widget.ScrollView
+    assertEquals(0, scroll.scrollY)
+    // A top bar dismisses upward, but the content (text, then buttons) scrolls first.
+    drag(views, -px(views.card, 80f))
+    assertTrue(recorder.closes.isEmpty())
+    assertTrue(recorder.actions.isEmpty())
+    assertTrue(scroll.scrollY > 0)
+    assertEquals(0f, views.card.translationY)
+
+    // Fresh display (the drag above leaves a fling that the next touch would stop):
+    // the last button, scrolled into view, is a button, not a body tap on the first one.
+    val (tapped, taps) = bound(
+      "top",
+      buttons = overflowButtons(wrapLabel),
+      body = longBody,
+      qualifiers = "w852dp-h393dp-land"
+    )
+    assertTrue(tapped.root.column.buttonsInScroll)
+    (tapped.card.scroll as android.widget.ScrollView).scrollToDescendant(tapped.buttons[1])
+    shadowOf(Looper.getMainLooper()).idle()
+    tap(tapped.root, tapped.buttons[1])
+    assertEquals(listOf("b"), taps.actions.map { it.first })
+    assertTrue(taps.closes.isEmpty())
   }
 
   @Test
