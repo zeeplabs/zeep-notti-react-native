@@ -6,6 +6,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.ResponseBody
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
@@ -116,6 +117,13 @@ class NottiApiClient(
   companion object {
     private const val MAX_ATTEMPTS = 5
     private const val BASE_DELAY_MS = 2000L
+
+    /**
+     * Largest In-App response body read into memory. The contract states no
+     * limit; an `eligible` page of messages is a few KiB, so 1 MiB leaves
+     * ample room while keeping a misbehaving server off the heap.
+     */
+    internal const val MAX_IN_APP_BODY_BYTES = 1024L * 1024
   }
 
   private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
@@ -271,7 +279,8 @@ class NottiApiClient(
       .put("occurred_at", formatIsoUtc(event.occurredAtMs))
     if (event.type == InAppEventType.CLICK && event.buttonId != null) body.put("button_id", event.buttonId)
     if (event.type == InAppEventType.DISMISS && event.reason != null) body.put("reason", event.reason)
-    val response = executeOnce(url, body)
+    // The status alone decides: a large 2xx body must not turn a recorded event into a resend.
+    val response = executeOnce(url, body, readBody = false)
     return when {
       response.status in 200..299 -> InAppEventResult.Recorded
       response.status == 429 -> InAppEventResult.RateLimited(parseRetryAfter(response.retryAfter))
@@ -299,8 +308,13 @@ class NottiApiClient(
     null
   }
 
-  /** One request, no retry, no sleep. An IO error or an unbuildable request yields status -1. */
-  private fun executeOnce(url: HttpUrl, json: JSONObject): OnceResponse {
+  /**
+   * One request, no retry, no sleep. An IO error, an unbuildable request or a
+   * body past [MAX_IN_APP_BODY_BYTES] yields status -1 (transient); the
+   * oversize body is never read past the limit. With [readBody] false the
+   * body is not read at all.
+   */
+  private fun executeOnce(url: HttpUrl, json: JSONObject, readBody: Boolean = true): OnceResponse {
     val request = try {
       Request.Builder()
         .url(url)
@@ -312,11 +326,19 @@ class NottiApiClient(
     }
     return try {
       httpClient.newCall(request).execute().use { response ->
-        OnceResponse(response.code, response.body?.string().orEmpty(), response.header("Retry-After"))
+        val body = if (readBody) response.body?.let { readBounded(it) ?: return OnceResponse(-1, "", null) } else null
+        OnceResponse(response.code, body.orEmpty(), response.header("Retry-After"))
       }
     } catch (e: IOException) {
       OnceResponse(-1, "", null)
     }
+  }
+
+  /** Null when [body] holds more than [MAX_IN_APP_BODY_BYTES]: `request` stops buffering at limit + 1. */
+  private fun readBounded(body: ResponseBody): String? {
+    val source = body.source()
+    if (source.request(MAX_IN_APP_BODY_BYTES + 1)) return null
+    return source.buffer.readString(body.contentType()?.charset() ?: Charsets.UTF_8)
   }
 
   /**

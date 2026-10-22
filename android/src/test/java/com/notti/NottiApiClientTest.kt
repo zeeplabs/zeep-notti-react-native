@@ -703,6 +703,42 @@ class NottiApiClientTest {
     assertTrue(sleeps.isEmpty())
   }
 
+  /** A valid `eligible` body padded to exactly [size] bytes. */
+  private fun eligibleBodyOfSize(size: Long): String {
+    val prefix = """{"messages":[],"pad":""""
+    val suffix = """"}"""
+    return prefix + "x".repeat((size - prefix.length - suffix.length).toInt()) + suffix
+  }
+
+  @Test
+  fun `eligible with a body exactly at the size limit is parsed`() {
+    val body = eligibleBodyOfSize(NottiApiClient.MAX_IN_APP_BODY_BYTES)
+    assertEquals(NottiApiClient.MAX_IN_APP_BODY_BYTES, body.length.toLong())
+    server.enqueue(MockResponse().setResponseCode(200).setBody(body))
+
+    assertEquals(
+      InAppEligibleResult.Messages(emptyList()),
+      client.fetchEligibleInAppMessages(inAppDevice, "t")
+    )
+  }
+
+  @Test
+  fun `eligible with a body past the size limit is transient, declared or chunked`() {
+    val body = eligibleBodyOfSize(NottiApiClient.MAX_IN_APP_BODY_BYTES + 1)
+    server.enqueue(MockResponse().setResponseCode(200).setBody(body))
+    assertEquals(InAppEligibleResult.Transient, client.fetchEligibleInAppMessages(inAppDevice, "t"))
+    server.enqueue(MockResponse().setResponseCode(200).setChunkedBody(body, 64 * 1024))
+    assertEquals(InAppEligibleResult.Transient, client.fetchEligibleInAppMessages(inAppDevice, "t"))
+    assertEquals(2, server.requestCount)
+    assertTrue(sleeps.isEmpty())
+  }
+
+  @Test
+  fun `an event answered 2xx with a body past the size limit is still recorded`() {
+    server.enqueue(MockResponse().setResponseCode(201).setBody("x".repeat((NottiApiClient.MAX_IN_APP_BODY_BYTES + 1).toInt())))
+    assertEquals(InAppEventResult.Recorded, client.reportInAppEvent(inAppEvent(), inAppDevice, "tok"))
+  }
+
   @Test
   fun `429 carries Retry-After as integer seconds or null`() {
     fun eligibleRetryAfter(header: String?): Int? {
