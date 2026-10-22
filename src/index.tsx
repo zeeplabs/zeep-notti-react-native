@@ -25,7 +25,9 @@ export type NottiInAppAction = Omit<InAppClickAction, 'type'> & {
   type: 'url' | 'deeplink';
 };
 export type NottiInAppClick = Omit<InAppClickPayload, 'action'> & {
-  action?: NottiInAppAction | null;
+  // Always present: native sends `null`, never omits it (SDKIAM-67). The
+  // Codegen payload keeps `?:` only because that is how it spells nullable.
+  action: NottiInAppAction | null;
 };
 
 export type NottiEventName =
