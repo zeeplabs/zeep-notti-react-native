@@ -50,6 +50,7 @@ class NottiForegroundObserverTest {
   fun tearDown() {
     NottiForegroundObserver.onStop(owner) // stop any ticker left running
     NottiForegroundObserver.coreProvider = { NottiModule.activeCore }
+    NottiForegroundObserver.inAppProvider = { NottiInApp.get() }
     NottiModule.resetProcessWideStateForTest()
   }
 
@@ -67,6 +68,33 @@ class NottiForegroundObserverTest {
       clock = { now },
       sessionGate = NottiModule.processSessionGate
     )
+  }
+
+  private fun newCoordinator(): NottiInAppCoordinator {
+    val prefs = RuntimeEnvironment.getApplication()
+      .getSharedPreferences("notti_observer_test", Context.MODE_PRIVATE)
+    return NottiInAppCoordinator(
+      store = NottiInAppEventStore(prefs),
+      clientFactory = { throw AssertionError("no network in this test") },
+      identity = { null },
+      executor = object : InAppExecutor {
+        override fun execute(task: () -> Unit) = Unit
+        override fun schedule(delayMs: Long, task: () -> Unit) = Unit
+      },
+      postToMain = { it() }
+    )
+  }
+
+  @Test
+  fun `onStop with no live core still ends the In-App session`() {
+    val coordinator = newCoordinator()
+    NottiForegroundObserver.inAppProvider = { coordinator }
+    NottiForegroundObserver.coreProvider = { null }
+    coordinator.onSessionStarted()
+    assertTrue(coordinator.session.isOpen)
+
+    NottiForegroundObserver.onStop(owner)
+    assertFalse(coordinator.session.isOpen)
   }
 
   @Test

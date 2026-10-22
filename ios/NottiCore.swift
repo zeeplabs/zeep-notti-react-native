@@ -83,6 +83,11 @@ public class NottiCore {
   /// instance; the default is a fresh gate so every test core is isolated.
   private let sessionGate: SessionGate
 
+  /// In-App messages hear about a session opening and a successful
+  /// registration. Nil by default; production passes `NottiInApp.coreHooks`.
+  /// Network and foreground/background reach In-App from their own observers.
+  private let inApp: NottiInAppHooks?
+
   /// Thread-safe process-level session flag. Opened by the first core that
   /// starts a session in this process, closed on `didEnterBackground`.
   public final class SessionGate {
@@ -259,7 +264,8 @@ public class NottiCore {
     platform: String = "ios",
     logger: @escaping (String) -> Void = { _ in },
     onDeviceIdChanged: @escaping (String) -> Void = { _ in },
-    sessionGate: SessionGate = SessionGate()
+    sessionGate: SessionGate = SessionGate(),
+    inApp: NottiInAppHooks? = nil
   ) {
     self.deviceStore = deviceStore
     self.eventStore = eventStore
@@ -281,6 +287,7 @@ public class NottiCore {
     self.logger = logger
     self.onDeviceIdChanged = onDeviceIdChanged
     self.sessionGate = sessionGate
+    self.inApp = inApp
     workQueue.setSpecific(key: Self.workQueueKey, value: 1)
     observeAppForeground()
     observeAppBackground()
@@ -462,7 +469,7 @@ public class NottiCore {
           self.deviceStore.setPendingUnsubscribeAtMs(stamp)
           self.deviceStore.setLastUnsubscribedAtMs(stamp)
           stampMs = stamp
-          extraFields["last_unsubscribed_at"] = Self.formatIsoUtc(stamp)
+          extraFields["last_unsubscribed_at"] = formatIsoUtc(stamp)
         }
         let acked = self.patchSubscribed(
           client, deviceId: deviceId, token: token, enabled,
@@ -692,6 +699,10 @@ public class NottiCore {
       let previousDeviceId = deviceStore.getDeviceId()
       deviceStore.setDeviceId(response.id)
       if response.id != previousDeviceId {
+        // A different id after a stored one means a new server row: acks from
+        // the old row are meaningless there. The first registration (no stored
+        // id) keeps whatever was recorded before it.
+        if previousDeviceId != nil { deviceStore.clearProfileFieldAcks() }
         onDeviceIdChanged(response.id)
       }
       deviceStore.setLastToken(token)
@@ -710,6 +721,7 @@ public class NottiCore {
       syncPermissionStatusIfNeeded()
       resyncHeldEmailAndPhone(client)
       flushEventQueue()
+      inApp?.onRegistered()
     case .failure(let message):
       registrationState = .failed
       logger("Notti.initialize: device registration failed: \(message)")
@@ -836,7 +848,7 @@ public class NottiCore {
             self.deviceStore.setPendingPermissionUnsubscribeAtMs(stamp)
             self.deviceStore.setLastUnsubscribedAtMs(stamp)
             stampMs = stamp
-            fields["last_unsubscribed_at"] = Self.formatIsoUtc(stamp)
+            fields["last_unsubscribed_at"] = formatIsoUtc(stamp)
           }
           let result = client.patchDevice(deviceId: deviceId, token: token, fields: fields)
           switch result {
@@ -993,6 +1005,7 @@ public class NottiCore {
         self.appIsInBackground = false
         if self.sessionGate.tryOpen() {
           self.handleSessionStartOnQueue(nowMs: activatedAtMs)
+          self.inApp?.onSessionStarted()
         } else {
           // Another core of this same process (pre-reload) already opened
           // the foreground session: adopt it instead of closing it as an
@@ -1281,9 +1294,9 @@ public class NottiCore {
 
     var snapshot: [String: Any] = [:]
     if let firstSessionAt = deviceStore.getFirstSessionAtMs() {
-      snapshot["first_session_at"] = Self.formatIsoUtc(firstSessionAt)
+      snapshot["first_session_at"] = formatIsoUtc(firstSessionAt)
     }
-    snapshot["last_session_at"] = Self.formatIsoUtc(nowMs)
+    snapshot["last_session_at"] = formatIsoUtc(nowMs)
     snapshot["session_count"] = sessionCount
     snapshot["session_time_seconds"] = sessionTimeMs / 1000
 
@@ -1296,15 +1309,6 @@ public class NottiCore {
 
   private func nowMs() -> Int64 {
     Int64(Date().timeIntervalSince1970 * 1000)
-  }
-
-  /// ISO-8601 UTC with millisecond precision — the same
-  /// `yyyy-MM-dd'T'HH:mm:ss.SSS'Z'` shape Android's `formatIsoUtc` produces,
-  /// so the backend's Go RFC3339 parse accepts both platforms.
-  private static func formatIsoUtc(_ epochMs: Int64) -> String {
-    let formatter = ISO8601DateFormatter()
-    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    return formatter.string(from: Date(timeIntervalSince1970: Double(epochMs) / 1000))
   }
 
   /// Runs `work` right away when the device already has an id + token, or

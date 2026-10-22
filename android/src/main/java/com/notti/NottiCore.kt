@@ -129,7 +129,9 @@ class NottiCore(
    * an RN reload (or the cold-start sync racing the lifecycle observer) never
    * opens a second session for the same foreground; tests get a fresh gate.
    */
-  private val sessionGate: SessionGate = SessionGate()
+  private val sessionGate: SessionGate = SessionGate(),
+  /** In-App notifications (session opened, device registered). No-op by default. */
+  private val inApp: NottiInAppHooks = NottiInAppHooks.None
 ) {
 
   /** See [sessionGate]. Thread-safe; flips on the lifecycle callback's thread. */
@@ -141,6 +143,10 @@ class NottiCore(
   }
 
   companion object {
+    /** `baseUrl` as every request uses it: parsed, no trailing slash; `null` when malformed. */
+    internal fun normalizeBaseUrl(baseUrl: String): String? =
+      baseUrl.toHttpUrlOrNull()?.toString()?.trimEnd('/')
+
     /**
      * Bound on the pending-mutation queue below: registration can legitimately
      * never complete (no push token, permanent 4xx), and an unbounded queue in
@@ -367,7 +373,7 @@ class NottiCore(
     // IllegalArgumentException on whatever thread the call landed on. A
     // trailing slash is also stripped here, since every path is built as
     // "$baseUrl/v1/..." and would otherwise produce a "//v1/..." request path.
-    val normalizedBaseUrl = baseUrl.toHttpUrlOrNull()?.toString()?.trimEnd('/')
+    val normalizedBaseUrl = normalizeBaseUrl(baseUrl)
     if (normalizedBaseUrl == null) {
       logger(
         "Notti.initialize: baseUrl \"$baseUrl\" is not a valid http(s) URL " +
@@ -437,7 +443,11 @@ class NottiCore(
       val now = clock()
       // Executor shut down (module invalidated): no session was started, so
       // the gate must not stay open and swallow the next real foreground.
-      if (!dispatch("sessionStart") { handleSessionStart(now) }) sessionGate.close()
+      if (dispatch("sessionStart") { handleSessionStart(now) }) {
+        inApp.onSessionStarted()
+      } else {
+        sessionGate.close()
+      }
     }
 
     // Flush the event queue unconditionally, before the registration-state
@@ -666,18 +676,6 @@ class NottiCore(
   }
 
   /**
-   * Formats an epoch-ms timestamp as UTC ISO-8601 (`yyyy-MM-dd'T'HH:mm:ss.SSS'Z'`)
-   * for the session PATCH payload. No `java.time` (minSdk 24, no desugaring) -
-   * `SimpleDateFormat` with an explicit UTC `TimeZone`; the literal `'Z'` in the
-   * pattern matches the RFC3339 shape the backend's Go parser accepts. Matches
-   * the iOS helper's output.
-   */
-  internal fun formatIsoUtc(epochMs: Long): String =
-    SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
-      .apply { timeZone = TimeZone.getTimeZone("UTC") }
-      .format(Date(epochMs))
-
-  /**
    * Holds [mutationLock] across the whole call/response/store-write sequence,
    * for the same reason `mutateTags` does: the POST response carries the
    * device's server-side `tags`, so registration is itself a read-modify-write
@@ -693,6 +691,10 @@ class NottiCore(
             val previousDeviceId = deviceStore.getDeviceId()
             deviceStore.setDeviceId(result.response.id)
             if (result.response.id != previousDeviceId) {
+              // A different id after a stored one means a new server row: acks
+              // from the old row are meaningless there. The first registration
+              // (no stored id) keeps whatever was recorded before it.
+              if (previousDeviceId != null) deviceStore.clearProfileFieldAcks()
               onDeviceIdChanged(result.response.id)
             }
             deviceStore.setLastToken(token)
@@ -708,6 +710,7 @@ class NottiCore(
             syncPermissionStatusIfNeeded()
             resyncHeldEmailAndPhone()
             flushEventQueue()
+            inApp.onRegistered()
           }
           is ApiResult.Failure -> {
             registrationState = RegistrationState.FAILED
@@ -1316,3 +1319,16 @@ class NottiCore(
   }
 
 }
+
+/**
+ * Formats an epoch-ms timestamp as UTC ISO-8601 (`yyyy-MM-dd'T'HH:mm:ss.SSS'Z'`)
+ * for the session PATCH payload and the In-App event `occurred_at`. No
+ * `java.time` (minSdk 24, no desugaring) - `SimpleDateFormat` with an
+ * explicit UTC `TimeZone`; the literal `'Z'` in the pattern matches the
+ * RFC3339 shape the backend's Go parser accepts. Matches the iOS helper's
+ * output.
+ */
+internal fun formatIsoUtc(epochMs: Long): String =
+  SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
+    .apply { timeZone = TimeZone.getTimeZone("UTC") }
+    .format(Date(epochMs))

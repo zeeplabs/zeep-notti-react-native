@@ -26,6 +26,50 @@ public enum EventResult {
   case failure(String, terminal: Bool)
 }
 
+/// Outcome of `NottiApiClient.fetchEligibleInAppMessages`: one request, no
+/// retry. The coordinator owns the waits and the give-up rules.
+/// `rateLimited.retryAfterSeconds` is the integer `Retry-After` or `nil`
+/// (absent, an HTTP-date or anything else); it is not clamped here.
+/// `unauthorized` (401) and `forbidden` (403) stay distinct so the right log
+/// line is used. `terminal` is a 4xx that cannot succeed (422, 404...).
+/// `transient` is a network error, 408, 5xx or an unparseable 2xx.
+enum InAppEligibleResult: Equatable {
+  case messages([InAppMessage])
+  case rateLimited(retryAfterSeconds: Int?)
+  case unauthorized
+  case forbidden
+  case terminal(status: Int)
+  case transient
+}
+
+/// Outcome of `NottiApiClient.reportInAppEvent`: `recorded` is a 2xx (201
+/// new, 200 duplicate), `drop` a 4xx that cannot succeed (the queue removes
+/// the event). The other cases mirror `InAppEligibleResult`.
+enum InAppEventResult: Equatable {
+  case recorded
+  case drop
+  case rateLimited(retryAfterSeconds: Int?)
+  case unauthorized
+  case forbidden
+  case transient
+}
+
+/// Raw result of one HTTP exchange; `status` is -1 on a network error.
+private struct OnceResponse {
+  let status: Int
+  let body: Data
+  let retryAfter: String?
+}
+
+/// ISO-8601 UTC with millisecond precision — the same
+/// `yyyy-MM-dd'T'HH:mm:ss.SSS'Z'` shape Android's `formatIsoUtc` produces,
+/// so the backend's Go RFC3339 parse accepts both platforms.
+func formatIsoUtc(_ epochMs: Int64) -> String {
+  let formatter = ISO8601DateFormatter()
+  formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+  return formatter.string(from: Date(timeIntervalSince1970: Double(epochMs) / 1000))
+}
+
 /// The endpoint-agnostic result of `executeWithRetry`: `success(T)` carries
 /// whatever the caller's `parseSuccess` produced, `failure(String, terminal)`
 /// a terminal 4xx status (terminal = true) or the last error after the retry
@@ -217,6 +261,98 @@ public class NottiApiClient {
     // Any 2xx is a usable success here, so `parseSuccess` always returns
     // non-nil and a 2xx is never retried.
     return eventResult(executeWithRetry(request) { _ in true })
+  }
+
+  /// `POST /v1/apps/{appId}/in-app-messages/eligible`. A single attempt (no
+  /// retry, no sleep): `Retry-After` and the backoff are the coordinator's
+  /// concern. Nothing here logs a token, id, URL or body.
+  func fetchEligibleInAppMessages(deviceId: String, token: String) -> InAppEligibleResult {
+    guard let url = inAppUrl(["eligible"]) else { return .terminal(status: 0) }
+    let response = performOnce(url: url, body: ["device_id": deviceId, "token": token])
+    switch response.status {
+    case 200..<300:
+      guard let messages = parseEligibleResponse(response.body) else { return .transient }
+      return .messages(messages)
+    case 429: return .rateLimited(retryAfterSeconds: Self.parseRetryAfter(response.retryAfter))
+    case 401: return .unauthorized
+    case 403: return .forbidden
+    case 408: return .transient
+    case 400..<500: return .terminal(status: response.status)
+    default: return .transient
+    }
+  }
+
+  /// `POST /v1/apps/{appId}/in-app-messages/{messageId}/events`. A single
+  /// attempt. `button_id` is sent only for `click` and `reason` only for
+  /// `dismiss` (the server rejects them elsewhere with 422).
+  func reportInAppEvent(_ event: InAppPendingEvent, deviceId: String, token: String) -> InAppEventResult {
+    guard let url = inAppUrl([event.messageId, "events"]) else { return .drop }
+    var body: [String: Any] = [
+      "device_id": deviceId,
+      "token": token,
+      "event_id": event.eventId,
+      "type": event.type,
+      "occurred_at": formatIsoUtc(event.occurredAtMs),
+    ]
+    if event.type == InAppEventType.click, let buttonId = event.buttonId { body["button_id"] = buttonId }
+    if event.type == InAppEventType.dismiss, let reason = event.reason { body["reason"] = reason }
+    let response = performOnce(url: url, body: body)
+    switch response.status {
+    case 200..<300: return .recorded
+    case 429: return .rateLimited(retryAfterSeconds: Self.parseRetryAfter(response.retryAfter))
+    case 401: return .unauthorized
+    case 403: return .forbidden
+    case 408: return .transient
+    case 400..<500: return .drop
+    default: return .transient
+    }
+  }
+
+  /// Every segment is percent-encoded on its own (like the device and event
+  /// URLs) so an `appId` or message id carrying `/`, `?` or `#` stays ONE path
+  /// segment.
+  private func inAppUrl(_ tail: [String]) -> URL? {
+    var segments: [String] = []
+    for raw in [appId, "in-app-messages"] + tail {
+      guard let encoded = Self.percentEncodedPathComponent(raw) else { return nil }
+      segments.append(encoded)
+    }
+    return URL(string: "\(baseUrl)/v1/apps/" + segments.joined(separator: "/"))
+  }
+
+  /// One request, no retry, no sleep. A network error, a timeout or an
+  /// unencodable body yields status -1.
+  private func performOnce(url: URL, body: [String: Any]) -> OnceResponse {
+    guard let data = try? JSONSerialization.data(withJSONObject: body) else {
+      return OnceResponse(status: -1, body: Data(), retryAfter: nil)
+    }
+    var request = URLRequest(url: url, timeoutInterval: Self.requestTimeoutSeconds)
+    request.httpMethod = "POST"
+    request.setValue("Bearer \(clientKey)", forHTTPHeaderField: "Authorization")
+    request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
+    request.httpBody = data
+    let (responseData, response, error) = syncDataTask(request)
+    guard error == nil, let http = response as? HTTPURLResponse else {
+      return OnceResponse(status: -1, body: Data(), retryAfter: nil)
+    }
+    return OnceResponse(
+      status: http.statusCode,
+      body: responseData ?? Data(),
+      retryAfter: http.value(forHTTPHeaderField: "Retry-After")
+    )
+  }
+
+  /// Integer seconds only (the contract says seconds): an HTTP-date, a sign,
+  /// a fraction or blank yields `nil`. A value too large is capped at
+  /// `Int32.max`, the same cap as Android's `Int.MAX_VALUE`.
+  static func parseRetryAfter(_ raw: String?) -> Int? {
+    guard let value = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+      !value.isEmpty,
+      value.utf8.allSatisfy({ $0 >= UInt8(ascii: "0") && $0 <= UInt8(ascii: "9") })
+    else {
+      return nil
+    }
+    return min(Int(value) ?? Int(Int32.max), Int(Int32.max))
   }
 
   /// Maps the shared retry result back to the public `ApiResult` contract.

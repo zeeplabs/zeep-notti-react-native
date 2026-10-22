@@ -19,6 +19,9 @@
         _impl.emitDeviceIdChangedHandler = ^(NSString *deviceId) {
             [weakSelf emitOnDeviceIdChanged:deviceId];
         };
+        _impl.emitInAppClickHandler = ^(NSDictionary *payload) {
+            [weakSelf emitOnInAppMessageClicked:payload];
+        };
         // Published only now, with every emit handler already wired: an
         // external caller (NottiBridge/NottiPushDelegate, from an arbitrary
         // thread) reaching NottiImpl.activeCore any earlier could have
@@ -98,6 +101,11 @@
 - (NSString *)getDeviceId
 {
     return [_impl getDeviceId];
+}
+
+- (void)trackEvent:(NSString *)name
+{
+    [_impl trackEvent:name];
 }
 
 - (void)getInitialNotificationClick:(RCTPromiseResolveBlock)resolve

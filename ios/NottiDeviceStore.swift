@@ -337,6 +337,22 @@ public class NottiDeviceStore {
     defaults.set(true, forKey: Self.keyProfileFieldAckMigrated)
   }
 
+  /// Forgets every server-acked profile value and the synced permission status.
+  /// Called when registration answers with a device id different from the stored
+  /// one: the server row is new (deleted and re-created, or a sandbox reset), so
+  /// nothing this device "already synced" exists there. Without it the diff would
+  /// never re-send the fields and the row would stay empty. Held email/phone are
+  /// not touched; they re-sync on every registration.
+  public func clearProfileFieldAcks() {
+    for key in [
+      Self.keyAppVersion, Self.keyLastSyncedDeviceOs, Self.keyLastSyncedDeviceModel,
+      Self.keyLastSyncedSdkVersion, Self.keyLastSyncedTimezoneId, Self.keyLastSyncedLanguage,
+      Self.keyLastSyncedPermissionStatus,
+    ] {
+      defaults.removeObject(forKey: key)
+    }
+  }
+
   public func setLastSyncedDeviceOs(_ value: String?) {
     defaults.set(value, forKey: Self.keyLastSyncedDeviceOs)
   }

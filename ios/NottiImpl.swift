@@ -51,12 +51,41 @@ public class NottiImpl: NSObject {
         object: nil,
         queue: nil
       ) { _ in
-        NottiImpl.processSessionGate.close()
+        NottiImpl.handleProcessBackground(gate: NottiImpl.processSessionGate, inApp: NottiInApp.get())
       }
     #else
       return NSObject()
     #endif
   }()
+
+  /// Closes the process gate, then ends the In-App session and pauses its
+  /// display clock, with or without a live core (T25: the same gap the gate
+  /// close covers). Test seam, like Android's `handleProcessBackground`.
+  static func handleProcessBackground(gate: NottiCore.SessionGate, inApp: NottiInAppCoordinator?) {
+    gate.close()
+    inApp?.onSessionEnded()
+    inApp?.onAppBackgrounded()
+  }
+
+  /// Resumes the In-App display clock when the app returns from background
+  /// (design: `willEnterForeground` resumes it; `willResignActive` alone never
+  /// paused it). Registered once per process, like `processBackgroundObserver`.
+  private static let processForegroundObserver: NSObjectProtocol = {
+    #if canImport(UIKit)
+      return NotificationCenter.default.addObserver(
+        forName: UIApplication.willEnterForegroundNotification,
+        object: nil,
+        queue: nil
+      ) { _ in
+        NottiInApp.get()?.onAppForegrounded()
+      }
+    #else
+      return NSObject()
+    #endif
+  }()
+
+  /// The suite every Notti store shares (device, push events, In-App events).
+  static let sharedDefaults = UserDefaults(suiteName: "notti_prefs") ?? .standard
 
   /// Shared offline event store (T8). `NottiPushDelegate`'s `willPresent`/
   /// `didReceive` fire on cold start before `NottiImpl` exists, so the store
@@ -65,7 +94,7 @@ public class NottiImpl: NSObject {
   /// same "buffer before module exists" pattern as `NottiEventBuffer.shared`,
   /// reached through the `activeCore`-style static. Lazily created on the
   /// first touch from either side.
-  static let eventStore = NottiEventStore(defaults: UserDefaults(suiteName: "notti_prefs") ?? .standard)
+  static let eventStore = NottiEventStore(defaults: NottiImpl.sharedDefaults)
 
   /// Set by `Notti.mm`'s `-init` to forward parsed notification payloads
   /// into the Codegen event emitters it alone has access to. Assigning them
@@ -79,6 +108,22 @@ public class NottiImpl: NSObject {
   }
   @objc public var emitClickedHandler: (([String: Any]) -> Void)? {
     didSet { NottiEventBuffer.shared.setHandler(.clicked, emitClickedHandler) }
+  }
+
+  /// Set by `Notti.mm`'s `-init` to forward an In-App click into the Codegen
+  /// emitter `onInAppMessageClicked`. Deliberately not routed through
+  /// `NottiEventBuffer`: a click with no live module is reported and the
+  /// display closed, but never buffered or replayed to a later listener (A9,
+  /// SDKIAM-68). Cleared by `invalidate()`.
+  @objc public var emitInAppClickHandler: (([String: Any]) -> Void)?
+
+  /// Delivers an In-App click to the live module's JS listener. False when no
+  /// module can receive it (between RN reloads), so the coordinator logs its
+  /// fixed warning. The SDK opens nothing: the integrator handles the link.
+  static func emitInAppClick(_ click: InAppClick) -> Bool {
+    guard let handler = activeInstance?.emitInAppClickHandler else { return false }
+    handler(click.payload)
+    return true
   }
 
   /// Plain reference-type cell so `init` (below) can hand `NottiCore` a
@@ -107,7 +152,11 @@ public class NottiImpl: NSObject {
 
   @objc public override init() {
     _ = NottiImpl.processBackgroundObserver
-    let defaults = UserDefaults(suiteName: "notti_prefs") ?? .standard
+    _ = NottiImpl.processForegroundObserver
+    // Before the core exists: the core's first session start (which can be
+    // replayed at creation) must find the coordinator installed.
+    NottiInAppSetup.install()
+    let defaults = NottiImpl.sharedDefaults
     let box = HandlerBox()
     let locationReader = NottiLocationReader()
     core = NottiCore(
@@ -219,7 +268,8 @@ public class NottiImpl: NSObject {
       // mirrors Android's `Log.w("Notti", ...)` production wiring.
       logger: { message in NSLog("Notti: %@", message) },
       onDeviceIdChanged: { deviceId in box.value?(deviceId) },
-      sessionGate: NottiImpl.processSessionGate
+      sessionGate: NottiImpl.processSessionGate,
+      inApp: NottiInApp.coreHooks
     )
     // The closure passed to `NottiCore` above cannot capture `self` (or any
     // of its properties) this early - a class's stored properties, and
@@ -259,6 +309,7 @@ public class NottiImpl: NSObject {
   @objc public func invalidate() {
     if NottiImpl.activeInstance === self {
       NottiImpl.activeInstance = nil
+      NottiInApp.get()?.pushPermissionPort = nil
     }
     if NottiImpl.activeCore === core {
       NottiImpl.activeCore = nil
@@ -266,6 +317,7 @@ public class NottiImpl: NSObject {
     emitReceivedHandler = nil
     emitClickedHandler = nil
     emitDeviceIdChangedHandler = nil
+    emitInAppClickHandler = nil
     // Final review A: stop this core observing lifecycle, so it cannot end
     // the session the reloaded core adopts (double `session_count`).
     core.invalidate()
@@ -303,7 +355,27 @@ public class NottiImpl: NSObject {
 
   @objc(initialize:clientKey:baseUrl:sdkVersion:)
   public func initialize(_ appId: String, clientKey: String, baseUrl: String, sdkVersion: String) {
+    // Config goes to In-App first, through the same main queue as `trackEvent`,
+    // so a `trackEvent` right after it finds the config and the cold-start
+    // window open (A14, DD-13). Invalid input is left to the core, which logs it.
+    if !appId.isEmpty, !clientKey.isEmpty, let normalized = NottiApiClient.validatedBaseUrl(baseUrl) {
+      NottiInApp.get()?.onInitialized(appId: appId, clientKey: clientKey, baseUrl: normalized)
+    }
+    wirePushPermissionPort()
     core.initialize(appId: appId, clientKey: clientKey, baseUrl: baseUrl, sdkVersion: sdkVersion)
+  }
+
+  /// Gives the In-App coordinator the OS side of the `push_permission` button.
+  /// The prompt goes through `NottiCore.requestPermission` (no JS callback), so
+  /// the subscribed PATCH and the status refresh stay in one place.
+  private func wirePushPermissionPort() {
+    let action = NottiPushPermissionAction(
+      readState: NottiPushPermissionAction.systemState,
+      requestPermission: { [weak self] in self?.core.requestPermission { _ in } },
+      openNotificationSettings: NottiPushPermissionAction.openSystemNotificationSettings,
+      logger: { message in NSLog("%@", message) }
+    )
+    NottiInApp.get()?.pushPermissionPort = { action.run() }
   }
 
   @objc(requestPermission:)
@@ -376,6 +448,13 @@ public class NottiImpl: NSObject {
 
   @objc public func getDeviceId() -> String? {
     core.getDeviceId()
+  }
+
+  /// Hands the name to the In-App coordinator, which hops to main. Never sent
+  /// to the server and never logged (SDKIAM-10).
+  @objc(trackEvent:)
+  public func trackEvent(_ name: String) {
+    NottiInApp.get()?.trackEvent(name)
   }
 
   /// Backs the Spec's `getInitialNotificationClick()`: returns the click that

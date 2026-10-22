@@ -1,5 +1,10 @@
 import type { EventSubscription } from 'react-native';
-import NativeNotti, { type NotificationPayload } from './NativeNotti';
+import NativeNotti, {
+  type NotificationPayload,
+  type InAppClickAction,
+  type InAppClickPayload,
+} from './NativeNotti';
+import { SDK_VERSION } from './version';
 
 // SPEC_DEVIATION: T4 replaced NativeNotti.ts's scaffolded `multiply` method
 // with the real v1 Spec, orphaning the `multiply`/`multiply.native` files
@@ -8,6 +13,20 @@ import NativeNotti, { type NotificationPayload } from './NativeNotti';
 // in TS).
 
 export type { NotificationPayload };
+/**
+ * The Codegen spec types `type` as `string` (it cannot express a literal
+ * union). Native code only ever delivers `url` or `deeplink`: any other action
+ * type reaches the listener as `action: null`. That includes the built-in
+ * `push_permission` button action, which the SDK runs itself (it asks for the
+ * OS notification permission, or opens the app's notification settings) and
+ * never hands to the integrator.
+ */
+export type NottiInAppAction = Omit<InAppClickAction, 'type'> & {
+  type: 'url' | 'deeplink';
+};
+export type NottiInAppClick = Omit<InAppClickPayload, 'action'> & {
+  action?: NottiInAppAction | null;
+};
 
 export type NottiEventName =
   'notificationReceived' | 'notificationClicked' | 'deviceIdChanged';
@@ -52,26 +71,6 @@ const User = {
 
 /** Default `baseUrl` for Notti's SaaS mode. Self-hosted deployments must pass their own. */
 const SAAS_BASE_URL = 'https://app.zeepnotti.app';
-
-/**
- * The SDK package version, resolved once at module load from the package
- * manifest (`./package.json` is exported, so the version is readable at
- * runtime). Forwarded to native `initialize` as `sdk_version` - the package
- * version is the single source of truth, and a native hardcoded copy would
- * drift across releases. Passed as a constant, not business logic (AD-001).
- * On any resolution failure (bundler edge case), an empty string is passed
- * and native treats it as `null` -> the field is omitted.
- */
-const SDK_VERSION: string = (() => {
-  try {
-    const pkg = require('react-native-notti/package.json') as {
-      version?: string;
-    };
-    return typeof pkg.version === 'string' ? pkg.version : '';
-  } catch {
-    return '';
-  }
-})();
 
 export interface InitializeOptions {
   /**
@@ -133,6 +132,31 @@ function getDeviceId(): string | null {
 }
 
 /**
+ * Reports a host-app event that can trigger an In-App message. The exact
+ * string is matched locally against the message triggers and is never sent
+ * to the Notti server.
+ */
+function trackEvent(name: string): void {
+  NativeNotti.trackEvent(name);
+}
+
+/**
+ * In-App message API. The SDK never opens a link: the integrator handles
+ * `action` in the click listener. A click with `action: null` needs no handling;
+ * for a `push_permission` button the SDK has already acted.
+ */
+const InAppMessages = {
+  addClickListener(
+    handler: (click: NottiInAppClick) => void
+  ): EventSubscription {
+    // Safe: native filters `action.type` to `url` | `deeplink`; `push_permission` arrives as null (see above).
+    return NativeNotti.onInAppMessageClicked(
+      handler as (click: InAppClickPayload) => void
+    );
+  },
+};
+
+/**
  * Resolves with the notification that cold-launched the app (the user
  * tapped it while the app wasn't running), or `null` if the app was not
  * launched this way. Call this once on startup, before or alongside
@@ -182,8 +206,10 @@ export const Notti = {
   setSubscription,
   setLocationSharingEnabled,
   getDeviceId,
+  trackEvent,
   getInitialNotificationClick,
   addEventListener,
+  InAppMessages,
   User,
 };
 
