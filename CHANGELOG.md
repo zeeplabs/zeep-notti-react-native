@@ -1,5 +1,57 @@
 # Changelog
 
+# [0.7.0](https://github.com/zeeplabs/zeep-notti-react-native/compare/v0.6.0...v0.7.0) (2026-10-23)
+
+
+### Bug Fixes
+
+* **android:** bound In-App image decode memory and survive decode errors ([cd14ee4](https://github.com/zeeplabs/zeep-notti-react-native/commit/cd14ee44528e0991bdbf3f20dd7989be83fcf801))
+* **android:** bound In-App response bodies and ignore the events body ([c0d471f](https://github.com/zeeplabs/zeep-notti-react-native/commit/c0d471f94bde30f4cb40ab644283cc3a0d0553c4))
+* **android:** open app details for push permission below API 26 ([ab26f7d](https://github.com/zeeplabs/zeep-notti-react-native/commit/ab26f7d35b8b626ae8de97b37792ef9fbfc153a7))
+* **core:** re-send profile fields when registration answers with a new device id ([9c5af1d](https://github.com/zeeplabs/zeep-notti-react-native/commit/9c5af1d689fe6fb1556a55eb9c40217aff8cbb6b))
+* **inapp:** fetch eligible only after this process registered and across a 429 pause ([14a4901](https://github.com/zeeplabs/zeep-notti-react-native/commit/14a4901c4748aadd7fc96b708d48d9a202a1ebb7))
+* **inapp:** keep the buttons reachable when they exceed the card height ([1265833](https://github.com/zeeplabs/zeep-notti-react-native/commit/1265833764761009592d969408bd025c8adfddbe))
+* **inapp:** refine the card image, close control and button layout ([ae47972](https://github.com/zeeplabs/zeep-notti-react-native/commit/ae4797239d57072dc2fd5a50ae5bbee7b5f31382))
+* **inapp:** type the click action as present and nullable ([11541d1](https://github.com/zeeplabs/zeep-notti-react-native/commit/11541d143c59802cb04af7e212668b381ed8ec56))
+* **ios:** honor EXIF orientation for small In-App images ([6660fb4](https://github.com/zeeplabs/zeep-notti-react-native/commit/6660fb4a9143c5e29e574c6429468cf47497efdf))
+* **ios:** set the push permission port on the main thread ([396d320](https://github.com/zeeplabs/zeep-notti-react-native/commit/396d320226467a8f4448251d8f84e79bdec38e94))
+* **js:** send sdk_version from a literal instead of a package self-require ([bd9bea9](https://github.com/zeeplabs/zeep-notti-react-native/commit/bd9bea9d1f08d257031d899268978d463f478b58))
+
+
+### Features
+
+* add Notti.trackEvent and the in-app click listener to the JS facade and Codegen spec ([fdf3085](https://github.com/zeeplabs/zeep-notti-react-native/commit/fdf308504ceba1094464b20c0c44c0b6bccd0170))
+* **android:** add in-app coordinator for session fetch and event flush ([8a8a4cb](https://github.com/zeeplabs/zeep-notti-react-native/commit/8a8a4cb094a8cd4a85922799ac3b2d500f9f32d0))
+* **android:** add in-app eligible and events requests ([9583b9a](https://github.com/zeeplabs/zeep-notti-react-native/commit/9583b9a479cc10e13b7b2c61c72a32e6d44b0fff))
+* **android:** add in-app gestures, taps and accessibility ([c054d40](https://github.com/zeeplabs/zeep-notti-react-native/commit/c054d40992831a91cffd1d76247c31227a5e2655))
+* **android:** add in-app selection state machine and display clock ([c218cfd](https://github.com/zeeplabs/zeep-notti-react-native/commit/c218cfde6da12e7ca3886f0ffe9f3a7c58176001))
+* **android:** add in-app style resolver and layout metrics ([17e6710](https://github.com/zeeplabs/zeep-notti-react-native/commit/17e67109697908cd53f6428e21bfc01f74a84865))
+* **android:** add persisted in-app event queue ([3930739](https://github.com/zeeplabs/zeep-notti-react-native/commit/3930739422dc3dece58b65ece83755fed15788ac))
+* **android:** deliver in-app clicks to the JS listener without opening links ([77f840d](https://github.com/zeeplabs/zeep-notti-react-native/commit/77f840df7bdc4e5cb1a733a8744a739cb0652d2c))
+* **android:** load in-app images with bounded credential-free requests ([ecbeac4](https://github.com/zeeplabs/zeep-notti-react-native/commit/ecbeac43f35b95e8a22d14d2b866ee0a3715007f))
+* **android:** parse in-app eligible messages tolerantly ([e607484](https://github.com/zeeplabs/zeep-notti-react-native/commit/e607484cc55eb0be021eacb791271369eaad32af))
+* **android:** present in-app messages over the resumed activity ([f816dfb](https://github.com/zeeplabs/zeep-notti-react-native/commit/f816dfbd69718f476a6d33ed7dcf3abd4cf1d9ca))
+* **android:** render in-app message layouts with native views ([e71ec23](https://github.com/zeeplabs/zeep-notti-react-native/commit/e71ec23a94d78a87e39f0c2849c563dbe5e61501))
+* **android:** run the push_permission action with an injected provider ([a5bc329](https://github.com/zeeplabs/zeep-notti-react-native/commit/a5bc3293c8015994feb30f1aa58d403f2d526086))
+* **android:** wire in-app messages into session, registration and trackEvent ([3d910eb](https://github.com/zeeplabs/zeep-notti-react-native/commit/3d910eb9f99a7c5ccf800152b899cd94ffba0fff))
+* **example:** add a trackEvent button and click listener for in-app message testing ([dda1994](https://github.com/zeeplabs/zeep-notti-react-native/commit/dda199459755d333e30674cdd49cdfd88410ac73))
+* **inapp:** parse push_permission buttons and run an injectable port after the click ([8640894](https://github.com/zeeplabs/zeep-notti-react-native/commit/86408940037a9f4b7b97f981a5cc36cc34a8dd1d))
+* **ios:** add in-app coordinator for session fetch and event flush ([add1c56](https://github.com/zeeplabs/zeep-notti-react-native/commit/add1c569aadf17eff472a1b48a4090f77ad9ad74))
+* **ios:** add in-app eligible and events requests ([b09942c](https://github.com/zeeplabs/zeep-notti-react-native/commit/b09942ce5688bc88c024a3b2babb81724f3583ca))
+* **ios:** add in-app gestures, taps and accessibility ([8ac35de](https://github.com/zeeplabs/zeep-notti-react-native/commit/8ac35dee30bfefaa4168f6969fca4f12ab32d1f9))
+* **ios:** add in-app selection state machine and display clock ([03c8f1a](https://github.com/zeeplabs/zeep-notti-react-native/commit/03c8f1a62a3147b36bc178a94d2293c4ffa3018f))
+* **ios:** add in-app style resolver and layout metrics ([f1011e4](https://github.com/zeeplabs/zeep-notti-react-native/commit/f1011e492a0f0d552b9c1e9c7b8199df02344e18))
+* **ios:** add persisted in-app event queue ([c583758](https://github.com/zeeplabs/zeep-notti-react-native/commit/c583758e1a35c714459528a575a395cdf0ca9c32))
+* **ios:** deliver in-app clicks to the JS listener without opening links ([eb5743a](https://github.com/zeeplabs/zeep-notti-react-native/commit/eb5743a2e12866a49b55923ce0d23b32fec2755f))
+* **ios:** load in-app images with bounded credential-free requests ([99fb8c7](https://github.com/zeeplabs/zeep-notti-react-native/commit/99fb8c721a7b2327fe818d6098563b06beb49cae))
+* **ios:** parse in-app eligible messages tolerantly ([1baf62e](https://github.com/zeeplabs/zeep-notti-react-native/commit/1baf62e54299d60c5ed594462f3a7fda4bfe11e4))
+* **ios:** present in-app messages in a dedicated window ([49799bc](https://github.com/zeeplabs/zeep-notti-react-native/commit/49799bc961f68cda4e499e4789721703b17049a8))
+* **ios:** render in-app message layouts with UIKit ([3933b75](https://github.com/zeeplabs/zeep-notti-react-native/commit/3933b75cf8bf8af12ff056607cf85ee48f24f8e6))
+* **ios:** run the push_permission action with injected ports ([2b2a1c3](https://github.com/zeeplabs/zeep-notti-react-native/commit/2b2a1c3f3770340b6efae508ae657a470cb8cab3))
+* **ios:** wire in-app messages into session, registration and trackEvent ([74200be](https://github.com/zeeplabs/zeep-notti-react-native/commit/74200bec80ae5e351407b67ca1cbd492cffa3264))
+* narrow the in-app click action type to url or deeplink ([34d4368](https://github.com/zeeplabs/zeep-notti-react-native/commit/34d43686afb76f205828da1c37e9e954cf76e78d))
+* **plugin:** set the Android notification icon and color ([#39](https://github.com/zeeplabs/zeep-notti-react-native/issues/39)) ([760dcd1](https://github.com/zeeplabs/zeep-notti-react-native/commit/760dcd1b4f54fcdc1d8a6869019ac9a885b9fe60))
+
 # [0.6.0](https://github.com/zeeplabs/zeep-notti-react-native/compare/v0.5.0...v0.6.0) (2026-10-04)
 
 
