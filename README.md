@@ -18,6 +18,7 @@ Notti is self-hosted or SaaS per deployment. By default `initialize` targets Not
 - [Usage](#usage)
 - [API reference](#api-reference)
 - [Bare React Native setup](#bare-react-native-setup)
+- [Android notification icon, color and image](#android-notification-icon-color-and-image)
 - [Rich push notifications (iOS)](#rich-push-notifications-ios)
 - [In-App messages](#in-app-messages)
 - [Data collected by the SDK](#data-collected-by-the-sdk)
@@ -42,7 +43,7 @@ Notti is self-hosted or SaaS per deployment. By default `initialize` targets Not
 - 🧩 **Turbo Module (New Architecture)** — thin TypeScript facade over native Kotlin/Swift; works even if the JS thread isn't running yet.
 - ⚙️ **Expo config plugin included** — works in bare React Native and Expo (dev client/prebuild) with no extra native-config package.
 - 🔁 **Safe by default** — mutations (tags, subscription, login) are serialized client-side; retried with exponential backoff on transient failure.
-- 🖼️ **Rich push (iOS)** — image/video/audio attachments via a Notification Service Extension helper, same setup model as OneSignal's.
+- 🖼️ **Rich push** — iOS: image/video/audio attachments via a Notification Service Extension helper, same setup model as OneSignal's. Android: images shown by FCM itself, no setup (see [Android notification icon, color and image](#android-notification-icon-color-and-image)).
 - 📈 **Engagement event reporting** — `received`/`opened`/`clicked` events reported automatically to Notti (open rate and CTR), with an on-disk retry queue. See [Data collected by the SDK](#data-collected-by-the-sdk).
 - 💬 **In-App messages** — messages authored in the Notti dashboard are fetched once per session and rendered natively (`top`, `center`, `bottom`, `full`); `Notti.trackEvent(name)` triggers event messages and `Notti.InAppMessages.addClickListener` hands link actions to your app. See [In-App messages](#in-app-messages).
 - 🧭 **Segment telemetry** — app version and session aggregates synced automatically; device country only after an explicit opt-in (`setLocationSharingEnabled`, default off).
@@ -206,6 +207,8 @@ The library's own manifest already registers its `FirebaseMessagingService` and 
    }
    ```
 
+5. Set the notification small icon and color. Without them Android shows your launcher icon as a white silhouette. See [Android notification icon, color and image](#android-notification-icon-color-and-image).
+
 ### iOS
 
 1. Enable the **Push Notifications** capability for your app target in Xcode (adds the `aps-environment` entitlement).
@@ -240,6 +243,36 @@ The library's own manifest already registers its `FirebaseMessagingService` and 
    ```
 
 Without this forwarding, the device token never reaches the SDK and `notificationReceived`/`notificationClicked` never fire — `initialize()` still registers the device (with a `subscribed: false` state) but push delivery won't complete until the callbacks are wired.
+
+## Android notification icon, color and image
+
+On Android the SDK does not build the tray notification: FCM displays it from the push payload while the app is in the background or killed. Three things follow from that.
+
+**Small icon.** Android draws the small icon from its alpha channel only: every non-transparent pixel becomes white. Without your own icon FCM uses the launcher icon, which is opaque, so it shows as a white blob (on Android 12+ inside a colored circle). Provide a dedicated icon:
+
+1. Create a PNG with white shapes on a transparent background (96x96 px for `drawable-xxxhdpi`, or one per density), e.g. `android/app/src/main/res/drawable-xxxhdpi/ic_stat_notification.png`. Android Studio's *Image Asset > Notification Icons* generates all densities.
+2. Point FCM at it, and optionally at an accent color, in your app's `android/app/src/main/AndroidManifest.xml`, inside `<application>`:
+
+   ```xml
+   <meta-data
+       android:name="com.google.firebase.messaging.default_notification_icon"
+       android:resource="@drawable/ic_stat_notification" />
+   <meta-data
+       android:name="com.google.firebase.messaging.default_notification_color"
+       android:resource="@color/notification_color" />
+   ```
+
+   with `<color name="notification_color">#1A73E8</color>` in `res/values/colors.xml`.
+
+On Expo, the `androidNotificationIcon` and `androidNotificationColor` plugin props do both steps (see [Expo setup](#expo-setup)). A push can still override both per message with the Android `icon` and `color` options; `icon` must name a drawable that exists in your app. The full-color app icon is not shown as the small icon on Android; that is platform behavior, not an SDK setting.
+
+**Image.** No setup: the Notti backend sends the image in FCM's `notification.image` and the OS downloads and shows it. FCM's limits apply:
+
+- **At most 1 MB.** A larger image is dropped silently and the push shows without it (the iOS extension accepts up to 10 MB, so the same image can work on iOS only). Use JPEG or PNG over `https`, served directly (no login, no redirect to a page).
+- The image shows as a thumbnail on the collapsed notification and in full when expanded; how much shows collapsed depends on the Android version and the device maker.
+- To see why an image is missing, run `adb logcat -s FirebaseMessaging` while the push arrives.
+
+**Foreground.** While the app is in the foreground FCM does not show anything in the tray; the push only reaches `notificationReceived`. Show it yourself from that listener if your app needs it.
 
 ## Rich push notifications (iOS)
 
@@ -519,8 +552,31 @@ Add the config plugin to your `app.json`/`app.config.js`:
 
 On `expo prebuild`, the plugin:
 
-- **Android**: applies the Google Services Gradle plugin and copies your `google-services.json` (set via `android.googleServicesFile` in your Expo config, standard Expo convention).
+- **Android**: applies the Google Services Gradle plugin and copies your `google-services.json` (set via `android.googleServicesFile` in your Expo config, standard Expo convention). With the props below it also sets the notification small icon and color.
 - **iOS**: adds the `aps-environment` (push notifications) entitlement.
+
+### Android notification icon and color
+
+```json
+{
+  "expo": {
+    "plugins": [
+      [
+        "react-native-notti",
+        {
+          "androidNotificationIcon": "./assets/notification-icon.png",
+          "androidNotificationColor": "#1A73E8"
+        }
+      ]
+    ]
+  }
+}
+```
+
+- `androidNotificationIcon`: path from the project root to a PNG with white shapes on a transparent background, 96x96 px. Copied to `drawable-xxxhdpi/notti_notification_icon.png` and set as FCM's `default_notification_icon`.
+- `androidNotificationColor`: `#RRGGBB` or `#AARRGGBB`, written as `@color/notti_notification_color` and set as FCM's `default_notification_color`.
+
+A missing file, a non-PNG file or a malformed color fails `expo prebuild`. If another plugin (e.g. `expo-notifications` with `notification.icon`) also sets these entries, the one that runs last wins; set the icon in one place only. Why the icon must be a silhouette: [Android notification icon, color and image](#android-notification-icon-color-and-image).
 
 ### `aps-environment` value
 

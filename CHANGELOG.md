@@ -109,6 +109,7 @@ entries once released.
 
 * **In-App messages** (Android and iOS): messages authored in the Notti dashboard are fetched once per foreground session, rendered natively (`top`, `center`, `bottom`, `full`) and measured with `impression`, `click` and `dismiss` events queued on disk. New: `Notti.trackEvent(name)` and `Notti.InAppMessages.addClickListener(handler)`; additive, no existing signature changes. Requires a Notti backend with In-App rich messages.
 * **The SDK never opens a link.** A tap reports the click, closes the message and hands the untouched `url`/`deeplink` to the click listener; without a listener nothing opens. See the README "In-App messages" section.
+* **Expo config plugin: Android notification icon and color.** New optional props `androidNotificationIcon` (PNG path) and `androidNotificationColor` (`#RRGGBB`) set FCM's `default_notification_icon` / `default_notification_color`. Without an icon Android keeps showing the launcher icon as a white silhouette. Bare React Native: see the new README section "Android notification icon, color and image" (manifest `<meta-data>`, FCM's 1 MB image limit).
 
 ### Notes
 
