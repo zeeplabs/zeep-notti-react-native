@@ -783,8 +783,15 @@ class NottiCore(
     }
   }
 
+  /**
+   * Shares the `externalUserId` coalesce key with [logout]'s clear: before the
+   * first registration a coalesced entry is replaced in place, so with
+   * separate keys `logout()`, `login("u2")`, `logout()` would flush as
+   * [clear, login u2] and leave the signed-out user linked. One key keeps
+   * only the latest call.
+   */
   fun login(externalUserId: String) {
-    mutate("login") { client, deviceId, token ->
+    mutate("login", KEY_EXTERNAL_USER_ID) { client, deviceId, token ->
       val result = client.patchDevice(deviceId, token, mapOf("external_user_id" to externalUserId))
       when (result) {
         is ApiResult.Success -> {

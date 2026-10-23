@@ -14,6 +14,7 @@ Contract and full rationale live in the backend spec: `zeep-notti/.specs/feature
 - 2xx: local id cleared again (a queued `login` acked just before may have re-persisted it) and the flag dropped. Failure: flag kept.
 - Registration success re-sends the clear while the flag is set (offline, failed PATCH, logout before `initialize()`).
 - A successful `login()` drops the flag (the new link supersedes the owed clear).
+- `login()` shares the `externalUserId` coalesce key with the clear: before the first registration a coalesced entry is replaced in place, so separate keys let `logout()` → `login("u2")` → `logout()` flush as [clear, login u2] (pre-release review 2026-10-23).
 - The clear PATCH is not gated on the flag: with `login("u1")` + `logout()` both queued before registration, login's ack drops the flag first.
 - Tags and subscription are never part of the logout PATCH. An older backend decodes `null` as `""` (no-op 2xx), so the flag is dropped, no retry loop.
 
@@ -22,7 +23,7 @@ Contract and full rationale live in the backend spec: `zeep-notti/.specs/feature
 | Requirement ID | Behavior | Android test (`NottiCoreTest`) | iOS test (`NottiCoreTests`) | Status |
 | --- | --- | --- | --- | --- |
 | DLOG-10 | logout sends null on the queue | `logout clears the external user id server-side and clears email and phone` | `test_logoutClearsTheExternalUserIdServerSideAndEnqueuesEmailAndPhoneNullClears` | Done |
-| DLOG-11 | login then logout ends NULL | `logout called right after login leaves the device logged out`, `login queued before registration then logout still ends with the id cleared` | `test_logoutRightAfterLoginEndsWithTheClearAfterTheLogin`, `test_loginQueuedBeforeRegistrationThenLogoutStillEndsCleared` | Done |
+| DLOG-11 | login then logout ends NULL | `logout called right after login leaves the device logged out`, `login queued before registration then logout still ends with the id cleared`, `logout login logout queued before registration ends with the id cleared` | `test_logoutRightAfterLoginEndsWithTheClearAfterTheLogin`, `test_loginQueuedBeforeRegistrationThenLogoutStillEndsCleared`, `test_logoutLoginLogoutQueuedBeforeRegistrationEndsCleared` | Done |
 | DLOG-12 | logout then login ends new id | `logout then login ends linked to the new user` | `test_logoutThenLoginEndsLinkedToTheNewUser` | Done |
 | DLOG-13 | re-sent after failure / pre-init | `a failed logout clear is re-sent at the next registration`, `logout before initialize sends the clear once registration completes` | `test_aFailedLogoutClearIsResentAtTheNextRegistration`, `test_logoutBeforeInitializeClearsLocallyAndResendsTheNullsAtRegistration` | Done |
 | DLOG-14 | tags and subscription untouched | asserted in the DLOG-10 test | asserted in the DLOG-10 test | Done |

@@ -165,6 +165,7 @@ entries once released.
 
 * Requires a Notti backend that accepts `external_user_id: null` on `PATCH /devices/{id}`. An older backend reads it as an empty value and keeps the stored id; nothing breaks and the SDK does not retry.
 * New local storage key `notti_pending_external_user_id_clear` (a flag, no personal data).
+* `login()`/`logout()` calls made before the first device registration now collapse to the latest one (previously every queued `login` was sent in order), so a `logout()` → `login("u2")` → `logout()` sequence on a fresh install ends unlinked.
 
 ## Upgrade notes for 0.7.0 (released)
 
