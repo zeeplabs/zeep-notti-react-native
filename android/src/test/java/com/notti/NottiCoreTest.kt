@@ -637,6 +637,48 @@ class NottiCoreTest {
   }
 
   @Test
+  fun `logout login logout queued before registration ends with the id cleared`() {
+    var deliverToken: ((String?) -> Unit)? = null
+    val core = newCore(tokenProvider = { cb -> deliverToken = cb })
+    core.initialize("app-1", "key", validBaseUrl)
+
+    core.logout()
+    core.login("u2")
+    core.logout()
+    awaitIdle()
+
+    repeat(5) { server.enqueue(ok()) }
+    requireNotNull(deliverToken)("fcm-token")
+    awaitIdle()
+    awaitIdle()
+
+    val bodies = drainRequests().drop(1).map { JSONObject(it.body.readUtf8()) }.filter { it.has("external_user_id") }
+    assertTrue("u2 never linked after the last logout: $bodies", bodies.last().isNull("external_user_id"))
+    assertNull(store.getExternalUserId())
+  }
+
+  @Test
+  fun `logout then login queued before registration ends linked to the new user`() {
+    var deliverToken: ((String?) -> Unit)? = null
+    val core = newCore(tokenProvider = { cb -> deliverToken = cb })
+    core.initialize("app-1", "key", validBaseUrl)
+
+    core.logout()
+    core.login("u2")
+    awaitIdle()
+
+    repeat(5) { server.enqueue(ok()) }
+    requireNotNull(deliverToken)("fcm-token")
+    awaitIdle()
+    awaitIdle()
+
+    val bodies = drainRequests().drop(1).map { JSONObject(it.body.readUtf8()) }.filter { it.has("external_user_id") }
+    assertEquals("u2", bodies.last().getString("external_user_id"))
+    assertEquals("u2", store.getExternalUserId())
+    assertFalse(store.getPendingExternalUserIdClear())
+  }
+
+  @Test
   fun `login queued before registration then logout still ends with the id cleared`() {
     var deliverToken: ((String?) -> Unit)? = null
     val core = newCore(tokenProvider = { cb -> deliverToken = cb })
@@ -2554,12 +2596,12 @@ fun `requestPermission result syncs the OS permission status`() {
   }
 
   @Test
-  fun `telemetry never evicts queued login or tag mutations and is coalesced per key`() {
+  fun `telemetry never evicts queued subscription or tag mutations and is coalesced per key`() {
     var tokenCallback: ((String?) -> Unit)? = null
     val core = newCore(tokenProvider = { cb -> tokenCallback = cb })
     core.initialize("app-1", "key", validBaseUrl)
 
-    repeat(32) { core.login("user-$it") }
+    repeat(32) { core.setSubscription(it % 2 == 0) }
     for (i in 0 until 5) {
       core.handleSessionStart(i * 10_000L)
       core.handleSessionEnd(i * 10_000L + 1_000L)
@@ -2572,7 +2614,7 @@ fun `requestPermission result syncs the OS permission status`() {
     awaitIdle()
 
     val bodies = drainRequests().drop(1).map { JSONObject(it.body.readUtf8()) }
-    assertEquals((0 until 32).map { "user-$it" }, bodies.filter { it.has("external_user_id") }.map { it.getString("external_user_id") })
+    assertEquals((0 until 32).map { it % 2 == 0 }, bodies.filter { it.has("subscribed") }.map { it.getBoolean("subscribed") })
     val sessions = bodies.filter { it.has("session_count") }
     assertEquals("session snapshots coalesce to the latest", 1, sessions.size)
     assertEquals(5, sessions.single().getInt("session_count"))

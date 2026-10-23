@@ -405,10 +405,15 @@ public class NottiCore {
     }
   }
 
+  /// Shares the `externalUserId` coalesce key with `logout`'s clear: before
+  /// the first registration a coalesced entry is replaced in place, so with
+  /// separate keys `logout`, `login("u2")`, `logout` would flush as
+  /// [clear, login u2] and leave the signed-out user linked. One key keeps
+  /// only the latest call (parity with Android).
   public func login(_ externalUserId: String) {
     workQueue.async { [weak self] in
       guard let self = self, let client = self.apiClient else { return }
-      self.performOrQueue(client, description: "login") { [weak self] client, deviceId, token in
+      self.performOrQueue(client, description: "login", coalesceKey: TelemetryKey.externalUserId) { [weak self] client, deviceId, token in
         let result = client.patchDevice(
           deviceId: deviceId,
           token: token,

@@ -521,6 +521,50 @@ final class NottiCoreTests: XCTestCase {
     XCTAssertFalse(store.getPendingExternalUserIdClear())
   }
 
+  func test_logoutLoginLogoutQueuedBeforeRegistrationEndsCleared() {
+    var bodies: [[String: Any]] = []
+    var deliverToken: ((String?) -> Void)?
+    let core = newCore(
+      tokenProvider: { cb in deliverToken = cb },
+      apiClient: PatchHookApiClient { fields in bodies.append(fields); return true }
+    )
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    core.logout()
+    core.login("u2")
+    core.logout()
+    drain(core)
+    deliverToken?("apns-token")
+    drain(core)
+
+    let ids = bodies.filter { $0.keys.contains("external_user_id") }
+    XCTAssertTrue(ids.last?["external_user_id"] is NSNull, "u2 never stays linked after the last logout")
+    XCTAssertNil(store.getExternalUserId())
+  }
+
+  func test_logoutThenLoginQueuedBeforeRegistrationEndsLinkedToTheNewUser() {
+    var bodies: [[String: Any]] = []
+    var deliverToken: ((String?) -> Void)?
+    let core = newCore(
+      tokenProvider: { cb in deliverToken = cb },
+      apiClient: PatchHookApiClient { fields in bodies.append(fields); return true }
+    )
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    core.logout()
+    core.login("u2")
+    drain(core)
+    deliverToken?("apns-token")
+    drain(core)
+
+    let ids = bodies.filter { $0.keys.contains("external_user_id") }
+    XCTAssertEqual(ids.last?["external_user_id"] as? String, "u2")
+    XCTAssertEqual(store.getExternalUserId(), "u2")
+    XCTAssertFalse(store.getPendingExternalUserIdClear())
+  }
+
   func test_loginQueuedBeforeRegistrationThenLogoutStillEndsCleared() {
     var bodies: [[String: Any]] = []
     var deliverToken: ((String?) -> Void)?
@@ -2970,9 +3014,9 @@ final class NottiCoreTests: XCTestCase {
     core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
     core.setEmail("user@example.com") // queued first
     core.clearPhone()                  // queued second (a PII erasure)
-    core.login("user-42")
-    for index in 0..<31 { core.mutateTags(add: ["k\(index)": "v"], remove: nil) } // 32 user mutations
-    core.mutateTags(add: ["last": "v"], remove: nil) // 33rd: evicts the oldest USER mutation (login)
+    core.login("user-42") // coalesced (externalUserId key): outside the cap
+    for index in 0..<32 { core.mutateTags(add: ["k\(index)": "v"], remove: nil) } // 32 user mutations
+    core.mutateTags(add: ["last": "v"], remove: nil) // 33rd: evicts the oldest USER mutation (k0)
     drain(core)
 
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
@@ -2983,9 +3027,9 @@ final class NottiCoreTests: XCTestCase {
     let bodies = patchBodies(StubURLProtocol.recordedRequests())
     XCTAssertEqual(bodies[0]["email"] as? String, "user@example.com", "queued email must survive a full queue")
     XCTAssertTrue(bodies[1]["phone"] is NSNull, "queued phone clear must survive a full queue")
-    XCTAssertTrue(bodies.allSatisfy { $0["external_user_id"] == nil }, "the oldest user mutation is what gets evicted")
+    XCTAssertTrue(bodies.contains { $0["external_user_id"] as? String == "user-42" }, "a coalesced login is never evicted")
     XCTAssertEqual(bodies.filter { $0["tags"] != nil }.count, 32)
-    XCTAssertTrue(logs.messages.contains { $0.contains("dropping the oldest queued mutation (login)") })
+    XCTAssertTrue(logs.messages.contains { $0.contains("dropping the oldest queued mutation (tag mutation)") })
   }
 }
 
