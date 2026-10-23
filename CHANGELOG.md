@@ -155,6 +155,17 @@ Entries below `[Unreleased]` are generated automatically by `pnpm release`
 Angular preset) from Conventional Commit messages — do not hand-edit past
 entries once released.
 
+## [Unreleased]
+
+### Features
+
+* **`Notti.logout()` unlinks the device from the user on the backend** (Android and iOS): it now also sends `external_user_id: null`, so pushes your backend sends to the signed-out user by `external_user_ids` stop reaching the device (shared phones). Tags and the subscription are kept. The clear is durable: if it fails, runs offline or before `initialize()`, it is re-sent at the next registration. No API change.
+
+### Notes
+
+* Requires a Notti backend that accepts `external_user_id: null` on `PATCH /devices/{id}`. An older backend reads it as an empty value and keeps the stored id; nothing breaks and the SDK does not retry.
+* New local storage key `notti_pending_external_user_id_clear` (a flag, no personal data).
+
 ## Upgrade notes for 0.7.0 (released)
 
 ### Features

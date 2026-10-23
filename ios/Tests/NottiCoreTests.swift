@@ -402,11 +402,12 @@ final class NottiCoreTests: XCTestCase {
     XCTAssertTrue(store.getSubscribed())
   }
 
-  func test_logoutClearsTheExternalUserIdLocallyOnlyAndEnqueuesEmailAndPhoneNullClears() {
+  func test_logoutClearsTheExternalUserIdServerSideAndEnqueuesEmailAndPhoneNullClears() {
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // login
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // email set
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // phone set
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // external_user_id null
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // email null
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // phone null
     let core = newCore()
@@ -422,13 +423,15 @@ final class NottiCoreTests: XCTestCase {
     core.logout()
     drain(core)
 
-    // external_user_id is a local-only clear (spec SDK-15: the backend has no
-    // support for clearing it server-side), but the PII email/phone ARE
-    // cleared server-side with explicit nulls (F2).
+    // external_user_id, email and phone are all cleared server-side with
+    // explicit nulls (DLOG-10, F2); tags and subscription are never part of a
+    // logout PATCH (DLOG-14).
     let requests = StubURLProtocol.recordedRequests()
-    XCTAssertEqual(requests.count, 6, "register + login + email/phone set + email/phone null")
+    XCTAssertEqual(requests.count, 7, "register + login + email/phone set + external_user_id/email/phone null")
     let logoutBodies = patchBodies(Array(requests.dropFirst(4)))
-    XCTAssertTrue(logoutBodies.allSatisfy { $0["external_user_id"] == nil })
+    XCTAssertTrue(logoutBodies.contains { $0["external_user_id"] is NSNull })
+    XCTAssertTrue(logoutBodies.allSatisfy { $0["tags"] == nil && $0["subscribed"] == nil })
+    XCTAssertFalse(store.getPendingExternalUserIdClear())
     XCTAssertTrue(logoutBodies.contains { $0["email"] is NSNull })
     XCTAssertTrue(logoutBodies.contains { $0["phone"] is NSNull })
     XCTAssertNil(store.getExternalUserId())
@@ -440,6 +443,7 @@ final class NottiCoreTests: XCTestCase {
 
   func test_logoutBeforeInitializeClearsLocallyAndResendsTheNullsAtRegistration() {
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
+    StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // external_user_id null
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // email null
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // phone null
     store.setEmail("user@example.com")
@@ -456,10 +460,86 @@ final class NottiCoreTests: XCTestCase {
     drain(core)
 
     let bodies = patchBodies(StubURLProtocol.recordedRequests())
+    XCTAssertTrue(bodies.contains { $0["external_user_id"] is NSNull }, "DLOG-13: pre-initialize logout")
     XCTAssertTrue(bodies.contains { $0["email"] is NSNull })
     XCTAssertTrue(bodies.contains { $0["phone"] is NSNull })
     XCTAssertNil(store.getLastSyncedEmail())
     XCTAssertNil(store.getLastSyncedPhone())
+    XCTAssertFalse(store.getPendingExternalUserIdClear())
+  }
+
+  func test_logoutRightAfterLoginEndsWithTheClearAfterTheLogin() {
+    var bodies: [[String: Any]] = []
+    let core = newCore(apiClient: PatchHookApiClient { fields in bodies.append(fields); return true })
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    core.login("u1")
+    core.logout()
+    drain(core)
+
+    let ids = bodies.filter { $0.keys.contains("external_user_id") }
+    XCTAssertEqual(ids.first?["external_user_id"] as? String, "u1")
+    XCTAssertTrue(ids.last?["external_user_id"] is NSNull, "DLOG-11")
+    XCTAssertNil(store.getExternalUserId())
+  }
+
+  func test_logoutThenLoginEndsLinkedToTheNewUser() {
+    var bodies: [[String: Any]] = []
+    let core = newCore(apiClient: PatchHookApiClient { fields in bodies.append(fields); return true })
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    core.logout()
+    core.login("u2")
+    drain(core)
+
+    let ids = bodies.filter { $0.keys.contains("external_user_id") }
+    XCTAssertEqual(ids.last?["external_user_id"] as? String, "u2", "DLOG-12")
+    XCTAssertEqual(store.getExternalUserId(), "u2")
+    XCTAssertFalse(store.getPendingExternalUserIdClear())
+  }
+
+  func test_aFailedLogoutClearIsResentAtTheNextRegistration() {
+    var clearAttempts = 0
+    let core = newCore(apiClient: PatchHookApiClient { fields in
+      guard fields["external_user_id"] is NSNull else { return true }
+      clearAttempts += 1
+      return clearAttempts > 1 // first clear fails, the registration resync succeeds
+    })
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    core.logout()
+    drain(core)
+    XCTAssertTrue(store.getPendingExternalUserIdClear())
+
+    core.onTokenRefreshed("apns-token-2") // next registration
+    drain(core)
+
+    XCTAssertEqual(clearAttempts, 2, "DLOG-13: the failed clear is re-sent at registration")
+    XCTAssertFalse(store.getPendingExternalUserIdClear())
+  }
+
+  func test_loginQueuedBeforeRegistrationThenLogoutStillEndsCleared() {
+    var bodies: [[String: Any]] = []
+    var deliverToken: ((String?) -> Void)?
+    let core = newCore(
+      tokenProvider: { cb in deliverToken = cb },
+      apiClient: PatchHookApiClient { fields in bodies.append(fields); return true }
+    )
+    core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
+    drain(core)
+
+    core.login("u1")
+    core.logout()
+    drain(core)
+    deliverToken?("apns-token")
+    drain(core)
+
+    let ids = bodies.filter { $0.keys.contains("external_user_id") }
+    XCTAssertTrue(ids.last?["external_user_id"] is NSNull, "the clear lands after the queued login")
+    XCTAssertNil(store.getExternalUserId())
   }
 
   func test_setSubscriptionPatchesTheGivenSubscribedValueAndTheCachedTokenAndPersistsItLocallyOnSuccess() {
@@ -2171,7 +2251,7 @@ final class NottiCoreTests: XCTestCase {
 
   func test_setEmailThenLogoutLoginAndANewEmailConvergesOnTheNewEmail() {
     StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) // registration
-    for _ in 0..<6 { StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) }
+    for _ in 0..<7 { StubURLProtocol.enqueue(.status(200, body: #"{"id":"device-1","tags":{}}"#)) }
     let core = newCore()
     core.initialize(appId: "app-1", clientKey: "key", baseUrl: baseUrl)
     drain(core)

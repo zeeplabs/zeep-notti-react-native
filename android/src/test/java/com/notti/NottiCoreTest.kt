@@ -513,8 +513,8 @@ class NottiCoreTest {
   }
 
   @Test
-  fun `logout clears the external user id locally and clears email and phone server-side`() {
-    repeat(4) { server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}""")) }
+  fun `logout clears the external user id server-side and clears email and phone`() {
+    repeat(5) { server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}""")) }
     val core = newCore()
     core.initialize("app-1", "key", validBaseUrl)
     core.login("user-42")
@@ -525,19 +525,19 @@ class NottiCoreTest {
     awaitIdle()
 
     // Initial register + login PATCH from setup above, then logout()'s
-    // {email: null} and {phone: null} clears (LGPD: PII is cleared
-    // server-side). external_user_id itself is never sent (spec SDK-15:
-    // local-only clear, the backend cannot clear it server-side).
-    assertEquals(4, server.requestCount)
+    // {external_user_id: null}, {email: null} and {phone: null} clears
+    // (DLOG-10). Tags and subscription are never part of a logout PATCH
+    // (DLOG-14).
+    assertEquals(5, server.requestCount)
     server.takeRequest(5, TimeUnit.SECONDS) // register
     server.takeRequest(5, TimeUnit.SECONDS) // login
-    val bodies = (0 until 2).map {
-      JSONObject(requireNotNull(server.takeRequest(5, TimeUnit.SECONDS)).body.readUtf8())
-    }
+    val bodies = (0 until 3).map { nextBody() }
+    assertTrue(bodies.any { it.has("external_user_id") && it.isNull("external_user_id") })
     assertTrue(bodies.any { it.has("email") && it.isNull("email") })
     assertTrue(bodies.any { it.has("phone") && it.isNull("phone") })
-    assertTrue("logout never sends external_user_id: $bodies", bodies.none { it.has("external_user_id") })
+    assertTrue("logout never sends tags or subscribed: $bodies", bodies.none { it.has("tags") || it.has("subscribed") })
     assertEquals(null, store.getExternalUserId())
+    assertFalse(store.getPendingExternalUserIdClear())
     assertNull(store.getEmail())
     assertNull(store.getPhone())
   }
@@ -552,8 +552,8 @@ class NottiCoreTest {
       MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}""")
         .setBodyDelay(300, TimeUnit.MILLISECONDS)
     )
-    // logout()'s email/phone clears.
-    repeat(2) { server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}""")) }
+    // logout()'s external_user_id/email/phone clears.
+    repeat(3) { server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"device-1","tags":{}}""")) }
     val core = newCore()
     core.initialize("app-1", "key", validBaseUrl)
     awaitIdle()
@@ -564,9 +564,96 @@ class NottiCoreTest {
     core.logout()
     awaitIdle()
 
-    // register + login + logout's email/phone clears.
-    assertEquals(4, server.requestCount)
+    // register + login + logout's external_user_id/email/phone clears, the
+    // external_user_id clear landing after login (DLOG-11).
+    assertEquals(5, server.requestCount)
+    val bodies = drainRequests().drop(1).map { JSONObject(it.body.readUtf8()) }
+    val loginAt = bodies.indexOfFirst { it.optString("external_user_id") == "user-42" }
+    val clearAt = bodies.indexOfFirst { it.has("external_user_id") && it.isNull("external_user_id") }
+    assertTrue("login then clear: $bodies", loginAt in 0 until clearAt)
     assertEquals(null, store.getExternalUserId())
+  }
+
+  @Test
+  fun `logout then login ends linked to the new user`() {
+    repeat(5) { server.enqueue(ok()) }
+    val core = newCore()
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    core.logout()
+    core.login("u2")
+    awaitIdle()
+
+    val bodies = drainRequests().drop(1).map { JSONObject(it.body.readUtf8()) }.filter { it.has("external_user_id") }
+    assertEquals("u2", bodies.last().getString("external_user_id"))
+    assertEquals("u2", store.getExternalUserId())
+    assertFalse(store.getPendingExternalUserIdClear())
+  }
+
+  @Test
+  fun `a failed logout clear is re-sent at the next registration`() {
+    server.enqueue(ok()) // register
+    server.enqueue(rejected()) // external_user_id clear fails
+    server.enqueue(ok()) // email clear
+    server.enqueue(ok()) // phone clear
+    server.enqueue(ok()) // second register
+    server.enqueue(ok()) // re-sent external_user_id clear
+    val core = newCore()
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+
+    core.logout()
+    awaitIdle()
+    assertTrue(store.getPendingExternalUserIdClear())
+
+    core.onTokenRefreshed("new-fcm-token")
+    awaitIdle()
+    awaitIdle()
+
+    assertEquals(6, server.requestCount)
+    repeat(5) { server.takeRequest(5, TimeUnit.SECONDS) }
+    assertTrue(nextBody().isNull("external_user_id"))
+    assertFalse(store.getPendingExternalUserIdClear())
+  }
+
+  @Test
+  fun `logout before initialize sends the clear once registration completes`() {
+    // A previous launch linked the device; this launch logs out before initialize().
+    store.setExternalUserId("u1")
+    val core = newCore()
+    core.logout()
+    awaitIdle()
+
+    repeat(2) { server.enqueue(ok()) } // register + re-sent clear
+    core.initialize("app-1", "key", validBaseUrl)
+    awaitIdle()
+    awaitIdle()
+
+    val bodies = drainRequests().drop(1).map { JSONObject(it.body.readUtf8()) }
+    assertTrue("clear sent: $bodies", bodies.any { it.has("external_user_id") && it.isNull("external_user_id") })
+    assertNull(store.getExternalUserId())
+    assertFalse(store.getPendingExternalUserIdClear())
+  }
+
+  @Test
+  fun `login queued before registration then logout still ends with the id cleared`() {
+    var deliverToken: ((String?) -> Unit)? = null
+    val core = newCore(tokenProvider = { cb -> deliverToken = cb })
+    core.initialize("app-1", "key", validBaseUrl)
+
+    core.login("u1")
+    core.logout()
+    awaitIdle()
+
+    repeat(5) { server.enqueue(ok()) }
+    requireNotNull(deliverToken)("fcm-token")
+    awaitIdle()
+    awaitIdle()
+
+    val bodies = drainRequests().drop(1).map { JSONObject(it.body.readUtf8()) }.filter { it.has("external_user_id") }
+    assertTrue("last external_user_id PATCH is the clear: $bodies", bodies.last().isNull("external_user_id"))
+    assertNull(store.getExternalUserId())
   }
 
   @Test
@@ -1344,6 +1431,7 @@ fun `requestPermission result syncs the OS permission status`() {
     awaitIdle()
 
     server.enqueue(ok()) // register
+    server.enqueue(ok()) // external_user_id clear
     server.enqueue(ok()) // email clear
     server.enqueue(ok()) // phone clear
     requireNotNull(deliverToken)("fcm-token")
@@ -1353,9 +1441,9 @@ fun `requestPermission result syncs the OS permission status`() {
     // The coalesce key makes each clear replace its queued set: the PII is
     // never sent, only the clears (and the registration resync sends nothing,
     // since held and last-synced are both null once the clears are acked).
-    assertEquals(3, server.requestCount)
+    assertEquals(4, server.requestCount)
     server.takeRequest(5, TimeUnit.SECONDS) // register
-    val bodies = (0 until 2).map { nextBody() }
+    val bodies = (0 until 3).map { nextBody() }
     assertTrue(bodies.any { it.has("email") && it.isNull("email") })
     assertTrue(bodies.any { it.has("phone") && it.isNull("phone") })
     assertNull(store.getEmail())
