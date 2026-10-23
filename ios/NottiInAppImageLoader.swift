@@ -117,9 +117,10 @@ final class NottiInAppImageLoader: InAppImageSource {
     while cache.count > Self.cacheEntries { cache.removeFirst() }
   }
 
-  /// Full size when the longest side fits `maxSidePx`, else a downsampled
-  /// thumbnail (ImageIO never inflates the whole bitmap first). Nil when
-  /// the bytes are not an image.
+  /// Full size when the longest side fits `maxSidePx`, else downsampled
+  /// (ImageIO never inflates the whole bitmap first). Always decoded through
+  /// the thumbnail path, the only one that applies the EXIF orientation: a
+  /// small photo is upright too. Nil when the bytes are not an image.
   static func decode(_ data: Data, maxSidePx: CGFloat) -> UIImage? {
     let options = [kCGImageSourceShouldCache: false] as CFDictionary
     guard let source = CGImageSourceCreateWithData(data as CFData, options),
@@ -129,21 +130,19 @@ final class NottiInAppImageLoader: InAppImageSource {
       width > 0, height > 0
     else { return nil }
     let longest = CGFloat(max(width, height))
-    let cgImage: CGImage?
-    if maxSidePx <= 0 || longest <= maxSidePx {
-      cgImage = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
-    } else {
-      cgImage = CGImageSourceCreateThumbnailAtIndex(
-        source,
-        0,
-        [
-          kCGImageSourceCreateThumbnailFromImageAlways: true,
-          kCGImageSourceCreateThumbnailWithTransform: true,
-          kCGImageSourceShouldCacheImmediately: true,
-          kCGImageSourceThumbnailMaxPixelSize: maxSidePx,
-        ] as CFDictionary
-      )
-    }
+    // Never upscaled: the longest side is the ceiling.
+    let maxPixelSize = maxSidePx > 0 ? min(longest, maxSidePx) : longest
+    let cgImage = CGImageSourceCreateThumbnailAtIndex(
+      source,
+      0,
+      [
+        // An embedded (smaller) thumbnail is never used: always the full image.
+        kCGImageSourceCreateThumbnailFromImageAlways: true,
+        kCGImageSourceCreateThumbnailWithTransform: true,
+        kCGImageSourceShouldCacheImmediately: true,
+        kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+      ] as CFDictionary
+    )
     return cgImage.map { UIImage(cgImage: $0) }
   }
 

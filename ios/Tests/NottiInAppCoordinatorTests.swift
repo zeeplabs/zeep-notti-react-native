@@ -177,8 +177,10 @@ final class NottiInAppCoordinatorTests: XCTestCase {
     (try? JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]) ?? [:]
   }
 
-  private func initialize(_ appId: String = "app-1") {
+  /// `registered` stands in for a registration of this process (A6) without its flush trigger.
+  private func initialize(_ appId: String = "app-1", registered: Bool = true) {
     coordinator.onInitialized(appId: appId, clientKey: clientKey, baseUrl: baseUrl)
+    if registered { coordinator.session.markRegistered() }
   }
 
   private func startAndRegister() {
@@ -243,6 +245,88 @@ final class NottiInAppCoordinatorTests: XCTestCase {
     XCTAssertEqual(paths(takeAll()), [eligiblePath(), eligiblePath()])
   }
 
+  func test_eligibleWaitsForTheRegistrationOfThisProcess() {
+    enqueue(messages(sessionStart("s1")))
+    initialize(registered: false)
+    coordinator.onSessionStarted()
+    coordinator.onNetworkAvailable()
+    executor.runAll()
+    XCTAssertEqual(requestCount, 0)
+    coordinator.onRegistered()
+    executor.runAll()
+    XCTAssertEqual(paths(takeAll()), [eligiblePath()])
+    XCTAssertEqual(presenter.presented.map(\.message.id), ["s1"])
+  }
+
+  func test_theRegistrationOutlivesTheSessionButNotAConfigChange() {
+    enqueue(messages(), messages())
+    initialize()
+    startAndRegister()
+    coordinator.onSessionEnded()
+    coordinator.onSessionStarted()
+    executor.runAll()
+    XCTAssertEqual(paths(takeAll()), [eligiblePath(), eligiblePath()])
+
+    enqueue(messages())
+    coordinator.onInitialized(appId: "app-2", clientKey: clientKey, baseUrl: baseUrl)
+    coordinator.onNetworkAvailable()
+    executor.runAll()
+    XCTAssertEqual(paths(takeAll()), [])
+    coordinator.onRegistered()
+    executor.runAll()
+    XCTAssertEqual(paths(takeAll()), [eligiblePath("app-2")])
+  }
+
+  /// The core reports the session from its work queue, which a retrying
+  /// request can hold up: a report arriving after the app left is ignored.
+  func test_aLateCoreSessionStartAfterTheAppLeftIsIgnored() {
+    enqueue(messages())
+    initialize()
+    startAndRegister()
+    coordinator.onSessionEnded()
+    coordinator.onAppBackgrounded()
+    coordinator.onSessionStarted()
+    executor.runAll()
+    XCTAssertFalse(coordinator.session.isOpen)
+    XCTAssertEqual(paths(takeAll()), [eligiblePath()])
+  }
+
+  func test_returningFromBackgroundOpensTheSessionWithoutWaitingForTheCore() {
+    enqueue(messages(), messages())
+    initialize()
+    startAndRegister()
+    coordinator.onSessionEnded()
+    coordinator.onAppBackgrounded()
+    coordinator.onAppForegrounded()
+    executor.runAll()
+    XCTAssertTrue(coordinator.session.isOpen)
+    XCTAssertEqual(paths(takeAll()), [eligiblePath(), eligiblePath()])
+    coordinator.onSessionStarted()
+    executor.runAll()
+    XCTAssertEqual(requestCount, 2)
+  }
+
+  func test_aFirstSessionReportedInBackgroundOpensOnTheNextForeground() {
+    enqueue(messages())
+    initialize()
+    coordinator.onAppBackgrounded()
+    coordinator.onSessionStarted()
+    executor.runAll()
+    XCTAssertFalse(coordinator.session.isOpen)
+    coordinator.onAppForegrounded()
+    executor.runAll()
+    XCTAssertTrue(coordinator.session.isOpen)
+    XCTAssertEqual(paths(takeAll()), [eligiblePath()])
+  }
+
+  func test_theFirstSessionOfTheProcessStillComesFromTheCore() {
+    initialize()
+    coordinator.onAppForegrounded()
+    executor.runAll()
+    XCTAssertFalse(coordinator.session.isOpen)
+    XCTAssertEqual(requestCount, 0)
+  }
+
   func test_nilIdentityDefersTheFetchToTheNextTrigger() {
     identity = nil
     initialize()
@@ -287,6 +371,32 @@ final class NottiInAppCoordinatorTests: XCTestCase {
 
   /// The pre-fetch flush is single-attempt: a failure leaves the rest
   /// queued with no backoff retry until the next trigger.
+  func test_thePreFetchFlushStillRunsWhileAFullFlushBacksOff() {
+    queuedEvent()
+    enqueue(status(503), status(201), messages())
+    initialize()
+    coordinator.onRegistered()
+    executor.runAll()
+    coordinator.onSessionStarted()
+    executor.runAll()
+    XCTAssertEqual(paths(takeAll()), [eventsPath("old"), eventsPath("old"), eligiblePath()])
+    XCTAssertTrue(store.all().isEmpty)
+    executor.advance(60_000)
+    XCTAssertEqual(requestCount, 3)
+  }
+
+  func test_thePreFetchFlushHonorsAnEvents429Pause() {
+    queuedEvent()
+    enqueue(status(429, retryAfter: "30"), messages())
+    initialize()
+    coordinator.onRegistered()
+    executor.runAll()
+    coordinator.onSessionStarted()
+    executor.runAll()
+    XCTAssertEqual(paths(takeAll()), [eventsPath("old"), eligiblePath()])
+    XCTAssertEqual(store.all().count, 1)
+  }
+
   func test_aFailedPreFetchFlushIsNotRetriedUntilTheNextTrigger() {
     queuedEvent()
     enqueue(status(503), messages(), status(201))
@@ -315,6 +425,25 @@ final class NottiInAppCoordinatorTests: XCTestCase {
     XCTAssertNil(coordinator.session.eligiblePausedUntilMs)
     coordinator.onSessionStarted()
     executor.runAll()
+    XCTAssertEqual(requestCount, 2)
+    XCTAssertEqual(presenter.presented.map(\.message.id), ["s1"])
+  }
+
+  /// A 429 pause still running when the next session opens delays that
+  /// session's fetch, never cancels it.
+  func test_a429PauseCarriedIntoTheNextSessionFetchesOnceItElapses() {
+    enqueue(status(429, retryAfter: "30"), messages(sessionStart("s1")))
+    initialize()
+    startAndRegister()
+    XCTAssertEqual(requestCount, 1)
+    executor.advance(10_000)
+    coordinator.onSessionEnded()
+    coordinator.onSessionStarted()
+    executor.runAll()
+    XCTAssertEqual(requestCount, 1)
+    executor.advance(19_000)
+    XCTAssertEqual(requestCount, 1)
+    executor.advance(1_000)
     XCTAssertEqual(requestCount, 2)
     XCTAssertEqual(presenter.presented.map(\.message.id), ["s1"])
   }

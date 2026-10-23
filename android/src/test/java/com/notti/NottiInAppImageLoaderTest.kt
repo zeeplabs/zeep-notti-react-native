@@ -55,15 +55,22 @@ class NottiInAppImageLoaderTest {
   /** Calls that reached the client, connected or not. */
   private var calls = 0
 
-  private fun loader(timeoutMs: Long = 5_000, maxBytes: Long = NottiInAppImageLoader.MAX_BYTES): NottiInAppImageLoader {
+  private fun loader(
+    timeoutMs: Long = 5_000,
+    maxBytes: Long = NottiInAppImageLoader.MAX_BYTES,
+    cacheBytes: Int = NottiInAppImageLoader.MAX_CACHE_BYTES
+  ): NottiInAppImageLoader {
     val base = OkHttpClient.Builder()
       .sslSocketFactory(clientCerts.sslSocketFactory(), clientCerts.trustManager)
       .addInterceptor { chain ->
         calls++
         chain.proceed(chain.request())
       }
-    return NottiInAppImageLoader(NottiInAppImageLoader.newClient(base, timeoutMs), sameThread, maxBytes)
+    return NottiInAppImageLoader(NottiInAppImageLoader.newClient(base, timeoutMs), sameThread, maxBytes, cacheBytes)
   }
+
+  /** ARGB_8888 bytes of the default 400 x 200 [image]. */
+  private val imageBytes = 400 * 200 * 4
 
   private fun png(width: Int = 400, height: Int = 200): Buffer {
     val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
@@ -127,6 +134,25 @@ class NottiInAppImageLoaderTest {
     val bitmap = load(loader(), url(), maxSide = 100)!!
     assertEquals(100, bitmap.width)
     assertEquals(50, bitmap.height)
+  }
+
+  @Test
+  fun `an image larger than the slot never decodes above it`() {
+    // 400 px into a 300 px slot: half size, not full size.
+    server.enqueue(image(400, 200))
+    val bitmap = load(loader(), url(), maxSide = 300)!!
+    assertEquals(200, bitmap.width)
+    assertEquals(100, bitmap.height)
+  }
+
+  @Test
+  fun `an error while loading, even an OutOfMemoryError, is no image and still completes`() {
+    val client = NottiInAppImageLoader.newClient(
+      OkHttpClient.Builder()
+        .sslSocketFactory(clientCerts.sslSocketFactory(), clientCerts.trustManager)
+        .addInterceptor { throw OutOfMemoryError("decode") }
+    )
+    assertNull(load(NottiInAppImageLoader(client, sameThread), url()))
   }
 
   @Test
@@ -205,8 +231,8 @@ class NottiInAppImageLoaderTest {
   }
 
   @Test
-  fun `the cache keeps the five most recent images`() {
-    val loader = loader()
+  fun `the cache keeps the most recent images that fit its byte budget`() {
+    val loader = loader(cacheBytes = 5 * imageBytes)
     repeat(6) { server.enqueue(image()) }
     for (i in 0 until 6) load(loader, url("/$i.png"))
 
@@ -216,6 +242,28 @@ class NottiInAppImageLoaderTest {
     assertEquals(6, server.requestCount)
     load(loader, url("/0.png"))
     assertEquals(7, server.requestCount)
+  }
+
+  @Test
+  fun `an image larger than the whole cache is delivered but not kept`() {
+    server.enqueue(image())
+    server.enqueue(image())
+    val loader = loader(cacheBytes = imageBytes - 1)
+
+    assertNotNull(load(loader, url()))
+    assertNotNull(load(loader, url()))
+    assertEquals(2, server.requestCount)
+  }
+
+  @Test
+  fun `the default cache is a sixteenth of the heap, capped`() {
+    val mib = 1024L * 1024
+    assertEquals(4 * mib, NottiInAppImageLoader.defaultCacheBytes(64 * mib).toLong())
+    assertEquals(16 * mib, NottiInAppImageLoader.defaultCacheBytes(256 * mib).toLong())
+    assertEquals(
+      NottiInAppImageLoader.MAX_CACHE_BYTES,
+      NottiInAppImageLoader.defaultCacheBytes(Long.MAX_VALUE)
+    )
   }
 
   @Test
@@ -230,11 +278,16 @@ class NottiInAppImageLoaderTest {
   }
 
   @Test
-  fun `sample size is the largest power of two keeping the long side at least the slot`() {
+  fun `sample size is the smallest power of two keeping the long side at most the slot`() {
     assertEquals(1, NottiInAppImageLoader.sampleSize(400, 200, 400))
-    assertEquals(1, NottiInAppImageLoader.sampleSize(400, 200, 300))
+    assertEquals(2, NottiInAppImageLoader.sampleSize(400, 200, 300))
     assertEquals(2, NottiInAppImageLoader.sampleSize(400, 200, 200))
     assertEquals(4, NottiInAppImageLoader.sampleSize(200, 400, 100))
     assertEquals(1, NottiInAppImageLoader.sampleSize(400, 200, 0))
+    // A partial pixel rounds up: 401 / 2 decodes at 201, past a 200 slot.
+    assertEquals(4, NottiInAppImageLoader.sampleSize(401, 10, 200))
+    // The review case: a ~4800 px square on a 1080 x 2400 screen.
+    assertEquals(2, NottiInAppImageLoader.sampleSize(4800, 4800, 2400))
+    assertEquals(2, NottiInAppImageLoader.sampleSize(4000, 4000, 2400))
   }
 }

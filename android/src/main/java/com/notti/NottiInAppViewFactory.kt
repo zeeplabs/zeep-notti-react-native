@@ -144,11 +144,24 @@ class InAppOverlayLayout internal constructor(
  * Scrollable content first, fixed part (buttons) below it, never taller than
  * [maxHeightPx]: the buttons stay reachable and the text scrolls
  * (SDKIAM-24). With [fill] the content takes all the height, so the buttons
- * are pinned to the bottom (`full`).
+ * are pinned to the bottom (`full`). When the button row alone is taller than
+ * the room inside the padding (a bar in landscape at a large font scale), it
+ * moves into the scroll container after the content ([buttonsInScroll]), so
+ * the card keeps its cap and every button can be scrolled to and tapped; it
+ * moves back once it fits again (rotation, resize).
  */
 class InAppColumnLayout internal constructor(context: Context, private val fill: Boolean) : ViewGroup(context) {
 
   var maxHeightPx: Int = Int.MAX_VALUE
+
+  /** The scroll container (first child), its body and the button row; set by the factory. */
+  internal var scroll: ScrollView? = null
+  internal var scrollBody: InAppScrollBody? = null
+  internal var buttonRow: View? = null
+
+  /** The button row does not fit below the scroll container: it scrolls with the content. */
+  var buttonsInScroll: Boolean = false
+    private set
 
   override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
     val width = MeasureSpec.getSize(widthMeasureSpec)
@@ -158,21 +171,59 @@ class InAppColumnLayout internal constructor(context: Context, private val fill:
     }
     val innerWidth = max(0, width - paddingLeft - paddingRight)
     val exactWidth = MeasureSpec.makeMeasureSpec(innerWidth, MeasureSpec.EXACTLY)
+    val row = buttonRow?.takeIf { it.visibility != GONE }
     var fixedHeight = 0
-    for (i in 1 until childCount) {
-      val child = getChildAt(i)
-      if (child.visibility == GONE) continue
-      child.measure(exactWidth, MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED))
-      fixedHeight += child.measuredHeight
+    if (row != null) {
+      row.measure(exactWidth, MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED))
+      fixedHeight = row.measuredHeight
     }
-    val available = max(0, limit - paddingTop - paddingBottom - fixedHeight)
+    val room = max(0, limit - paddingTop - paddingBottom)
+    // Depends only on the row and the room, never on where the row is: stable across passes.
+    placeButtons(inScroll = row != null && fixedHeight > room)
     val content = getChildAt(0)
+    if (buttonsInScroll) {
+      // The scroll container takes the whole room; the row is part of what it scrolls.
+      content.measure(
+        exactWidth,
+        MeasureSpec.makeMeasureSpec(room, if (fill) MeasureSpec.EXACTLY else MeasureSpec.AT_MOST)
+      )
+      setMeasuredDimension(width, paddingTop + paddingBottom + content.measuredHeight)
+      return
+    }
+    val available = max(0, room - fixedHeight)
     content.measure(
       exactWidth,
       MeasureSpec.makeMeasureSpec(available, if (fill) MeasureSpec.EXACTLY else MeasureSpec.AT_MOST)
     )
     val total = paddingTop + paddingBottom + content.measuredHeight + fixedHeight
     setMeasuredDimension(width, total)
+  }
+
+  /**
+   * Moves the button row between this column and the scroll body. Runs inside
+   * a measure pass, so it uses the `*InLayout` variants (no new layout request,
+   * no measure/layout loop) and forces the scroll container and its body to
+   * measure again even when their spec did not change. Focus order is kept:
+   * the row always follows the content, and the close control (a later child
+   * of the card) stays drawn above it.
+   */
+  private fun placeButtons(inScroll: Boolean) {
+    val row = buttonRow ?: return
+    val body = scrollBody ?: return
+    if (inScroll == buttonsInScroll) return
+    buttonsInScroll = inScroll
+    if (inScroll) {
+      removeViewInLayout(row)
+      body.hostRow(row)
+    } else {
+      body.releaseRow(row)
+      addViewInLayout(row, -1, row.layoutParams ?: generateDefaultLayoutParams(), true)
+    }
+    body.forceLayout()
+    scroll?.forceLayout()
+    // The content just got shorter or taller: start again from its top.
+    scroll?.scrollTo(0, 0)
+    invalidate()
   }
 
   override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
@@ -183,6 +234,55 @@ class InAppColumnLayout internal constructor(context: Context, private val fill:
       child.layout(paddingLeft, y, paddingLeft + child.measuredWidth, y + child.measuredHeight)
       y += child.measuredHeight
     }
+  }
+}
+
+/**
+ * The only child of the scroll container: the message content, then the
+ * button row while [InAppColumnLayout.buttonsInScroll] (SDKIAM-24). Measured
+ * EXACTLY (the `full` fill viewport, only when everything is shorter than the
+ * viewport), the content takes the height the row leaves, so the `full` image
+ * grows into the free room and never under the buttons.
+ */
+class InAppScrollBody internal constructor(context: Context) : ViewGroup(context) {
+
+  override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+    val width = MeasureSpec.getSize(widthMeasureSpec)
+    val exactWidth = MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY)
+    val unspecified = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
+    var rowHeight = 0
+    for (i in 1 until childCount) {
+      val child = getChildAt(i)
+      if (child.visibility == GONE) continue
+      child.measure(exactWidth, unspecified)
+      rowHeight += child.measuredHeight
+    }
+    val content = getChildAt(0)
+    if (MeasureSpec.getMode(heightMeasureSpec) == MeasureSpec.EXACTLY) {
+      val free = max(0, MeasureSpec.getSize(heightMeasureSpec) - rowHeight)
+      content.measure(exactWidth, MeasureSpec.makeMeasureSpec(free, MeasureSpec.EXACTLY))
+    } else {
+      content.measure(exactWidth, unspecified)
+    }
+    setMeasuredDimension(width, content.measuredHeight + rowHeight)
+  }
+
+  override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
+    var y = 0
+    for (i in 0 until childCount) {
+      val child = getChildAt(i)
+      if (child.visibility == GONE) continue
+      child.layout(0, y, child.measuredWidth, y + child.measuredHeight)
+      y += child.measuredHeight
+    }
+  }
+
+  internal fun hostRow(row: View) {
+    addViewInLayout(row, -1, row.layoutParams ?: generateDefaultLayoutParams(), true)
+  }
+
+  internal fun releaseRow(row: View) {
+    removeViewInLayout(row)
   }
 }
 
@@ -519,11 +619,15 @@ object NottiInAppViewFactory {
       if (imageView == null) textBlock.setPaddingRelative(0, 0, closeReserve, 0)
       scrollContent.addView(textBlock, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
     }
+    // The body hosts the button row too when it does not fit below the scroll (SDKIAM-24).
+    val scrollBody = InAppScrollBody(context).apply { addView(scrollContent) }
     val scroll = ScrollView(context).apply {
       isFillViewport = full
-      addView(scrollContent)
+      addView(scrollBody)
     }
     column.addView(scroll)
+    column.scroll = scroll
+    column.scrollBody = scrollBody
     card.scroll = scroll
 
     val buttonViews = message.buttons.mapIndexed { index, button ->
@@ -550,7 +654,10 @@ object NottiInAppViewFactory {
       setPadding(0, px(12f), 0, 0)
       buttonViews.forEach { addView(it) }
     }
-    buttonRow?.let { column.addView(it) }
+    buttonRow?.let {
+      column.addView(it)
+      column.buttonRow = it
+    }
 
     val overImage = imageView != null && !bar
     val close = TextView(context).apply {

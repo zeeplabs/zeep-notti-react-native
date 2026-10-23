@@ -2,12 +2,10 @@ package com.notti
 
 import android.Manifest
 import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Geocoder
 import android.location.LocationManager
 import android.os.Build
-import android.provider.Settings
 import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationManagerCompat
@@ -248,12 +246,10 @@ class NottiModule(reactContext: ReactApplicationContext) :
     coordinator.pushPermissionPort = port
   }
 
+  /** A missing settings activity throws here and is caught by [NottiPushPermissionAction.run]. */
   private fun openAppNotificationSettings() {
     val activity = reactApplicationContext.currentActivity ?: return
-    activity.startActivity(
-      Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-        .putExtra(Settings.EXTRA_APP_PACKAGE, activity.packageName)
-    )
+    activity.startActivity(appNotificationSettingsIntent(Build.VERSION.SDK_INT, activity.packageName))
   }
 
   override fun requestPermission(promise: Promise?) {

@@ -1,8 +1,14 @@
 package com.notti
 
+import android.net.Uri
+import android.provider.Settings
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
 class NottiPushPermissionActionTest {
 
@@ -81,5 +87,34 @@ class NottiPushPermissionActionTest {
     assertEquals(1, p.logs.size)
     assertTrue(p.logs[0].contains("IllegalStateException"))
     assertTrue(!p.logs[0].contains("boom"))
+  }
+}
+
+/**
+ * minSdk is 24 but the notification settings action exists only from 26.
+ * The API level is a parameter, so one Robolectric SDK covers both branches.
+ */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
+class NottiAppNotificationSettingsIntentTest {
+
+  @Test
+  fun `API 26 and above opens the app notification settings`() {
+    listOf(26, 34).forEach { sdk ->
+      val intent = appNotificationSettingsIntent(sdk, "com.example.host")
+      assertEquals(Settings.ACTION_APP_NOTIFICATION_SETTINGS, intent.action)
+      assertEquals("com.example.host", intent.getStringExtra(Settings.EXTRA_APP_PACKAGE))
+      assertNull(intent.data)
+    }
+  }
+
+  @Test
+  fun `below API 26 opens the app details settings for the package`() {
+    listOf(24, 25).forEach { sdk ->
+      val intent = appNotificationSettingsIntent(sdk, "com.example.host")
+      assertEquals(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, intent.action)
+      assertEquals(Uri.parse("package:com.example.host"), intent.data)
+      assertNull(intent.getStringExtra(Settings.EXTRA_APP_PACKAGE))
+    }
   }
 }

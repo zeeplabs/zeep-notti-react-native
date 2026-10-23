@@ -145,8 +145,10 @@ class NottiInAppCoordinatorTest {
 
   private var consumed = 0
 
-  private fun init(appId: String = "app-1") {
+  /** [registered] stands in for a registration of this process (A6) without its flush trigger. */
+  private fun init(appId: String = "app-1", registered: Boolean = true) {
     coordinator.onInitialized(appId, clientKey, baseUrl)
+    if (registered) coordinator.session.markRegistered()
   }
 
   private fun startAndRegister() {
@@ -215,6 +217,41 @@ class NottiInAppCoordinatorTest {
   }
 
   @Test
+  fun `eligible waits for the registration of this process`() {
+    server.enqueue(messages(sessionStart("s1")))
+    init(registered = false)
+    coordinator.onSessionStarted()
+    coordinator.onNetworkAvailable()
+    executor.runAll()
+    assertEquals(0, server.requestCount)
+    coordinator.onRegistered()
+    executor.runAll()
+    assertEquals(listOf(eligiblePath()), paths(takeAll()))
+    assertEquals(listOf("s1"), presenter.presented.map { it.message.id })
+  }
+
+  @Test
+  fun `the registration outlives the session but not a config change`() {
+    server.enqueue(messages())
+    server.enqueue(messages())
+    init()
+    startAndRegister()
+    coordinator.onSessionEnded()
+    coordinator.onSessionStarted()
+    executor.runAll()
+    assertEquals(listOf(eligiblePath(), eligiblePath()), paths(takeAll()))
+
+    server.enqueue(messages())
+    coordinator.onInitialized("app-2", clientKey, baseUrl)
+    coordinator.onNetworkAvailable()
+    executor.runAll()
+    assertEquals(0, server.requestCount - consumed)
+    coordinator.onRegistered()
+    executor.runAll()
+    assertEquals(listOf(eligiblePath("app-2")), paths(takeAll()))
+  }
+
+  @Test
   fun `null identity defers the fetch to the next trigger`() {
     identity = null
     init()
@@ -265,6 +302,37 @@ class NottiInAppCoordinatorTest {
    * queued with no backoff retry until the next trigger.
    */
   @Test
+  fun `the pre-fetch flush still runs while a full flush backs off`() {
+    queuedEvent()
+    server.enqueue(status(503))
+    server.enqueue(status(201))
+    server.enqueue(messages())
+    init()
+    coordinator.onRegistered()
+    executor.runAll()
+    coordinator.onSessionStarted()
+    executor.runAll()
+    assertEquals(listOf(eventsPath("old"), eventsPath("old"), eligiblePath()), paths(takeAll()))
+    assertTrue(store.all().isEmpty())
+    executor.advance(60_000)
+    assertEquals(3, server.requestCount)
+  }
+
+  @Test
+  fun `the pre-fetch flush honors an events 429 pause`() {
+    queuedEvent()
+    server.enqueue(status(429, retryAfter = "30"))
+    server.enqueue(messages())
+    init()
+    coordinator.onRegistered()
+    executor.runAll()
+    coordinator.onSessionStarted()
+    executor.runAll()
+    assertEquals(listOf(eventsPath("old"), eligiblePath()), paths(takeAll()))
+    assertEquals(1, store.all().size)
+  }
+
+  @Test
   fun `a failed pre-fetch flush is not retried until the next trigger`() {
     queuedEvent()
     server.enqueue(status(503))
@@ -296,6 +364,26 @@ class NottiInAppCoordinatorTest {
     assertNull(coordinator.session.eligiblePausedUntilMs)
     coordinator.onSessionStarted()
     executor.runAll()
+    assertEquals(2, server.requestCount)
+    assertEquals(listOf("s1"), presenter.presented.map { it.message.id })
+  }
+
+  /** A 429 pause still running when the next session opens delays that session's fetch, never cancels it. */
+  @Test
+  fun `a 429 pause carried into the next session fetches once it elapses`() {
+    server.enqueue(status(429, retryAfter = "30"))
+    server.enqueue(messages(sessionStart("s1")))
+    init()
+    startAndRegister()
+    assertEquals(1, server.requestCount)
+    executor.advance(10_000)
+    coordinator.onSessionEnded()
+    coordinator.onSessionStarted()
+    executor.runAll()
+    assertEquals(1, server.requestCount)
+    executor.advance(19_000)
+    assertEquals(1, server.requestCount)
+    executor.advance(1_000)
     assertEquals(2, server.requestCount)
     assertEquals(listOf("s1"), presenter.presented.map { it.message.id })
   }

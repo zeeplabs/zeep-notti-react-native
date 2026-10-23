@@ -93,6 +93,14 @@ class NottiInAppSession(
     private set
   var keyRejected: Boolean = false
     private set
+
+  /**
+   * The device registered in this process (A6): only then are `device_id`
+   * and the token fresh enough for `eligible`. Survives session ends; reset
+   * by a config change, whose new core registers again.
+   */
+  var registeredInProcess: Boolean = false
+    private set
   var display: InAppDisplay? = null
     private set
 
@@ -126,6 +134,7 @@ class NottiInAppSession(
     eligiblePausedUntilMs = null
     eventsPausedUntilMs = null
     keyRejected = false
+    registeredInProcess = false
     inactiveWarned.clear()
     val teardown = display
     display = null
@@ -263,6 +272,10 @@ class NottiInAppSession(
   fun setAppForeground(foreground: Boolean) {
     appForeground = foreground
     display?.clock?.setForeground(foreground)
+  }
+
+  fun markRegistered() {
+    registeredInProcess = true
   }
 
   fun markKeyRejected() {

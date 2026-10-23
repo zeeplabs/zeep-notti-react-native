@@ -131,6 +131,8 @@ To publish a new version, run the following:
 pnpm release
 ```
 
+Before running it, rename the hand-written `## [Unreleased]` section of `CHANGELOG.md` to `## Upgrade notes for X.Y.Z (released)` (the version about to be released) in its own commit, e.g. `docs(changelog): upgrade notes for X.Y.Z`. release-it prepends the generated entries at the top of the file and never touches that section, so skipping this step ships the notes still titled "Unreleased".
+
 ### Scripts
 
 The `package.json` file contains various scripts for common tasks:

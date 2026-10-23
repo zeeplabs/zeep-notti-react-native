@@ -99,6 +99,10 @@ final class NottiInAppSession {
   private(set) var config: InAppConfig?
   private(set) var fetch: InAppFetchState = .idle
   private(set) var keyRejected = false
+  /// The device registered in this process (A6): only then are `device_id`
+  /// and the token fresh enough for `eligible`. Survives session ends; reset
+  /// by a config change, whose new core registers again.
+  private(set) var registeredInProcess = false
   private(set) var display: InAppDisplay?
 
   /// Deadlines (monotonic ms) of a `429` pause; reset only by a config change.
@@ -107,8 +111,8 @@ final class NottiInAppSession {
 
   private let monotonicMs: () -> Int64
   private let uuid: () -> String
-  private var hasOpenedSession = false
-  private var appForeground = true
+  private(set) var hasOpenedSession = false
+  private(set) var appForeground = true
   private var inactiveWarned = Set<InAppRoute>()
   private var held: [InAppMessage] = []
   private var shownIds = Set<String>()
@@ -141,6 +145,7 @@ final class NottiInAppSession {
     eligiblePausedUntilMs = nil
     eventsPausedUntilMs = nil
     keyRejected = false
+    registeredInProcess = false
     inactiveWarned.removeAll()
     let teardown = display
     display = nil
@@ -275,6 +280,10 @@ final class NottiInAppSession {
   func setAppForeground(_ foreground: Bool) {
     appForeground = foreground
     display?.clock?.setForeground(foreground)
+  }
+
+  func markRegistered() {
+    registeredInProcess = true
   }
 
   func markKeyRejected() {

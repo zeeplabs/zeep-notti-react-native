@@ -1,5 +1,6 @@
 import XCTest
 #if canImport(UIKit)
+import ImageIO
 import UIKit
 #endif
 // Test target compiles the SDK's Swift sources directly (see NottiTests
@@ -100,6 +101,39 @@ final class NottiInAppImageLoaderTests: XCTestCase {
     let image = try XCTUnwrap(load(loader(), maxSide: 400))
     XCTAssertEqual(max(pixels(image).width, pixels(image).height), 400, accuracy: 1)
     XCTAssertEqual(pixels(image).width / pixels(image).height, 2, accuracy: 0.05)
+  }
+
+  /// A JPEG of `width`x`height` stored pixels tagged with EXIF `orientation`.
+  private func jpeg(_ width: Int, _ height: Int, orientation: Int) throws -> Data {
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    let image = UIGraphicsImageRenderer(size: CGSize(width: width, height: height), format: format).image { context in
+      UIColor.red.setFill()
+      context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    }
+    let output = NSMutableData()
+    let destination = try XCTUnwrap(CGImageDestinationCreateWithData(output, "public.jpeg" as CFString, 1, nil))
+    let properties = [kCGImagePropertyOrientation: orientation] as CFDictionary
+    CGImageDestinationAddImage(destination, try XCTUnwrap(image.cgImage), properties)
+    XCTAssertTrue(CGImageDestinationFinalize(destination))
+    return output as Data
+  }
+
+  func testASmallImageHonorsItsExifOrientation() throws {
+    // Stored 40x20, orientation 6 (rotate 90° clockwise to display): upright it is 20x40.
+    let data = try jpeg(40, 20, orientation: 6)
+    StubURLProtocol.enqueue(.data(data))
+    let image = try XCTUnwrap(load(loader(), maxSide: 2000))
+    XCTAssertEqual(pixels(image), CGSize(width: 20, height: 40))
+    XCTAssertEqual(image.imageOrientation, .up)
+  }
+
+  func testALargeImageHonorsItsExifOrientationWhenDownsampled() throws {
+    let data = try jpeg(800, 400, orientation: 6)
+    StubURLProtocol.enqueue(.data(data))
+    let image = try XCTUnwrap(load(loader(), maxSide: 200))
+    XCTAssertEqual(pixels(image).width, 100, accuracy: 1)
+    XCTAssertEqual(pixels(image).height, 200, accuracy: 1)
   }
 
   func testABodyPastTheSizeLimitIsAborted() {

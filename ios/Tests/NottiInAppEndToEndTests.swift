@@ -336,7 +336,10 @@ final class NottiInAppEndToEndTests: XCTestCase {
     XCTAssertEqual(display.clock?.isRunning, true, "foreground signal reached the coordinator")
   }
 
-  func test_aDisplaySelectedWhileTheAppIsInBackgroundHasItsClockPaused() throws {
+  /// The core's session report can lag behind the app leaving: while the
+  /// coordinator believes the app is in background it opens no session and
+  /// selects nothing; the next foreground opens it.
+  func test_aSessionReportedWhileTheAppIsInBackgroundSelectsNothing() throws {
     installProcessObservers()
     StubURLProtocol.enqueue(registered)
     StubURLProtocol.enqueue(eligible(sessionStart("s1", extra: #","dismiss_after_seconds":30"#)))
@@ -345,10 +348,15 @@ final class NottiInAppEndToEndTests: XCTestCase {
     NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
     activate() // no willEnterForeground: the coordinator still believes the app is in background
 
+    XCTAssertTrue(presenter.presented.isEmpty, "the background signal reached the coordinator")
+
+    NotificationCenter.default.post(name: UIApplication.willEnterForegroundNotification, object: nil)
+    activate()
+
     let display = try XCTUnwrap(presenter.presented.first)
     StubURLProtocol.enqueue(created) // impression
     showVisible(display)
-    XCTAssertEqual(display.clock?.isRunning, false, "the background signal reached the coordinator")
+    XCTAssertEqual(display.clock?.isRunning, true)
   }
 }
 
@@ -436,6 +444,40 @@ final class NottiInAppWiringTests: XCTestCase {
     _ = module()
 
     XCTAssertNotNil(NottiInApp.get())
+  }
+
+  /// Runs the main-queue hops queued so far.
+  private func drainMain() {
+    let drained = expectation(description: "main drained")
+    DispatchQueue.main.async { drained.fulfill() }
+    wait(for: [drained], timeout: 5)
+  }
+
+  func test_thePushPermissionPortIsWrittenOnMainAndClearedByInvalidate() {
+    let coordinator = installCoordinator()
+    let impl = module()
+
+    impl.initialize("app-1", clientKey: "key", baseUrl: "https://notti.example.com", sdkVersion: "")
+    XCTAssertNil(coordinator.pushPermissionPort, "written by a main-queue hop, never from the module queue")
+    drainMain()
+    XCTAssertNotNil(coordinator.pushPermissionPort)
+
+    impl.invalidate()
+    drainMain()
+    XCTAssertNil(coordinator.pushPermissionPort)
+  }
+
+  func test_aStaleInvalidateLeavesTheNewerModulesPushPermissionPort() {
+    let coordinator = installCoordinator()
+    let old = module()
+    old.initialize("app-1", clientKey: "key", baseUrl: "https://notti.example.com", sdkVersion: "")
+    let new = module()
+    new.initialize("app-1", clientKey: "key", baseUrl: "https://notti.example.com", sdkVersion: "")
+
+    old.invalidate()
+    drainMain()
+
+    XCTAssertNotNil(coordinator.pushPermissionPort)
   }
 
   func test_invalidateLeavesTheInAppCoordinatorInstalled() {
