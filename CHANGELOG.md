@@ -155,7 +155,7 @@ Entries below `[Unreleased]` are generated automatically by `pnpm release`
 Angular preset) from Conventional Commit messages — do not hand-edit past
 entries once released.
 
-## [Unreleased]
+## Upgrade notes for 0.8.0 (released)
 
 ### Features
 
