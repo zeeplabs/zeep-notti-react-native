@@ -99,6 +99,7 @@ public class NottiDeviceStore {
   private static let keyLocationSharingEnabled = "notti_location_sharing_enabled"
   private static let keySessionLastSeenAtMs = "notti_session_last_seen_at_ms"
   private static let keyPendingCountryClear = "notti_pending_country_clear"
+  private static let keyPendingExternalUserIdClear = "notti_pending_external_user_id_clear"
   private static let keyLastSyncedCountry = "notti_last_synced_country"
   // --- Device profile field keys (device-profile-fields) ---
   private static let keyLastSyncedDeviceOs = "notti_last_synced_device_os"
@@ -273,6 +274,18 @@ public class NottiDeviceStore {
 
   public func setPendingCountryClear(_ pending: Bool) {
     defaults.set(pending, forKey: Self.keyPendingCountryClear)
+  }
+
+  /// Set by `logout`, cleared when the backend acknowledged the
+  /// `{external_user_id: null}` PATCH with a 2xx or a later `login` landed.
+  /// Persisted so a logout issued before `initialize`, offline, or whose
+  /// PATCH failed is re-sent at the next registration.
+  public func getPendingExternalUserIdClear() -> Bool {
+    defaults.bool(forKey: Self.keyPendingExternalUserIdClear)
+  }
+
+  public func setPendingExternalUserIdClear(_ pending: Bool) {
+    defaults.set(pending, forKey: Self.keyPendingExternalUserIdClear)
   }
 
   /// The last country value the backend acknowledged (2xx). Drives the

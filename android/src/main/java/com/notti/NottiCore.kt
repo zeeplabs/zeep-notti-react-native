@@ -185,6 +185,7 @@ class NottiCore(
     private const val KEY_PERMISSION_STATUS = "permissionStatus"
     private const val KEY_EMAIL = "email"
     private const val KEY_PHONE = "phone"
+    private const val KEY_EXTERNAL_USER_ID = "externalUserId"
 
     /**
      * Single-threaded so blocking HTTP work never piles up more than one
@@ -709,6 +710,9 @@ class NottiCore(
             syncProfileFieldsIfNeeded()
             syncPermissionStatusIfNeeded()
             resyncHeldEmailAndPhone()
+            if (deviceStore.getPendingExternalUserIdClear()) {
+              runOrQueue(PendingMutation("resyncLogout", KEY_EXTERNAL_USER_ID, ::clearExternalUserIdWork))
+            }
             flushEventQueue()
             inApp.onRegistered()
           }
@@ -783,34 +787,60 @@ class NottiCore(
     mutate("login") { client, deviceId, token ->
       val result = client.patchDevice(deviceId, token, mapOf("external_user_id" to externalUserId))
       when (result) {
-        is ApiResult.Success -> deviceStore.setExternalUserId(externalUserId)
+        is ApiResult.Success -> {
+          deviceStore.setExternalUserId(externalUserId)
+          // The new link supersedes a logout clear still owed to the server.
+          deviceStore.setPendingExternalUserIdClear(false)
+        }
         is ApiResult.Failure -> logger("Notti.login: PATCH failed (${result.message}) - not retried")
       }
     }
   }
 
   /**
-   * The backend does not support clearing `external_user_id` server-side
-   * (spec Edge Case) - only the SDK's locally-held association is cleared.
-   * The user's `email`/`phone` ARE cleared server-side (LGPD: a signed-out
-   * user's PII must not stay attached to the device): same durable path as
-   * [clearEmail]/[clearPhone], so a failed or pre-`initialize()` logout still
-   * converges at the next registration.
+   * Unlinks the device from the user on the backend too (`{external_user_id:
+   * null}`), so pushes sent to the signed-out user by `external_user_ids` stop
+   * reaching a shared phone. Tags and the subscription are kept. The user's
+   * `email`/`phone` are cleared through the same durable path as
+   * [clearEmail]/[clearPhone].
    *
-   * Handed to [executor] like every other mutation (and like iOS' `logout`,
-   * which hops onto its `workQueue`) rather than written straight from the
-   * caller's thread: `login("u1")` immediately followed by `logout()` would
-   * otherwise clear the id synchronously *first*, and login's PATCH - still
-   * queued on the executor - would then re-persist "u1" onto a device the
-   * user had already logged out of. The email/phone clears keep the same
-   * guarantee: their PATCHes are dispatched to the same executor after any
-   * earlier `login`/`setEmail`/`setPhone`, and the coalesce key makes the
-   * clear supersede a set still queued before registration.
+   * The external id clear is durable like the country clear: the pending flag
+   * is persisted before the PATCH and dropped only on a 2xx (or a later
+   * successful [login]), and [registerDevice] re-sends it while set - so a
+   * logout before `initialize()`, offline, or whose PATCH failed still
+   * converges. A server older than this behavior decodes the `null` as `""`,
+   * a no-op 2xx, so the flag is dropped instead of retried forever.
+   *
+   * Everything is handed to [executor] in call order (like iOS' `logout`,
+   * which hops onto its `workQueue`): `login("u1")` immediately followed by
+   * `logout()` lands login's PATCH first and the clear after it, and the
+   * coalesce keys make each clear supersede a set still queued before
+   * registration.
    */
   fun logout() {
-    dispatch("logout") { deviceStore.setExternalUserId(null) }
+    dispatch("logout") {
+      deviceStore.setExternalUserId(null)
+      deviceStore.setPendingExternalUserIdClear(true)
+    }
+    mutate("logout", KEY_EXTERNAL_USER_ID, ::clearExternalUserIdWork)
     clearEmail()
     clearPhone()
+  }
+
+  /**
+   * Unconditional, not gated on the pending flag: with `login("u1")` and then
+   * `logout()` both queued before registration, login's ack drops the flag
+   * just before this runs, and skipping would leave "u1" linked server-side.
+   * The ack also re-clears the local id that login's ack just re-persisted.
+   */
+  private fun clearExternalUserIdWork(client: NottiApiClient, deviceId: String, token: String) {
+    when (val result = client.patchDevice(deviceId, token, mapOf("external_user_id" to org.json.JSONObject.NULL))) {
+      is ApiResult.Success -> {
+        deviceStore.setExternalUserId(null)
+        deviceStore.setPendingExternalUserIdClear(false)
+      }
+      is ApiResult.Failure -> logger("Notti.logout: PATCH failed (${result.message}) - re-sent at the next registration")
+    }
   }
 
   fun setSubscription(enabled: Boolean) {

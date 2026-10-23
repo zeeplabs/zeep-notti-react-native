@@ -54,6 +54,7 @@ class NottiDeviceStore(private val prefs: SharedPreferences) {
     private const val KEY_SESSION_STARTED_AT = "notti_session_started_at_ms"
     private const val KEY_LOCATION_SHARING_ENABLED = "notti_location_sharing_enabled"
     private const val KEY_PENDING_COUNTRY_CLEAR = "notti_pending_country_clear"
+    private const val KEY_PENDING_EXTERNAL_USER_ID_CLEAR = "notti_pending_external_user_id_clear"
     private const val KEY_LAST_SYNCED_COUNTRY = "notti_last_synced_country"
     private const val KEY_LAST_FOREGROUND_AT = "notti_last_foreground_at_ms"
 
@@ -223,6 +224,19 @@ class NottiDeviceStore(private val prefs: SharedPreferences) {
   fun setPendingCountryClear(pending: Boolean) {
     // commit(), not apply(): the LGPD clear obligation must survive process death. Callers are off main (RN native-modules thread / notti-io).
     prefs.edit().putBoolean(KEY_PENDING_COUNTRY_CLEAR, pending).commit()
+  }
+
+  /**
+   * True from `logout()` until a `{external_user_id: null}` PATCH is
+   * acknowledged with a 2xx or a later `login()` lands: the server still links
+   * this device to the signed-out user, so the clear is re-sent at the next
+   * registration instead of being lost offline / before `initialize()`.
+   */
+  fun getPendingExternalUserIdClear(): Boolean = prefs.getBoolean(KEY_PENDING_EXTERNAL_USER_ID_CLEAR, false)
+
+  fun setPendingExternalUserIdClear(pending: Boolean) {
+    // commit(), not apply(), for the same reason as setPendingCountryClear: the clear must survive process death.
+    prefs.edit().putBoolean(KEY_PENDING_EXTERNAL_USER_ID_CLEAR, pending).commit()
   }
 
   /** Last country acknowledged by the backend (diff before re-sending), or null. */
