@@ -1,5 +1,17 @@
 # Changelog
 
+# [0.8.0](https://github.com/zeeplabs/zeep-notti-react-native/compare/v0.7.0...v0.8.0) (2026-10-23)
+
+
+### Bug Fixes
+
+* **core:** keep only the latest login or logout queued before registration ([#41](https://github.com/zeeplabs/zeep-notti-react-native/issues/41)) ([3b063c4](https://github.com/zeeplabs/zeep-notti-react-native/commit/3b063c49bc9d9c4f12600b792d27550c8eb7a9f9))
+
+
+### Features
+
+* **core:** clear external_user_id server-side on logout ([#40](https://github.com/zeeplabs/zeep-notti-react-native/issues/40)) ([96f0500](https://github.com/zeeplabs/zeep-notti-react-native/commit/96f05002888aaa7a2cd55960e8500f0e752b8c48))
+
 # [0.7.0](https://github.com/zeeplabs/zeep-notti-react-native/compare/v0.6.0...v0.7.0) (2026-10-23)
 
 

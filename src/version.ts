@@ -7,4 +7,4 @@
  * field was never sent. `version.test.ts` fails when this drifts from
  * `package.json`; `scripts/sync-sdk-version.js` rewrites it on release.
  */
-export const SDK_VERSION = '0.7.0';
+export const SDK_VERSION = '0.8.0';
