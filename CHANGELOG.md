@@ -167,6 +167,12 @@ Entries below `[Unreleased]` are generated automatically by `pnpm release`
 Angular preset) from Conventional Commit messages — do not hand-edit past
 entries once released.
 
+## [Unreleased]
+
+### Bug Fixes
+
+* **iOS builds with `use_frameworks!` (static or dynamic linkage) compile again.** 0.8.0 failed with `'Notti-Swift.h' file not found` in `Notti.mm` when the app's Podfile uses `use_frameworks!`, which Firebase iOS and Expo's `useFrameworks` require. No API change and nothing to do in your app beyond upgrading. Apps building with static libraries (the default) were not affected.
+
 ## Upgrade notes for 0.8.0 (released)
 
 ### Features
