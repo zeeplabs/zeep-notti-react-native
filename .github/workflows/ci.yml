@@ -219,3 +219,49 @@ jobs:
         run: |
           pnpm turbo run build:ios --cache-dir="${{ env.TURBO_CACHE_DIR }}"
 
+  # The default job above builds with static libraries only. Integrators with
+  # Firebase iOS or Expo `useFrameworks` build with `use_frameworks!`, where the
+  # generated Swift header moves into the framework; 0.8.0 shipped unable to
+  # compile there because no job covered it. The example Podfile reads
+  # USE_FRAMEWORKS.
+  build-ios-frameworks:
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        linkage: [static, dynamic]
+
+    env:
+      XCODE_VERSION: 26
+      USE_FRAMEWORKS: ${{ matrix.linkage }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      - name: Use appropriate Xcode version
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        with:
+          xcode-version: ${{ env.XCODE_VERSION }}
+
+      - name: Install cocoapods
+        run: |
+          cd example
+          bundle install
+          bundle exec pod repo update --verbose
+          bundle exec pod install --project-directory=ios
+
+      - name: Build example for iOS (use_frameworks! ${{ matrix.linkage }})
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -workspace example/ios/NottiExample.xcworkspace \
+            -scheme NottiExample \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO
+
