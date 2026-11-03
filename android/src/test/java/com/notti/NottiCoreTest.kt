@@ -3174,19 +3174,26 @@ fun `requestPermission result syncs the OS permission status`() {
   }
 }
 
-/** Same in-memory SharedPreferences fake used by NottiDeviceStoreTest. */
+/**
+ * Same in-memory SharedPreferences fake used by NottiDeviceStoreTest, but
+ * thread-safe like the real `SharedPreferences`: NottiCore writes some keys on
+ * the caller's thread (`setContactField`'s held value, e.g. from `logout()`)
+ * while the executor reads `device_id`/token. An unsynchronized map could
+ * return `null` mid-resize, queue the mutation as "not registered" and drop a
+ * request - the flaky logout tests.
+ */
 private class FakePrefsForCore : android.content.SharedPreferences {
   private val values = mutableMapOf<String, Any?>()
 
-  override fun getAll(): MutableMap<String, *> = values.toMutableMap()
-  override fun getString(key: String?, defValue: String?): String? = values[key] as? String ?: defValue
+  override fun getAll(): MutableMap<String, *> = synchronized(values) { values.toMutableMap() }
+  override fun getString(key: String?, defValue: String?): String? = synchronized(values) { values[key] as? String ?: defValue }
   override fun getStringSet(key: String?, defValues: MutableSet<String>?) =
     throw UnsupportedOperationException()
-  override fun getInt(key: String?, defValue: Int) = values[key] as? Int ?: defValue
-  override fun getLong(key: String?, defValue: Long) = values[key] as? Long ?: defValue
-  override fun getFloat(key: String?, defValue: Float) = values[key] as? Float ?: defValue
-  override fun getBoolean(key: String?, defValue: Boolean) = values[key] as? Boolean ?: defValue
-  override fun contains(key: String?) = values.containsKey(key)
+  override fun getInt(key: String?, defValue: Int) = synchronized(values) { values[key] as? Int ?: defValue }
+  override fun getLong(key: String?, defValue: Long) = synchronized(values) { values[key] as? Long ?: defValue }
+  override fun getFloat(key: String?, defValue: Float) = synchronized(values) { values[key] as? Float ?: defValue }
+  override fun getBoolean(key: String?, defValue: Boolean) = synchronized(values) { values[key] as? Boolean ?: defValue }
+  override fun contains(key: String?) = synchronized(values) { values.containsKey(key) }
   override fun edit(): android.content.SharedPreferences.Editor = FakeEditor()
   override fun registerOnSharedPreferenceChangeListener(
     listener: android.content.SharedPreferences.OnSharedPreferenceChangeListener?
@@ -3215,9 +3222,11 @@ private class FakePrefsForCore : android.content.SharedPreferences {
     }
 
     override fun apply() {
-      if (shouldClear) values.clear()
-      removals.forEach { values.remove(it) }
-      values.putAll(pending)
+      synchronized(values) {
+        if (shouldClear) values.clear()
+        removals.forEach { values.remove(it) }
+        values.putAll(pending)
+      }
     }
   }
 }
