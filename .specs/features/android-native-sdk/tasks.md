@@ -170,9 +170,9 @@ the native bridge through an `internal var target` (default: native) so the test
 **Depends on**: T1
 **Requirements**: ANSDK-11, ANSDK-17
 **Done when**:
-- [ ] Both calls reach the fake target with the same `RemoteMessage`/token
-- [ ] With the real target and no native runtime both calls are safe no-ops (Robolectric)
-- [ ] A Kotlin and a Java snippet calling the 0.8.0 signatures compile with a deprecation warning only (test source or example scratch check, recorded)
+- [x] Both calls reach the fake target with the same `RemoteMessage`/token
+- [x] With the real target and no native runtime both calls are safe no-ops (Robolectric)
+- [x] A Kotlin and a Java snippet calling the 0.8.0 signatures compile with a deprecation warning only (test source or example scratch check, recorded). Recorded 2026-11-04: Kotlin through `NottiBridgeTest`; Java through a temporary `NottiBridgeJavaCallerScratch.java` in `android/src/test` compiled by `compileDebugUnitTestJavaWithJavac` with only javac's "uses or overrides a deprecated API" note, then deleted
 **Tests**: JUnit + Robolectric
 **Gate**: quick
 
