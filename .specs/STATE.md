@@ -44,6 +44,14 @@
 - **Date**: 2026-10-31
 - **Status**: proposed (spec and context written; design not started). Prerequisite: `NottiSDK` 0.2.0 with the wrapper hook.
 
+### AD-006
+- **Decision**: The Android side delegates to the published native SDK `br.com.zeeplabs:notti-android` (`zeep-notti-android-sdk`, its ROADMAP M2): `android/build.gradle` depends on the Maven artifact, the in-repo Kotlin core under `android/src/main/java/com/notti/` and its tests are deleted, and only the Turbo Module adapter, `NottiPackage` and a `@Deprecated` `com.notti.NottiBridge` shim remain. Gray areas decided by Julio, 2026-11-04 (`.specs/features/android-native-sdk/context.md`): `sdk_version`/`sdk_name` through an opt-in wrapper API in native 0.2.0 (`@NottiWrapperApi`); the bridge stays as a forwarding shim; Android and iOS ship together in 0.9.0. AD-004 stays: the adapter passes `opensInAppUrls = false`.
+- **Reason**: The Kotlin core was ported to the native SDK at `v0.8.0` and kept behavior-identical; two copies mean every Android fix is done twice, and they already differ (native AD-019 lifecycle fixes).
+- **Trade-off**: Android behavior and release timing depend on native SDK releases; integrators who remove the 0.8.0 service or provider by class name must use the new names; native behavior differences (foreground-only permission dialog, identity calls before `initialize` dropped) reach RN apps and go into the upgrade notes.
+- **Scope**: `.specs/features/android-native-sdk/`, `android/`, README Android setup, CHANGELOG. With AD-005, supersedes AD-001's "logic lives in this repo" for both platforms (logic stays native, in the native SDKs).
+- **Date**: 2026-11-04
+- **Status**: proposed (spec and context written). Prerequisite: native `wrapper-support` 0.2.0 on Maven Central.
+
 ## Pre-release review v0.3.0..HEAD (rule changes)
 
 Status: implementado nas duas plataformas (Android + iOS), com testes unitários, no working tree — **ainda não commitado**; gates não reexecutados nesta passada de docs.
