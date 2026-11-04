@@ -1,11 +1,22 @@
 package com.notti
 
+import android.app.Activity
 import android.content.Context
 import com.facebook.react.bridge.Arguments
+import com.facebook.react.bridge.Callback
+import com.facebook.react.bridge.CatalystInstance
 import com.facebook.react.bridge.JavaOnlyMap
+import com.facebook.react.bridge.JavaScriptContextHolder
+import com.facebook.react.bridge.JavaScriptModule
+import com.facebook.react.bridge.NativeModule
 import com.facebook.react.bridge.Promise
+import com.facebook.react.bridge.ReactApplicationContext
+import com.facebook.react.bridge.RuntimeExecutor
+import com.facebook.react.bridge.UIManager
 import com.facebook.react.bridge.WritableMap
+import com.facebook.react.turbomodule.core.interfaces.CallInvokerHolder
 import com.zeeplabs.notti.NottiOptions
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Implementation
 import org.robolectric.annotation.Implements
 
@@ -195,4 +206,56 @@ internal class SettledPromise : Promise {
   private fun rejected() {
     rejections++
   }
+}
+
+/**
+ * Minimal, test-only stand-in for the abstract `ReactApplicationContext`, so a
+ * real [NottiModule] can be constructed: it implements only what
+ * `ReactContext` declares abstract, and no member is reachable from the
+ * module, which hands the SDK the application context and nothing else.
+ */
+internal class FakeReactApplicationContext :
+  ReactApplicationContext(RuntimeEnvironment.getApplication()) {
+
+  override fun getCurrentActivity(): Activity? = null
+
+  override fun <T : JavaScriptModule> getJSModule(jsModuleInterface: Class<T>): T =
+    throw UnsupportedOperationException("not used by NottiModule")
+
+  override fun <T : NativeModule> hasNativeModule(nativeModuleInterface: Class<T>): Boolean = false
+
+  override fun getNativeModules(): Collection<NativeModule> = emptyList()
+
+  override fun <T : NativeModule> getNativeModule(nativeModuleInterface: Class<T>): T? = null
+
+  override fun getNativeModule(nativeModuleName: String): NativeModule? = null
+
+  override fun getRuntimeExecutor(): RuntimeExecutor? = null
+
+  override fun getCatalystInstance(): CatalystInstance =
+    throw UnsupportedOperationException("not used by NottiModule")
+
+  override fun hasActiveCatalystInstance(): Boolean = false
+
+  override fun hasActiveReactInstance(): Boolean = false
+
+  override fun hasCatalystInstance(): Boolean = false
+
+  override fun hasReactInstance(): Boolean = false
+
+  override fun destroy() = Unit
+
+  override fun handleException(e: Exception) = Unit
+
+  override fun isBridgeless(): Boolean = false
+
+  override fun getJavaScriptContextHolder(): JavaScriptContextHolder? = null
+
+  override fun getJSCallInvokerHolder(): CallInvokerHolder? = null
+
+  override fun getFabricUIManager(): UIManager? = null
+
+  override fun getSourceURL(): String = ""
+
+  override fun registerSegment(segmentId: Int, path: String?, callback: Callback?) = Unit
 }

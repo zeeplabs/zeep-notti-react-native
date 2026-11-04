@@ -190,10 +190,10 @@ to `<manifest />`. Drop `lifecycle-process`, `mockwebserver`, `okhttp-tls`, `org
 **Depends on**: T4, T5
 **Requirements**: ANSDK-01, ANSDK-06, ANSDK-17
 **Done when**:
-- [ ] `android/src/main/java/com/notti/` holds only `NottiModule.kt`, `NottiPackage.kt`, `NottiBridge.kt`, `NottiNativeApi.kt`
-- [ ] `android/src/test/java/com/notti/` holds only `NottiAdapterTest.kt`, `NottiModuleTest.kt`, `NottiBridgeTest.kt`, `NottiTestSupport.kt`
-- [ ] Merged example manifest has one provider (`com.zeeplabs.notti.NottiInitProvider`), one FCM service, `NottiPermissionActivity`
-- [ ] `quick` and `build` green
+- [x] `android/src/main/java/com/notti/` holds only `NottiModule.kt`, `NottiPackage.kt`, `NottiBridge.kt`, `NottiNativeApi.kt`
+- [x] `android/src/test/java/com/notti/` holds only `NottiAdapterTest.kt`, `NottiModuleTest.kt`, `NottiBridgeTest.kt`, `NottiTestSupport.kt`
+- [x] Merged example manifest has one provider (`com.zeeplabs.notti.NottiInitProvider`), one FCM service, `NottiPermissionActivity`
+- [x] `quick` and `build` green
 **Tests**: T3-T5 suites + rewritten `NottiModuleTest`
 **Gate**: quick + build
 
