@@ -264,8 +264,8 @@ status (implemented, pending device validation).
 **Depends on**: T7, T8, T9
 **Requirements**: ANSDK-18
 **Done when**:
-- [ ] `pnpm typecheck && pnpm lint && pnpm test && pnpm run build:android && pnpm run build:ios` green
-- [ ] `./gradlew :react-native-notti:testDebugUnitTest` green; test count reported (drop explained by the deleted core suites)
+- [x] `pnpm typecheck && pnpm lint && pnpm test && pnpm run build:android && pnpm run build:ios` green
+- [x] `./gradlew :react-native-notti:testDebugUnitTest` green; test count reported (drop explained by the deleted core suites)
 **Tests**: all
 **Gate**: full
 
