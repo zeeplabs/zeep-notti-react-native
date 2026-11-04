@@ -389,6 +389,38 @@ Build-level checks (Tasks):
 - **R4** Android behavior and timing now follow native releases; a host-side bump to 0.2.x changes RN
   behavior without an RN release. Accepted (AD-006 trade-off).
 
+## Spike results (T1, 2026-11-04)
+
+`android/build.gradle`: `api "br.com.zeeplabs:notti-android:0.2.0"` replaces
+`implementation "com.google.firebase:firebase-messaging:25.1.2"`; the old core still compiles against the
+AAR's `api` firebase-messaging. Example (RN 0.87.1, Gradle 9.4.1, AGP 9.2.1, Kotlin 2.1.20 /
+gradle-plugin 2.2.0): `./gradlew :app:assembleDebug` passes; old RN Android suite
+`:react-native-notti:testDebugUnitTest` 536 tests, 0 failures.
+
+1. **Resolution:** `notti-android:0.2.0` resolves from `mavenCentral()` with no extra repository line
+   (`releaseRuntimeClasspath`: `+--- br.com.zeeplabs:notti-android:0.2.0`).
+2. **AGP (R3):** the example runs AGP 9.2.1, so it does not exercise an AGP 8 host. The AAR declares
+   `minAndroidGradlePluginVersion=1.0.0` and `minCompileSdk=34` (`aar-metadata.properties` of the
+   published AAR), so AGP 8 accepts it by metadata [Provável]. Not proven by a build: the RN floor below
+   (0.80) ships AGP 8.9.2. Proof moves to T10 (build a scratch RN 0.80 host against the branch) or is
+   accepted as documented risk.
+3. **Kotlin:** compiles with Kotlin 2.1.20; `kotlin-stdlib` resolves to 2.2.10 (driven by
+   react-android, not by the AAR's 2.0.21). A Kotlin 1.9 host reads 2.0 metadata (compiler reads one
+   version ahead), but the RN floor already implies Kotlin >= 2.0, so it is moot.
+4. **Classpath:** one `firebase-messaging:25.1.2`, `notti-android:0.2.0`, no duplicate-class error
+   between `com.notti` and `com.zeeplabs.notti` (build passes).
+5. **RN floor (OQ-5):** first RN with Kotlin >= 2.0 is **0.77** (`@react-native/gradle-plugin`
+   `kotlin = "2.0.21"`; 0.76 is 1.9.24). First RN whose `types/index.d.ts` exports `CodegenTypes` (used
+   by `src/NativeNotti.ts`) is **0.80** (0.79: absent). README floor (T9): **React Native 0.80+**. This
+   floor comes from the JS spec, not from this migration; 0.8.0 already needed it.
+6. **Merged manifest (example debug):** `com.notti.NottiInitProvider` +
+   `com.zeeplabs.notti.NottiInitProvider` (authorities `${applicationId}.nottiinitprovider` and
+   `${applicationId}.com.zeeplabs.notti.initprovider`), `com.notti.NottiFirebaseMessagingService` +
+   `com.zeeplabs.notti.NottiFirebaseMessagingService`, `com.zeeplabs.notti.NottiPermissionActivity`.
+   Two engines while the old core lives: expected, removed in T6.
+
+No blocker for T2.
+
 ## Decisions (Julio, 2026-11-04)
 
 All seven open questions were closed with the recommended option.

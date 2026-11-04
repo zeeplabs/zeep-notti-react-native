@@ -169,9 +169,33 @@ entries once released.
 
 ## [Unreleased]
 
+### ⚠️ Breaking / attention when upgrading
+
+* **Android: the push core now comes from the native Notti Android SDK.** This package's Kotlin code is a Turbo Module adapter over `br.com.zeeplabs:notti-android:0.2.0` (Maven Central, already in React Native projects' repositories; no extra repository line). The JS API, events and payloads are unchanged. Requirements: **React Native 0.80+** (the `CodegenTypes` floor 0.8.0 already had, now documented), **Kotlin 2.0+**, **`compileSdkVersion` 34+**, **`minSdkVersion` 24**. React Native 0.80+ projects already meet the Android floors; a host on Kotlin 1.9 cannot build this release.
+* **Android: rename your `tools:node="remove"` entries.** Apps with their own `FirebaseMessagingService` that removed the SDK's service must change `com.notti.NottiFirebaseMessagingService` to `com.zeeplabs.notti.NottiFirebaseMessagingService`. An entry with the old name matches nothing, so the SDK's service is merged next to yours and both declare `com.google.firebase.MESSAGING_EVENT`: your service may stop receiving pushes. Same for the process-start hook: `com.notti.NottiInitProvider` is now `com.zeeplabs.notti.NottiInitProvider`. See README "Forwarding events manually".
+* **Android: provider authority changed** from `${applicationId}.nottiinitprovider` to `${applicationId}.com.zeeplabs.notti.initprovider`. Only matters if your app references the authority.
+* **Android: new manifest component `com.zeeplabs.notti.NottiPermissionActivity`** (translucent, not exported), merged from the SDK. It hosts the Android 13+ notification permission dialog; nothing to declare.
+* **Android: `com.notti.NottiBridge` is deprecated.** It keeps the 0.8.0 signatures and forwards to `com.zeeplabs.notti.NottiBridge`, so your service still compiles (deprecation warning only); it will be removed no earlier than 1.0. Change the import to `com.zeeplabs.notti.NottiBridge`. `onMessageReceived` now also reports the `received` event, so apps with their own service start reporting `received` like apps on the SDK's service (0.8.0's bridge only emitted the JS event). Expect a rise in `received` counts for those apps.
+* **Android: one engine per app.** Do not call `com.zeeplabs.notti.Notti` directly from a React Native app. It drives the same single native core as the JS API: a native `Notti.initialize` re-initializes it reporting `sdk_name: "android"` and the native SDK's version, and a native clicked listener makes `getInitialNotificationClick()` resolve `null`.
+
+### Features
+
+* **Android: devices report `sdk_name: "react-native"`** next to `sdk_version` (this package's version) in the device profile, under the same echo-based ack as the other profile fields. Sent once after the upgrade. Requires `zeep-notti` **v0.27.0 or later**, which uses it to gate In-App `push_permission` buttons per SDK; an older backend does not store it, and the SDK re-sends it at the next registration.
+
 ### Bug Fixes
 
+* **Android: a malformed notification tap Intent no longer crashes the app.** Reading a crafted Intent's extras could throw inside the Activity lifecycle callbacks; the tap is now dropped and logged by error class.
 * **iOS builds with `use_frameworks!` (static or dynamic linkage) compile again.** 0.8.0 failed with `'Notti-Swift.h' file not found` in `Notti.mm` when the app's Podfile uses `use_frameworks!`, which Firebase iOS and Expo's `useFrameworks` require. No API change and nothing to do in your app beyond upgrading. Apps building with static libraries (the default) were not affected.
+
+### Notes
+
+* **Android: data continuity.** The native SDK reads and writes the same `notti_prefs` file and keys as 0.8.0: an in-place upgrade keeps the device id (no new device row), the push token, tags, email, phone and the queued push and In-App events, with no migration. The only new key is `notti_last_synced_sdk_name`. The first launch sends one profile `PATCH` with the new `sdk_version` (and `sdk_name`).
+* **Android: `requestPermission()` shows the dialog only while the app is in the foreground.** Called in the background (or before an Activity resumed) it resolves `false` without a dialog and is not marked as asked, so a later request or `push_permission` button still prompts. 0.8.0 prompted from any `PermissionAwareActivity` (your `ReactActivity`).
+* **Android: the permission dialog runs in the SDK's `NottiPermissionActivity`**, over whatever Activity is in front, instead of through your `ReactActivity` (`PermissionAwareActivity`).
+* **Android: calls before `initialize()` are unchanged unless you removed `NottiInitProvider`.** With the provider in place (the default) identity calls made before `initialize()` behave as in 0.8.0. If your manifest removes `com.zeeplabs.notti.NottiInitProvider`, the SDK has no state until the first `initialize()`: every earlier call (`login`, `logout`, tags, `setSubscription`, email/phone, location sharing) is dropped with one warning line, local state included, and `getDeviceId()` returns `null`. Call `initialize()` first, or keep the provider.
+* **Android: one core per process.** 0.8.0 built a new core for each module instance; the native SDK keeps one, and a repeated `initialize()` with the same config is a no-op. In development, a JS reload is therefore expected to no longer re-run registration. Release builds are not affected.
+* **Android: `notificationReceived` and `deviceIdChanged` are emitted from the main thread** (0.8.0 emitted them from the FCM or network thread). Not visible to JS listeners.
+* Android behavior now follows the native SDK release this package pins. If your app raises `br.com.zeeplabs:notti-android` to a later 0.2.x in its own Gradle files, Gradle uses that version.
 
 ## Upgrade notes for 0.8.0 (released)
 

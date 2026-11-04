@@ -51,8 +51,8 @@ Notti is self-hosted or SaaS per deployment. By default `initialize` targets Not
 
 ## Requirements
 
-- React Native with the [New Architecture](https://reactnative.dev/architecture/landing-page) enabled (Turbo Modules).
-- Android: `minSdkVersion` compatible with `com.google.firebase:firebase-messaging` (Firebase Cloud Messaging configured in your Firebase project).
+- React Native **0.80 or later** with the [New Architecture](https://reactnative.dev/architecture/landing-page) enabled (Turbo Modules). The Codegen spec uses the `CodegenTypes` namespace, which React Native exports from 0.80 on (0.8.0 already needed it; it is now documented).
+- Android: `minSdkVersion` 24 or higher, `compileSdkVersion` 34 or higher and Kotlin 2.0 or later (React Native 0.80+ projects already meet all three), and Firebase Cloud Messaging configured in your Firebase project. The Android engine is the native SDK `br.com.zeeplabs:notti-android` (see [Bare React Native setup](#android)).
 - iOS: Push Notifications capability enabled for your app target (APNs).
 - A running [Notti](https://github.com/zeeplabs/zeep-notti) instance (self-hosted or SaaS) and an App's `appId`/`clientKey`. The device-profile fields require `zeep-notti` **v0.10.0 or later**. The `opened` event requires `zeep-notti` **v0.11.0 or later**; see [Notification event reporting](#notification-event-ctr-reporting).
 
@@ -147,7 +147,7 @@ Notti.getInitialNotificationClick().then((payload) => {
 | Method | Description |
 | --- | --- |
 | `Notti.initialize(appId, clientKey, options?)` | Registers the device with your Notti instance. `options.baseUrl` defaults to Notti's SaaS instance (`https://app.zeepnotti.app`) — pass it for self-hosted or sandbox instances. Safe to call multiple times — a repeat call with the same `appId`/`clientKey` is a no-op. Never throws: missing/invalid arguments or a missing native push prerequisite (no `google-services.json`, no APNs capability) are logged, not thrown. |
-| `Notti.requestPermission(): Promise<boolean>` | Triggers the native OS push-permission prompt. Resolves `true` immediately on Android below API 33 (no runtime permission exists there). Must be called after `initialize()` has run at least once. |
+| `Notti.requestPermission(): Promise<boolean>` | Triggers the native OS push-permission prompt. Resolves `true` immediately on Android below API 33 (no runtime permission exists there). Must be called after `initialize()` has run at least once. On Android 13+ the dialog is shown only while the app is in the foreground, from the SDK's own `NottiPermissionActivity` over whatever Activity is in front; called in the background it resolves `false` without a dialog and does not count as asked. |
 | `Notti.User.addTag(key, value)` / `Notti.User.addTags(tags)` | Merges tag(s) into the device's tag map and persists the full resulting map server-side. |
 | `Notti.User.removeTag(key)` / `Notti.User.removeTags(keys)` | Removes tag key(s) from the device's tag map. |
 | `Notti.User.setEmail(email)` / `Notti.User.setPhone(phone)` | Sets the device's first-class `email`/`phone` attribute (personal data — see [Privacy](#privacy-app-store-labels-and-lgpd)). Not format-validated by the SDK; the backend rejects malformed values. Calling it again with the value the backend already acknowledged is a no-op. Re-sent automatically on registration so a fresh device row converges. |
@@ -195,7 +195,9 @@ The Expo config plugin (below) automates all of this on `expo prebuild`. For a b
    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
    ```
 
-The library's own manifest already registers its `FirebaseMessagingService` and merges into your app automatically via Gradle manifest merging — no manual step needed for that part. The `com.google.firebase:firebase-messaging` dependency is likewise already pulled in by this library.
+This package holds no Android push core of its own: its Kotlin code is a thin Turbo Module adapter over the native Notti Android SDK, `br.com.zeeplabs:notti-android:0.2.0`, which Gradle pulls in from Maven Central (already in React Native projects' repositories, so no extra repository line). That SDK's manifest merges into your app automatically and brings `com.zeeplabs.notti.NottiFirebaseMessagingService`, the process-start hook `com.zeeplabs.notti.NottiInitProvider` (authority `${applicationId}.com.zeeplabs.notti.initprovider`), the permission-dialog host `com.zeeplabs.notti.NottiPermissionActivity` (translucent, not exported) and `POST_NOTIFICATIONS`. The `com.google.firebase:firebase-messaging` dependency is likewise already pulled in. No manual step is needed for any of it.
+
+> **One engine per app.** Use Notti only through this package's JS API. Do not also call `com.zeeplabs.notti.Notti` (`Notti.initialize`, its listeners, …) from your own Kotlin or Java code: both drive the same single native core, a native `Notti.initialize` re-initializes it with `sdk_name: "android"` and the native SDK's version instead of `react-native` and this package's version, and a native clicked listener makes `getInitialNotificationClick()` resolve `null`. The only native class an app may need is `com.zeeplabs.notti.NottiBridge` (see [Forwarding events manually](#forwarding-events-manually)).
 
 4. If your main `Activity`'s `launchMode` is `singleTask` or `singleTop` (the RN/Expo default), override `onNewIntent` and call `setIntent(intent)`. Without it, tapping a notification while the app is already running (backgrounded, not killed) reuses the existing `Activity`, `onNewIntent` fires, but `Activity.getIntent()` keeps returning the **stale** launch intent — which is what this SDK reads to detect a click. Result: `notificationClicked` silently never fires on that path, while a cold-start tap (killed app, fresh `Activity`/intent) works fine, making the bug easy to miss in testing.
 
@@ -386,7 +388,7 @@ There is currently **no API to disable** the items in this subsection: they are 
 | Notification events (CTR) | See below. | `type`, `delivery_id`, `token` |
 | In-App messages | Only when your Notti app has In-App messages: one `POST {baseUrl}/v1/apps/{appId}/in-app-messages/eligible` per session, and one `POST .../in-app-messages/{id}/events` per display event (`impression`, `click`, `dismiss`). Authenticated with the client key. Sent for every integration of this version; there is no toggle. See below. | fetch: `device_id`, `token`; events: `event_id`, `type`, `button_id` (`click` only), `reason` (`dismiss` only), `occurred_at` |
 | In-App image request | When a message has an image, the device downloads `image_url` itself. This request goes to **a host chosen by the message author, not to Notti**: `https` only, no `Authorization` header, no cookies, no device id, no token; redirects to a non-`https` URL are refused; at most 5 MiB and 10 s; at most 5 images kept in memory, none on disk. A failure just shows the message without the image. | none from the SDK (the host sees the device's IP address and user agent, as with any download) |
-| Device profile | Read natively at initialize (and permission status again at each session start and after `requestPermission`); each field sent via device `PATCH` only when it differs from the last value the backend acknowledged. A field the OS can't provide is omitted, never fabricated. | `device_os`, `device_model`, `sdk_version`, `timezone_id` (IANA), `language` (ISO 639-1) |
+| Device profile | Read natively at initialize (and permission status again at each session start and after `requestPermission`); each field sent via device `PATCH` only when it differs from the last value the backend acknowledged. A field the OS can't provide is omitted, never fabricated. | `device_os`, `device_model`, `sdk_version`, `timezone_id` (IANA), `language` (ISO 639-1); on Android also `sdk_name` (always `react-native`) |
 | Push permission status | The OS permission state, independent of `setSubscription`: `granted`, `denied`, `notDetermined`, `provisional` (iOS only). An unknown/transitional state is omitted. | `permission_status` |
 | Last unsubscribe | Timestamp of the most recent transition to unsubscribed, either `setSubscription(false)` or permission `granted` → `denied`. Never cleared by re-subscribing. | `last_unsubscribed_at` (ISO-8601 UTC) |
 
@@ -433,7 +435,9 @@ Delivery guarantees, as implemented:
 - If the process dies without a background transition (force-quit, crash), the next session start closes the orphaned session at that last heartbeat, not at "now", so time the process was dead is not counted as foreground. The estimate is at most one heartbeat interval short.
 - The credited duration of an orphaned session is capped: **12 h on Android**, **24 h on iOS**. A session with no heartbeat beyond its own start (e.g. persisted by an older SDK version) is credited **0 s**.
 - The heartbeat key differs per platform: `notti_last_foreground_at_ms` (Android) and `notti_session_last_seen_at_ms` (iOS) — see [Locally persisted data](#locally-persisted-data-backup-and-deletion).
-- On both platforms a process-wide session gate (Android `NottiModule.processSessionGate`, iOS `NottiImpl.processSessionGate` / `NottiCore.SessionGate`) ensures a single session per foreground of the process. After a JS reload with the app in the foreground, the new core adopts the persisted open session instead of closing it as an orphan: `session_count` is not changed and only the heartbeat is resumed. The gate closes when the app goes to the background. On iOS, tearing the module down (`invalidate`) removes the old core's lifecycle observers and stops its heartbeat, so the old and the new core do not end the same session twice. On Android the gate also absorbs a duplicate foreground signal (cold-start sync racing the lifecycle observer).
+- On both platforms a process-wide session gate ensures a single session per foreground of the process, and it closes when the app goes to the background.
+  - **Android:** sessions are run by the native Notti Android SDK, which keeps one core and one session gate per process. A JS reload tears down only the Turbo Module adapter: the core, its open session and its heartbeat keep running, and the `initialize` the reloaded JS sends again with the same config is a no-op, so `session_count` is not changed. The gate also absorbs a duplicate foreground signal (cold-start sync racing the lifecycle observer), and it is closed on background even if no core exists yet.
+  - **iOS:** `NottiImpl.processSessionGate` / `NottiCore.SessionGate`. After a JS reload with the app in the foreground, the new core adopts the persisted open session instead of closing it as an orphan: `session_count` is not changed and only the heartbeat is resumed. Tearing the module down (`invalidate`) removes the old core's lifecycle observers and stops its heartbeat, so the old and the new core do not end the same session twice.
 
 #### In-App message reporting
 
@@ -522,21 +526,43 @@ func userNotificationCenter(
 }
 ```
 
-**Android** — `NottiBridge` exposes the same two callbacks your own `FirebaseMessagingService` would otherwise miss:
+**Android** — Android delivers FCM messages to one service per app. Remove the SDK's service in your app's manifest and forward the two callbacks from yours to `com.zeeplabs.notti.NottiBridge` (from the native SDK this package depends on; it is on your app's compile classpath):
+
+```xml
+<!-- android/app/src/main/AndroidManifest.xml -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+  xmlns:tools="http://schemas.android.com/tools">
+  <application>
+    <service
+      android:name="com.zeeplabs.notti.NottiFirebaseMessagingService"
+      tools:node="remove" />
+  </application>
+</manifest>
+```
 
 ```kotlin
+import com.google.firebase.messaging.FirebaseMessagingService
+import com.google.firebase.messaging.RemoteMessage
+import com.zeeplabs.notti.NottiBridge
+
 class YourFirebaseMessagingService : FirebaseMessagingService() {
   override fun onNewToken(token: String) {
+    // your own handling
     NottiBridge.onNewToken(token)
   }
 
   override fun onMessageReceived(remoteMessage: RemoteMessage) {
+    // your own handling
     NottiBridge.onMessageReceived(remoteMessage)
   }
 }
 ```
 
-Note this only forwards the *events*; you're also responsible for removing this library's own manifest-declared `NottiFirebaseMessagingService` in your merged manifest (`tools:node="remove"` on the `<service>` entry) so it doesn't race your own service for the same `com.google.firebase.MESSAGING_EVENT` intent-filter.
+`onMessageReceived` runs the same code as the SDK's own service: it emits `notificationReceived` and reports the `received` event. Both methods are static for Java callers and are safe no-ops before the SDK has started.
+
+> **Upgrading from 0.8.x:** the 0.8.0 names `com.notti.NottiFirebaseMessagingService` and `com.notti.NottiInitProvider` no longer exist. A `tools:node="remove"` entry that still names them matches nothing, so the SDK's service is merged next to yours and the two compete for `com.google.firebase.MESSAGING_EVENT`; your service may stop receiving pushes. Rename the entry to `com.zeeplabs.notti.NottiFirebaseMessagingService` as above. The 0.8.0 `com.notti.NottiBridge` still compiles and forwards to `com.zeeplabs.notti.NottiBridge`, but it is deprecated (warning) and will be removed no earlier than 1.0: change the import.
+
+Keep `com.zeeplabs.notti.NottiInitProvider`. If you remove it with `tools:node="remove"`, the SDK starts only at the first `initialize()`, so call `initialize()` before any other method: until then every call (`login`, `logout`, tags, `setSubscription`, email/phone, location sharing) is dropped with a warning, local state included, and `getDeviceId()` returns `null`. Without the provider the tap that cold-launched the app is detected only when `initialize()` runs before the launch Activity resumes, which a call from JS usually does not.
 
 ## Expo setup
 
@@ -664,7 +690,7 @@ Notti persists its state in `SharedPreferences` file `notti_prefs` (Android) and
 | `notti_pending_country_clear` | Opt-out `country: null` clear not yet acknowledged by the backend |
 | `notti_pending_external_user_id_clear` | `logout()` `external_user_id: null` clear not yet acknowledged by the backend |
 | `notti_last_synced_country` | Last country code acknowledged by the backend (only ever set after opt-in) |
-| `notti_last_synced_device_os`, `notti_last_synced_device_model`, `notti_last_synced_sdk_version`, `notti_last_synced_timezone_id`, `notti_last_synced_language`, `notti_last_synced_permission_status` | Device-profile values last acknowledged by the backend |
+| `notti_last_synced_device_os`, `notti_last_synced_device_model`, `notti_last_synced_sdk_version`, `notti_last_synced_sdk_name` (Android), `notti_last_synced_timezone_id`, `notti_last_synced_language`, `notti_last_synced_permission_status` | Device-profile values last acknowledged by the backend |
 | `notti_last_unsubscribed_at_ms` | Most recent unsubscribe timestamp |
 | `notti_profile_field_ack_migrated` | Flag set once the one-time 0.6.0 profile re-sync has run (no personal data) |
 | `notti_pending_unsubscribe_at_ms`, `notti_pending_permission_unsubscribe_at_ms` | Unsubscribe timestamp (app- or permission-driven) detected but not yet acknowledged by the backend; re-sent unchanged on retry |

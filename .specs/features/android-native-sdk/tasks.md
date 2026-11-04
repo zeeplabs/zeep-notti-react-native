@@ -89,8 +89,8 @@ still compiles. Build the example (RN 0.87.1, its AGP and Kotlin 2.1.20) and rec
 **Reuses**: native README Requirements, native AD-017
 **Requirements**: ANSDK-01 (partial), ANSDK-15, ANSDK-16
 **Done when**:
-- [ ] Example Android build passes with the dependency
-- [ ] Items 1-6 recorded with command output excerpts; any failure becomes a blocker row above before T2
+- [x] Example Android build passes with the dependency
+- [x] Items 1-6 recorded with command output excerpts; any failure becomes a blocker row above before T2
 **Tests**: none (build)
 **Gate**: build + quick (old suite still green)
 
@@ -113,8 +113,8 @@ event sink type.
 **Reuses**: `ShadowArguments` (`NottiActivityLifecycleListenerTest.kt:553`)
 **Requirements**: ANSDK-02, ANSDK-03, ANSDK-17
 **Done when**:
-- [ ] Compiles next to the old core; `Notti.` appears only in `DefaultNottiNativeApi`
-- [ ] Old suite still green with the moved shadow
+- [x] Compiles next to the old core; `Notti.` appears only in `DefaultNottiNativeApi`
+- [x] Old suite still green with the moved shadow
 **Tests**: none of its own (pass-through; exercised through the fake in T3-T5)
 **Gate**: quick
 
@@ -133,10 +133,10 @@ resolves the native Boolean and never rejects; `getDeviceId` returns the native 
 **Depends on**: T2
 **Requirements**: ANSDK-02, ANSDK-03, ANSDK-04, ANSDK-17
 **Done when**:
-- [ ] One test per Spec method: exact arguments forwarded once; null arguments make no call
-- [ ] `initialize` passes `sdkName == "react-native"`, the JS `sdkVersion`, the `baseUrl` and `opensInAppUrls == false`, never the plain `initialize`
-- [ ] `addTags` with a non-string value forwards only the string entries; empty map and empty list are forwarded (same core path as 0.8.0)
-- [ ] `requestPermission` resolves `true` and `false` from the fake; no reject path exists
+- [x] One test per Spec method: exact arguments forwarded once; null arguments make no call
+- [x] `initialize` passes `sdkName == "react-native"`, the JS `sdkVersion`, the `baseUrl` and `opensInAppUrls == false`, never the plain `initialize`
+- [x] `addTags` with a non-string value forwards only the string entries; empty map and empty list are forwarded (same core path as 0.8.0)
+- [x] `requestPermission` resolves `true` and `false` from the fake; no reject path exists
 **Tests**: JUnit + Robolectric with `FakeNottiNativeApi`
 **Gate**: quick
 
@@ -152,10 +152,10 @@ keeps the four handles; `stop()` removes them (idempotent). Payload mapping to `
 **Depends on**: T3
 **Requirements**: ANSDK-05, ANSDK-06, ANSDK-07, ANSDK-17
 **Done when**:
-- [ ] Received/clicked payloads match the 0.8.0 shape, `title`/`body` keys present with `null`
-- [ ] Every `NottiInAppAction.Type.entries` value has an explicit mapping (test fails if native adds one); null action gives `action: null`
-- [ ] `start()` leaves 4 live handles in the fake, `stop()` leaves 0; an event delivered after `stop()` emits nothing; a second adapter gets each event once
-- [ ] `getInitialNotificationClick` resolves the mapped click once, then `null`
+- [x] Received/clicked payloads match the 0.8.0 shape, `title`/`body` keys present with `null`
+- [x] Every `NottiInAppAction.Type.entries` value has an explicit mapping (test fails if native adds one); null action gives `action: null`
+- [x] `start()` leaves 4 live handles in the fake, `stop()` leaves 0; an event delivered after `stop()` emits nothing; a second adapter gets each event once
+- [x] `getInitialNotificationClick` resolves the mapped click once, then `null`
 **Tests**: JUnit + Robolectric with `FakeNottiNativeApi`
 **Gate**: quick
 
@@ -170,9 +170,9 @@ the native bridge through an `internal var target` (default: native) so the test
 **Depends on**: T1
 **Requirements**: ANSDK-11, ANSDK-17
 **Done when**:
-- [ ] Both calls reach the fake target with the same `RemoteMessage`/token
-- [ ] With the real target and no native runtime both calls are safe no-ops (Robolectric)
-- [ ] A Kotlin and a Java snippet calling the 0.8.0 signatures compile with a deprecation warning only (test source or example scratch check, recorded)
+- [x] Both calls reach the fake target with the same `RemoteMessage`/token
+- [x] With the real target and no native runtime both calls are safe no-ops (Robolectric)
+- [x] A Kotlin and a Java snippet calling the 0.8.0 signatures compile with a deprecation warning only (test source or example scratch check, recorded). Recorded 2026-11-04: Kotlin through `NottiBridgeTest`; Java through a temporary `NottiBridgeJavaCallerScratch.java` in `android/src/test` compiled by `compileDebugUnitTestJavaWithJavac` with only javac's "uses or overrides a deprecated API" note, then deleted
 **Tests**: JUnit + Robolectric
 **Gate**: quick
 
@@ -190,10 +190,10 @@ to `<manifest />`. Drop `lifecycle-process`, `mockwebserver`, `okhttp-tls`, `org
 **Depends on**: T4, T5
 **Requirements**: ANSDK-01, ANSDK-06, ANSDK-17
 **Done when**:
-- [ ] `android/src/main/java/com/notti/` holds only `NottiModule.kt`, `NottiPackage.kt`, `NottiBridge.kt`, `NottiNativeApi.kt`
-- [ ] `android/src/test/java/com/notti/` holds only `NottiAdapterTest.kt`, `NottiModuleTest.kt`, `NottiBridgeTest.kt`, `NottiTestSupport.kt`
-- [ ] Merged example manifest has one provider (`com.zeeplabs.notti.NottiInitProvider`), one FCM service, `NottiPermissionActivity`
-- [ ] `quick` and `build` green
+- [x] `android/src/main/java/com/notti/` holds only `NottiModule.kt`, `NottiPackage.kt`, `NottiBridge.kt`, `NottiNativeApi.kt`
+- [x] `android/src/test/java/com/notti/` holds only `NottiAdapterTest.kt`, `NottiModuleTest.kt`, `NottiBridgeTest.kt`, `NottiTestSupport.kt`
+- [x] Merged example manifest has one provider (`com.zeeplabs.notti.NottiInitProvider`), one FCM service, `NottiPermissionActivity`
+- [x] `quick` and `build` green
 **Tests**: T3-T5 suites + rewritten `NottiModuleTest`
 **Gate**: quick + build
 
@@ -207,8 +207,8 @@ test step (`ci.yml:111-114`).
 **Depends on**: T6
 **Requirements**: ANSDK-01, ANSDK-16, ANSDK-18
 **Done when**:
-- [ ] Script passes on the branch and fails when a dummy file is added (checked locally, not committed)
-- [ ] Workflow parses; new step pinned the same way as the others
+- [x] Script passes on the branch and fails when a dummy file is added (checked locally, not committed)
+- [x] Workflow parses; new step pinned the same way as the others (no new action; CI run on the PR is the final check)
 **Tests**: script self-check (manual, recorded in the PR)
 **Gate**: CI run on the PR (if Actions billing blocks it, run locally and paste output)
 
@@ -223,8 +223,16 @@ reference turns up.
 **Depends on**: none
 **Requirements**: ANSDK-13
 **Done when**:
-- [ ] Finding recorded with the prebuild manifest excerpt (no `com.notti` component, native service and provider present)
-- [ ] JS gate green
+- [x] Finding recorded with the prebuild manifest excerpt (no `com.notti` component, native service and provider present)
+- [x] JS gate green
+
+**Result (2026-11-04):** plugin unchanged (`plugin/src/withNotti.ts` touches only Google Services and the FCM
+notification icon/color; no `com.notti`, authority or Gradle dependency line). Scratch Expo SDK 58 / RN 0.88.1
+app with the packed library: `expo prebuild --platform android` and `:app:assembleDebug` pass. Merged manifest:
+`com.zeeplabs.notti.NottiInitProvider` (authority `${applicationId}.com.zeeplabs.notti.initprovider`),
+`com.zeeplabs.notti.NottiFirebaseMessagingService`, `com.zeeplabs.notti.NottiPermissionActivity`; zero
+`com.notti.` entries; `firebase-messaging:25.1.2` from `notti-android:0.2.0`. Unrelated, also on `main`: Expo 58
+warns that `package.json` `exports` lacks `./app.plugin.js` (follow-up `fix(plugin)`).
 **Tests**: Jest (only if code changes)
 **Gate**: `pnpm typecheck && pnpm lint && pnpm test`
 
@@ -242,9 +250,9 @@ now reporting `received`; one process-wide core; `sdk_name: "react-native"` and 
 **Depends on**: T1, T5, T6
 **Requirements**: ANSDK-12, ANSDK-14, ANSDK-15
 **Done when**:
-- [ ] Every item of design "Behavior differences" and the manifest table has a note
-- [ ] README snippets (service with the shim, `tools:node="remove"` with new names) match the code
-- [ ] No PII in examples (synthetic values only)
+- [x] Every item of design "Behavior differences" and the manifest table has a note
+- [x] README snippets (service with the shim, `tools:node="remove"` with new names) match the code
+- [x] No PII in examples (synthetic values only)
 **Tests**: none
 **Gate**: `pnpm lint`
 
@@ -256,8 +264,8 @@ status (implemented, pending device validation).
 **Depends on**: T7, T8, T9
 **Requirements**: ANSDK-18
 **Done when**:
-- [ ] `pnpm typecheck && pnpm lint && pnpm test && pnpm run build:android && pnpm run build:ios` green
-- [ ] `./gradlew :react-native-notti:testDebugUnitTest` green; test count reported (drop explained by the deleted core suites)
+- [x] `pnpm typecheck && pnpm lint && pnpm test && pnpm run build:android && pnpm run build:ios` green
+- [x] `./gradlew :react-native-notti:testDebugUnitTest` green; test count reported (drop explained by the deleted core suites)
 **Tests**: all
 **Gate**: full
 
