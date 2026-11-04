@@ -250,9 +250,9 @@ now reporting `received`; one process-wide core; `sdk_name: "react-native"` and 
 **Depends on**: T1, T5, T6
 **Requirements**: ANSDK-12, ANSDK-14, ANSDK-15
 **Done when**:
-- [ ] Every item of design "Behavior differences" and the manifest table has a note
-- [ ] README snippets (service with the shim, `tools:node="remove"` with new names) match the code
-- [ ] No PII in examples (synthetic values only)
+- [x] Every item of design "Behavior differences" and the manifest table has a note
+- [x] README snippets (service with the shim, `tools:node="remove"` with new names) match the code
+- [x] No PII in examples (synthetic values only)
 **Tests**: none
 **Gate**: `pnpm lint`
 
