@@ -3,9 +3,6 @@ package com.notti
 import android.app.Activity
 import android.content.Intent
 import android.content.SharedPreferences
-import com.facebook.react.bridge.Arguments
-import com.facebook.react.bridge.JavaOnlyMap
-import com.facebook.react.bridge.WritableMap
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -17,8 +14,6 @@ import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
-import org.robolectric.annotation.Implementation
-import org.robolectric.annotation.Implements
 
 /**
  * Intent/Bundle are backed by android.os.Bundle - unmockable on the plain
@@ -537,23 +532,5 @@ private class FakeSharedPreferencesForLifecycle : SharedPreferences {
       removals.forEach { values.remove(it) }
       values.putAll(pending)
     }
-  }
-}
-
-/**
- * `Arguments.createMap()` normally returns a JNI-backed `WritableNativeMap`,
- * which needs a real native library that isn't available on the plain JVM
- * Robolectric runs on - it would crash `handle()`'s `toWritableMap()` call
- * before ever reaching the dedup logic under test. This shadow swaps it for
- * `JavaOnlyMap`, RN's own pure-Java `WritableMap` implementation meant
- * exactly for this (unit tests with no native bridge), so the real
- * `NottiActivityLifecycleListener.handle()` can run end to end.
- */
-@Implements(Arguments::class)
-class ShadowArguments {
-  companion object {
-    @Implementation
-    @JvmStatic
-    fun createMap(): WritableMap = JavaOnlyMap()
   }
 }

@@ -113,8 +113,8 @@ event sink type.
 **Reuses**: `ShadowArguments` (`NottiActivityLifecycleListenerTest.kt:553`)
 **Requirements**: ANSDK-02, ANSDK-03, ANSDK-17
 **Done when**:
-- [ ] Compiles next to the old core; `Notti.` appears only in `DefaultNottiNativeApi`
-- [ ] Old suite still green with the moved shadow
+- [x] Compiles next to the old core; `Notti.` appears only in `DefaultNottiNativeApi`
+- [x] Old suite still green with the moved shadow
 **Tests**: none of its own (pass-through; exercised through the fake in T3-T5)
 **Gate**: quick
 
