@@ -89,8 +89,8 @@ still compiles. Build the example (RN 0.87.1, its AGP and Kotlin 2.1.20) and rec
 **Reuses**: native README Requirements, native AD-017
 **Requirements**: ANSDK-01 (partial), ANSDK-15, ANSDK-16
 **Done when**:
-- [ ] Example Android build passes with the dependency
-- [ ] Items 1-6 recorded with command output excerpts; any failure becomes a blocker row above before T2
+- [x] Example Android build passes with the dependency
+- [x] Items 1-6 recorded with command output excerpts; any failure becomes a blocker row above before T2
 **Tests**: none (build)
 **Gate**: build + quick (old suite still green)
 

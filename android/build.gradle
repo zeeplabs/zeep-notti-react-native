@@ -48,7 +48,8 @@ android {
 
 dependencies {
   implementation "com.facebook.react:react-android"
-  implementation "com.google.firebase:firebase-messaging:25.1.2"
+  // Native Notti SDK (ANSDK-01). Exact version; its `api` firebase-messaging reaches the old core and hosts.
+  api "br.com.zeeplabs:notti-android:0.2.0"
   // ProcessLifecycleOwner: app-level foreground signal used to resume device
   // registration after the retry cap is exhausted (spec SDK-05). Same
   // androidx.lifecycle version line react-android already pulls in; the
