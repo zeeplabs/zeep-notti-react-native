@@ -133,10 +133,10 @@ resolves the native Boolean and never rejects; `getDeviceId` returns the native 
 **Depends on**: T2
 **Requirements**: ANSDK-02, ANSDK-03, ANSDK-04, ANSDK-17
 **Done when**:
-- [ ] One test per Spec method: exact arguments forwarded once; null arguments make no call
-- [ ] `initialize` passes `sdkName == "react-native"`, the JS `sdkVersion`, the `baseUrl` and `opensInAppUrls == false`, never the plain `initialize`
-- [ ] `addTags` with a non-string value forwards only the string entries; empty map and empty list are forwarded (same core path as 0.8.0)
-- [ ] `requestPermission` resolves `true` and `false` from the fake; no reject path exists
+- [x] One test per Spec method: exact arguments forwarded once; null arguments make no call
+- [x] `initialize` passes `sdkName == "react-native"`, the JS `sdkVersion`, the `baseUrl` and `opensInAppUrls == false`, never the plain `initialize`
+- [x] `addTags` with a non-string value forwards only the string entries; empty map and empty list are forwarded (same core path as 0.8.0)
+- [x] `requestPermission` resolves `true` and `false` from the fake; no reject path exists
 **Tests**: JUnit + Robolectric with `FakeNottiNativeApi`
 **Gate**: quick
 

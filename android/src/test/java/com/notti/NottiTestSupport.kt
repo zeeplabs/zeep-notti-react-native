@@ -3,6 +3,7 @@ package com.notti
 import android.content.Context
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.JavaOnlyMap
+import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.WritableMap
 import com.zeeplabs.notti.NottiOptions
 import org.robolectric.annotation.Implementation
@@ -36,6 +37,9 @@ internal data class NativeCall(val name: String, val args: List<Any?> = emptyLis
  */
 internal class FakeNottiNativeApi : NottiNativeApi {
   val calls = mutableListOf<NativeCall>()
+
+  /** The context the last [initializeForWrapper] received; kept out of [calls] (not a value type). */
+  var initializeContext: Context? = null
 
   /** What [deviceId] returns. */
   var deviceIdValue: String? = null
@@ -74,6 +78,7 @@ internal class FakeNottiNativeApi : NottiNativeApi {
     sdkName: String,
     sdkVersion: String?
   ) {
+    initializeContext = context
     record("initializeForWrapper", appId, clientKey, options, sdkName, sdkVersion)
   }
 
@@ -163,5 +168,31 @@ internal class CapturingEventSink : NottiEventSink {
 
   override fun inAppMessageClicked(payload: WritableMap) {
     inAppClicks.add(payload)
+  }
+}
+
+/** [Promise] that records what it was settled with; every `reject` overload counts as one rejection. */
+internal class SettledPromise : Promise {
+  val resolved = mutableListOf<Any?>()
+  var rejections = 0
+    private set
+
+  override fun resolve(value: Any?) {
+    resolved.add(value)
+  }
+
+  override fun reject(code: String?, message: String?) = rejected()
+  override fun reject(code: String?, throwable: Throwable?) = rejected()
+  override fun reject(code: String?, message: String?, throwable: Throwable?) = rejected()
+  override fun reject(throwable: Throwable) = rejected()
+  override fun reject(throwable: Throwable, userInfo: WritableMap) = rejected()
+  override fun reject(code: String?, userInfo: WritableMap) = rejected()
+  override fun reject(code: String?, throwable: Throwable?, userInfo: WritableMap) = rejected()
+  override fun reject(code: String?, message: String?, userInfo: WritableMap) = rejected()
+  override fun reject(code: String?, message: String?, throwable: Throwable?, userInfo: WritableMap?) = rejected()
+  override fun reject(message: String) = rejected()
+
+  private fun rejected() {
+    rejections++
   }
 }

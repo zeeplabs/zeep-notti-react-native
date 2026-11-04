@@ -20,6 +20,7 @@ import com.facebook.react.modules.core.PermissionAwareActivity
 import com.facebook.react.modules.core.PermissionListener
 import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.messaging.RemoteMessage
+import com.zeeplabs.notti.NottiOptions
 import okhttp3.OkHttpClient
 import java.util.Locale
 import java.util.concurrent.ExecutorService
@@ -701,4 +702,104 @@ internal fun InAppClick.toWritableMap(): WritableMap {
     map.putMap("action", actionMap)
   }
   return map
+}
+
+/**
+ * The Turbo Module adapter (android-native-sdk design, "NottiModule" and
+ * "Staging"): maps each Codegen call to `br.com.zeeplabs:notti-android`
+ * through [native] and, from T4, the SDK's listeners to [events]. No business
+ * logic: null handling only, with 0.8.0's rules (method mapping table).
+ *
+ * [context] is any context of the app; only its application context reaches
+ * the SDK. Every method may run on any thread: the SDK facade is thread-safe
+ * and answers callbacks on the main thread.
+ */
+internal class NottiAdapter(
+  private val context: Context,
+  private val native: NottiNativeApi,
+  private val events: NottiEventSink
+) {
+
+  /**
+   * Wrapper identity (ANSDK-03, native AD-022): the backend sees
+   * `sdk_name: "react-native"` and the RN package version. AD-004: the SDK
+   * never opens an In-App link, so `opensInAppUrls` is always off. Blank ids or
+   * an invalid URL are logged and ignored by the SDK, as 0.8.0's core did.
+   */
+  fun initialize(appId: String?, clientKey: String?, baseUrl: String?, sdkVersion: String?) {
+    native.initializeForWrapper(
+      context.applicationContext ?: context,
+      appId.orEmpty(),
+      clientKey.orEmpty(),
+      NottiOptions(baseUrl, opensInAppUrls = false),
+      SDK_NAME,
+      sdkVersion
+    )
+  }
+
+  /** Resolves the OS answer; never rejects (0.8.0 never did). `false` before `initialize`. */
+  fun requestPermission(promise: Promise?) {
+    native.requestPermission { granted -> promise?.resolve(granted) }
+  }
+
+  fun login(externalUserId: String?) {
+    externalUserId?.let { native.login(it) }
+  }
+
+  fun logout() {
+    native.logout()
+  }
+
+  /**
+   * Non-string values are dropped, not coerced (0.8.0 I7: the TS type promises
+   * strings, and iOS filters the same way). An empty or null map still reaches
+   * the SDK, which sends the unchanged merge like 0.8.0.
+   */
+  fun addTags(tags: ReadableMap?) {
+    val add = tags?.toHashMap()
+      ?.mapNotNull { (key, value) -> (value as? String)?.let { key to it } }
+      ?.toMap() ?: emptyMap()
+    native.addTags(add)
+  }
+
+  fun removeTags(keys: ReadableArray?) {
+    native.removeTags(keys?.toArrayList()?.map { it.toString() } ?: emptyList())
+  }
+
+  fun setSubscription(enabled: Boolean) {
+    native.setSubscription(enabled)
+  }
+
+  fun setLocationSharingEnabled(enabled: Boolean) {
+    native.setLocationSharingEnabled(enabled)
+  }
+
+  fun setEmail(email: String?) {
+    email?.let { native.setEmail(it) }
+  }
+
+  fun clearEmail() {
+    native.clearEmail()
+  }
+
+  fun setPhone(phone: String?) {
+    phone?.let { native.setPhone(it) }
+  }
+
+  fun clearPhone() {
+    native.clearPhone()
+  }
+
+  /** Synchronous on the JS thread; the SDK's provider loaded `notti_prefs` at process start. */
+  fun getDeviceId(): String? = native.deviceId()
+
+  /** Matched locally by the In-App engine; never sent or logged. */
+  fun trackEvent(name: String?) {
+    name?.let { native.trackEvent(it) }
+  }
+
+  companion object {
+    /** The `sdk_name` this package reports (backend enum, `zeep-notti` AD-044). */
+    const val SDK_NAME = "react-native"
+  }
 }
