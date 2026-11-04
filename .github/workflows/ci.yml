@@ -92,6 +92,13 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
+      # ANSDK-01: the engine lives in br.com.zeeplabs:notti-android; this
+      # package keeps only the com.notti adapter (scripts/check-android-adapter.sh).
+      - name: Check Android adapter layout
+        run: |
+          scripts/tests/check-android-adapter-test.sh
+          scripts/check-android-adapter.sh layout
+
       - name: Finalize Android SDK
         if: env.turbo_cache_hit != 1
         run: |
@@ -112,6 +119,17 @@ jobs:
         working-directory: example/android
         run: |
           ./gradlew :react-native-notti:testDebugUnitTest
+
+      # Runs even on a turbo cache hit (which skips the example build): the
+      # built library ships only adapter classes, and the example resolves one
+      # firebase-messaging and the pinned notti-android (ANSDK-01, ANSDK-16).
+      - name: Check Android adapter classes and classpath
+        working-directory: example/android
+        run: |
+          ./gradlew :react-native-notti:assembleRelease
+          ../../scripts/check-android-adapter.sh classes ../../android/build/outputs/aar/react-native-notti-release.aar
+          ./gradlew -q :app:dependencies --configuration releaseRuntimeClasspath > "$RUNNER_TEMP/release-runtime-classpath.txt"
+          ../../scripts/check-android-adapter.sh classpath "$RUNNER_TEMP/release-runtime-classpath.txt"
 
       - name: Build example for Android
         env:
