@@ -207,8 +207,8 @@ test step (`ci.yml:111-114`).
 **Depends on**: T6
 **Requirements**: ANSDK-01, ANSDK-16, ANSDK-18
 **Done when**:
-- [ ] Script passes on the branch and fails when a dummy file is added (checked locally, not committed)
-- [ ] Workflow parses; new step pinned the same way as the others
+- [x] Script passes on the branch and fails when a dummy file is added (checked locally, not committed)
+- [x] Workflow parses; new step pinned the same way as the others (no new action; CI run on the PR is the final check)
 **Tests**: script self-check (manual, recorded in the PR)
 **Gate**: CI run on the PR (if Actions billing blocks it, run locally and paste output)
 
@@ -223,8 +223,16 @@ reference turns up.
 **Depends on**: none
 **Requirements**: ANSDK-13
 **Done when**:
-- [ ] Finding recorded with the prebuild manifest excerpt (no `com.notti` component, native service and provider present)
-- [ ] JS gate green
+- [x] Finding recorded with the prebuild manifest excerpt (no `com.notti` component, native service and provider present)
+- [x] JS gate green
+
+**Result (2026-11-04):** plugin unchanged (`plugin/src/withNotti.ts` touches only Google Services and the FCM
+notification icon/color; no `com.notti`, authority or Gradle dependency line). Scratch Expo SDK 58 / RN 0.88.1
+app with the packed library: `expo prebuild --platform android` and `:app:assembleDebug` pass. Merged manifest:
+`com.zeeplabs.notti.NottiInitProvider` (authority `${applicationId}.com.zeeplabs.notti.initprovider`),
+`com.zeeplabs.notti.NottiFirebaseMessagingService`, `com.zeeplabs.notti.NottiPermissionActivity`; zero
+`com.notti.` entries; `firebase-messaging:25.1.2` from `notti-android:0.2.0`. Unrelated, also on `main`: Expo 58
+warns that `package.json` `exports` lacks `./app.plugin.js` (follow-up `fix(plugin)`).
 **Tests**: Jest (only if code changes)
 **Gate**: `pnpm typecheck && pnpm lint && pnpm test`
 
