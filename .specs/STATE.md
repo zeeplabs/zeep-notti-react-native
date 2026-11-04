@@ -50,7 +50,7 @@
 - **Trade-off**: Android behavior and release timing depend on native SDK releases; integrators who remove the 0.8.0 service or provider by class name must use the new names; native behavior differences (foreground-only permission dialog, identity calls before `initialize` dropped) reach RN apps and go into the upgrade notes.
 - **Scope**: `.specs/features/android-native-sdk/`, `android/`, README Android setup, CHANGELOG. With AD-005, supersedes AD-001's "logic lives in this repo" for both platforms (logic stays native, in the native SDKs).
 - **Date**: 2026-11-04
-- **Status**: proposed (spec and context written). Prerequisite: native `wrapper-support` 0.2.0 on Maven Central.
+- **Status**: design approved (Julio, 2026-11-04) with 7 decisions: notti-android as `api`, pinned exactly `0.2.0`, unknown In-App action types emit `action: null`, seam in its own `NottiNativeApi.kt`, RN floor measured in the T1 spike and documented, pre-`initialize` drops for provider-removed hosts accepted and documented, shim deprecated at WARNING until at least 1.0; tasks T1-T11 written (`.specs/features/android-native-sdk/tasks.md`). Prerequisite native `wrapper-support` 0.2.0 released on Maven Central 2026-11-04.
 
 ## Pre-release review v0.3.0..HEAD (rule changes)
 

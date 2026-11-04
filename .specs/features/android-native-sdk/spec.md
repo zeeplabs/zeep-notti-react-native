@@ -49,8 +49,8 @@ instead of an in-repo core, so that a fix in the native SDK reaches React Native
 
 **Acceptance Criteria**:
 
-1. WHEN the library builds THEN `android/build.gradle` SHALL depend on `br.com.zeeplabs:notti-android` (0.2.x)
-   from `mavenCentral()` and SHALL NOT compile any Kotlin file that implements networking, persistence, retry,
+1. WHEN the library builds THEN `android/build.gradle` SHALL declare `api "br.com.zeeplabs:notti-android:0.2.0"`
+   (exact version, pinned) from `mavenCentral()` and SHALL NOT compile any Kotlin file that implements networking, persistence, retry,
    queues, FCM handling, the process-start provider or In-App presentation.
 2. WHEN JS calls any method of `NativeNotti.ts` (`initialize`, `requestPermission`, `login`, `logout`, `addTags`,
    `removeTags`, `setSubscription`, `setLocationSharingEnabled`, `setEmail`, `clearEmail`, `setPhone`,
@@ -152,14 +152,17 @@ registered device and a delivered push.
 
 Native behavior that differs from 0.8.0 and goes into the upgrade notes (not reverted here):
 
-- Identity calls before `initialize` are dropped with a `WARN` line (native AD-008); 0.8.0 behavior is listed
-  by Design and the difference documented.
+- Identity calls before `initialize` are dropped with a `WARN` line (native AD-008) only in hosts that removed
+  `NottiInitProvider` (no native runtime until the first `initialize`; `getDeviceId` is `null` then). With the
+  provider in place the behavior is the same as 0.8.0 (Design, "Behavior differences" 1).
 - The permission dialog is shown only while the app is in the foreground; otherwise `requestPermission`
   resolves `false` without marking it as asked (native AD-019, PRR-07).
 - Permission dialog runs in the SDK's own `NottiPermissionActivity`, not the host Activity (native PRR-06).
 - Malformed tap Intents no longer crash the host (native PRR-10).
 - Provider authority changes from `${applicationId}.nottiinitprovider` to
   `${applicationId}.com.zeeplabs.notti.initprovider`.
+- The deprecated `com.notti.NottiBridge.onMessageReceived` now also queues the CTR `received` event (0.8.0's
+  bridge only emitted the JS event); upgrade note.
 
 Other cases:
 
@@ -174,26 +177,26 @@ Other cases:
 
 | Requirement ID | Story | Phase | Status |
 | --- | --- | --- | --- |
-| ANSDK-01 | Delegates: Gradle dependency, no core Kotlin | Specify | Pending |
-| ANSDK-02 | Delegates: method forwarding | Specify | Pending |
-| ANSDK-03 | Delegates: `sdk_version`/`sdk_name` via wrapper hook | Specify | Pending |
-| ANSDK-04 | Delegates: no link opening (AD-004) | Specify | Pending |
-| ANSDK-05 | Delegates: event emission, payload shape | Specify | Pending |
-| ANSDK-06 | Delegates: subscriptions removed on invalidate | Specify | Pending |
-| ANSDK-07 | Delegates: initial click once | Specify | Pending |
-| ANSDK-08 | Upgrade keeps device id | Specify | Pending |
-| ANSDK-09 | Upgrade flushes 0.8.0 queues | Specify | Pending |
-| ANSDK-10 | Upgrade key audit | Specify | Pending |
-| ANSDK-11 | Setup: deprecated `com.notti.NottiBridge` shim | Specify | Pending |
-| ANSDK-12 | Setup: new class names for manifest removals | Specify | Pending |
-| ANSDK-13 | Setup: Expo plugin | Specify | Pending |
-| ANSDK-14 | Setup: upgrade notes in 0.9.0 | Specify | Pending |
-| ANSDK-15 | Floors: Kotlin/compileSdk/minSdk | Specify | Pending |
-| ANSDK-16 | Floors: one firebase-messaging, no duplicate core | Specify | Pending |
-| ANSDK-17 | Adapter-level tests, old suites removed | Specify | Pending |
-| ANSDK-18 | Gates green | Specify | Pending |
+| ANSDK-01 | Delegates: Gradle dependency, no core Kotlin | Tasks | Pending (T1, T6, T7) |
+| ANSDK-02 | Delegates: method forwarding | Tasks | Pending (T2, T3) |
+| ANSDK-03 | Delegates: `sdk_version`/`sdk_name` via wrapper hook | Tasks | Pending (T2, T3) |
+| ANSDK-04 | Delegates: no link opening (AD-004) | Tasks | Pending (T3) |
+| ANSDK-05 | Delegates: event emission, payload shape | Tasks | Pending (T4, T11) |
+| ANSDK-06 | Delegates: subscriptions removed on invalidate | Tasks | Pending (T4, T6, T11) |
+| ANSDK-07 | Delegates: initial click once | Tasks | Pending (T4, T11) |
+| ANSDK-08 | Upgrade keeps device id | Tasks | Pending (T11) |
+| ANSDK-09 | Upgrade flushes 0.8.0 queues | Tasks | Pending (T11) |
+| ANSDK-10 | Upgrade key audit | Tasks | Pending (Design analysis, T11) |
+| ANSDK-11 | Setup: deprecated `com.notti.NottiBridge` shim | Tasks | Pending (T5, T11) |
+| ANSDK-12 | Setup: new class names for manifest removals | Tasks | Pending (T9, T11) |
+| ANSDK-13 | Setup: Expo plugin | Tasks | Pending (T8) |
+| ANSDK-14 | Setup: upgrade notes in 0.9.0 | Tasks | Pending (T9) |
+| ANSDK-15 | Floors: Kotlin/compileSdk/minSdk | Tasks | Pending (T1, T9) |
+| ANSDK-16 | Floors: one firebase-messaging, no duplicate core | Tasks | Pending (T1, T7) |
+| ANSDK-17 | Adapter-level tests, old suites removed | Tasks | Pending (T2, T3, T4, T5, T6) |
+| ANSDK-18 | Gates green | Tasks | Pending (T7, T10) |
 
-**Coverage:** 18 total, 0 mapped to tasks.
+**Coverage:** 18 total, 18 mapped to tasks, 0 unmapped.
 
 ## Dependencies
 
@@ -202,7 +205,7 @@ Other cases:
 
 ## Success Criteria
 
-- [ ] `android/src/main` holds only `NottiModule`, `NottiPackage` and the `NottiBridge` shim; tests cover only
-      the adapter.
+- [ ] `android/src/main` holds only adapter files (`NottiModule`, `NottiPackage`, the `NottiBridge` shim and the
+      `NottiNativeApi` seam); tests cover only the adapter.
 - [ ] 0.8.0-to-0.9.0 upgrade on a device: one device row, same `getDeviceId()`.
 - [ ] Example app: push, tap cold start, In-App click and permission on a device, same JS events as 0.8.0.
