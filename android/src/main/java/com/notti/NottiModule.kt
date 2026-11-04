@@ -20,6 +20,7 @@ import com.facebook.react.modules.core.PermissionAwareActivity
 import com.facebook.react.modules.core.PermissionListener
 import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.messaging.RemoteMessage
+import com.zeeplabs.notti.NottiInAppAction
 import com.zeeplabs.notti.NottiOptions
 import okhttp3.OkHttpClient
 import java.util.Locale
@@ -798,8 +799,84 @@ internal class NottiAdapter(
     name?.let { native.trackEvent(it) }
   }
 
+  /**
+   * The cold-start tap, once (ANSDK-07). The SDK keeps a tap only while no
+   * clicked listener exists and never replays it to a new one (its relay is
+   * 0.8.0's), so a tap from before [start] is pulled here, not emitted.
+   */
+  fun getInitialNotificationClick(promise: Promise?) {
+    promise?.resolve(native.takeInitialClick()?.toPayload())
+  }
+
+  private val subscriptions = mutableListOf<NativeSubscription>()
+
+  /**
+   * Adds the four SDK listeners (ANSDK-05). Called once per module instance,
+   * as its last construction step; a second call does nothing. Listeners run
+   * on the main thread.
+   */
+  fun start() {
+    synchronized(subscriptions) {
+      if (subscriptions.isNotEmpty()) return
+      subscriptions += native.addReceivedListener { events.notificationReceived(it.toPayload()) }
+      subscriptions += native.addClickedListener { events.notificationClicked(it.toPayload()) }
+      subscriptions += native.addDeviceIdChangedListener { events.deviceIdChanged(it) }
+      subscriptions += native.addInAppClickListener { events.inAppMessageClicked(it.toPayload()) }
+    }
+  }
+
+  /**
+   * Removes every listener [start] added (ANSDK-06), so nothing is emitted
+   * into a torn-down module; the SDK drops a removed listener even for a
+   * delivery already posted to main. Idempotent.
+   */
+  fun stop() {
+    val removed = synchronized(subscriptions) { subscriptions.toList().also { subscriptions.clear() } }
+    removed.forEach { it.remove() }
+  }
+
   companion object {
     /** The `sdk_name` this package reports (backend enum, `zeep-notti` AD-044). */
     const val SDK_NAME = "react-native"
   }
+}
+
+/** `NotificationPayload`: `title`/`body` present with `null` when missing, `data` always a map (0.8.0 shape). */
+internal fun NativeNotification.toPayload(): WritableMap {
+  val map = Arguments.createMap()
+  map.putString("title", title)
+  map.putString("body", body)
+  val dataMap = Arguments.createMap()
+  data.forEach { (key, value) -> dataMap.putString(key, value) }
+  map.putMap("data", dataMap)
+  return map
+}
+
+/**
+ * `InAppClickPayload`: `action` is `null`, never absent, for `push_permission`
+ * (the SDK gives no action), a button without a valid action, and an action
+ * type this package does not know (design OQ-3).
+ */
+internal fun NativeInAppClick.toPayload(): WritableMap {
+  val map = Arguments.createMap()
+  map.putString("messageId", messageId)
+  map.putString("buttonId", buttonId)
+  val type = actionType?.toJsActionType()
+  val value = actionValue
+  if (type == null || value == null) {
+    map.putNull("action")
+  } else {
+    val actionMap = Arguments.createMap()
+    actionMap.putString("type", type)
+    actionMap.putString("value", value)
+    map.putMap("action", actionMap)
+  }
+  return map
+}
+
+/** The 0.8.0 action type strings; null for a value a later SDK minor may add (native AD-018). */
+internal fun NottiInAppAction.Type.toJsActionType(): String? = when (this) {
+  NottiInAppAction.Type.URL -> "url"
+  NottiInAppAction.Type.DEEPLINK -> "deeplink"
+  else -> null
 }

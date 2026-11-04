@@ -152,10 +152,10 @@ keeps the four handles; `stop()` removes them (idempotent). Payload mapping to `
 **Depends on**: T3
 **Requirements**: ANSDK-05, ANSDK-06, ANSDK-07, ANSDK-17
 **Done when**:
-- [ ] Received/clicked payloads match the 0.8.0 shape, `title`/`body` keys present with `null`
-- [ ] Every `NottiInAppAction.Type.entries` value has an explicit mapping (test fails if native adds one); null action gives `action: null`
-- [ ] `start()` leaves 4 live handles in the fake, `stop()` leaves 0; an event delivered after `stop()` emits nothing; a second adapter gets each event once
-- [ ] `getInitialNotificationClick` resolves the mapped click once, then `null`
+- [x] Received/clicked payloads match the 0.8.0 shape, `title`/`body` keys present with `null`
+- [x] Every `NottiInAppAction.Type.entries` value has an explicit mapping (test fails if native adds one); null action gives `action: null`
+- [x] `start()` leaves 4 live handles in the fake, `stop()` leaves 0; an event delivered after `stop()` emits nothing; a second adapter gets each event once
+- [x] `getInitialNotificationClick` resolves the mapped click once, then `null`
 **Tests**: JUnit + Robolectric with `FakeNottiNativeApi`
 **Gate**: quick
 

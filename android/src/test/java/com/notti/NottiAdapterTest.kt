@@ -3,8 +3,12 @@ package com.notti
 import android.app.Application
 import com.facebook.react.bridge.JavaOnlyArray
 import com.facebook.react.bridge.JavaOnlyMap
+import com.facebook.react.bridge.ReadableMap
+import com.zeeplabs.notti.NottiInAppAction
 import com.zeeplabs.notti.NottiOptions
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -16,12 +20,14 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 /**
- * Method forwarding of [NottiAdapter] (android-native-sdk T3, ANSDK-02..04):
- * each Codegen call reaches the native SDK once, with 0.8.0's null handling.
+ * [NottiAdapter] (android-native-sdk T3/T4): each Codegen call reaches the
+ * native SDK once with 0.8.0's null handling (ANSDK-02..04), SDK events reach
+ * the Codegen emitters in the 0.8.0 payload shapes (ANSDK-05), listeners go
+ * away on stop (ANSDK-06) and the cold-start tap is pulled once (ANSDK-07).
  * The SDK's own behavior is tested in `zeep-notti-android-sdk` (L-001).
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34])
+@Config(sdk = [34], shadows = [ShadowArguments::class])
 class NottiAdapterTest {
 
   private lateinit var app: Application
@@ -219,6 +225,166 @@ class NottiAdapterTest {
     adapter.requestPermission(null)
 
     assertEquals(listOf(NativeCall("requestPermission")), native.calls)
+  }
+
+  @Test
+  fun `start adds the four SDK listeners once and stop removes them all`() {
+    adapter.start()
+    adapter.start()
+    assertEquals(4, native.liveSubscriptions)
+
+    adapter.stop()
+    adapter.stop()
+    assertEquals(0, native.liveSubscriptions)
+  }
+
+  @Test
+  fun `a received push is emitted with title, body and data`() {
+    val sink = startedAdapter()
+
+    native.fireReceived(NativeNotification("Fixture title", "Fixture body", mapOf("notification_id" to "fixture-n")))
+
+    val payload = sink.received.single()
+    assertEquals("Fixture title", payload.getString("title"))
+    assertEquals("Fixture body", payload.getString("body"))
+    assertEquals(mapOf<String, Any?>("notification_id" to "fixture-n"), payload.getMap("data")!!.toHashMap())
+  }
+
+  @Test
+  fun `a clicked push without title or body keeps both keys with null and an empty data map`() {
+    val sink = startedAdapter()
+
+    native.fireClicked(NativeNotification(null, null, emptyMap()))
+
+    val payload = sink.clicked.single()
+    assertKeyIsNull(payload, "title")
+    assertKeyIsNull(payload, "body")
+    assertTrue(payload.getMap("data")!!.toHashMap().isEmpty())
+    assertTrue(sink.received.isEmpty())
+  }
+
+  @Test
+  fun `a device id change is emitted as the plain id`() {
+    val sink = startedAdapter()
+
+    native.fireDeviceIdChanged("fixture-device")
+
+    assertEquals(listOf("fixture-device"), sink.deviceIds)
+  }
+
+  @Test
+  fun `In-App url and deeplink clicks carry the 0_8_0 action type strings and the untouched value`() {
+    val sink = startedAdapter()
+
+    native.fireInAppClick(NativeInAppClick("fixture-msg", "b1", NottiInAppAction.Type.URL, "https://example.invalid/a?b=1"))
+    native.fireInAppClick(NativeInAppClick("fixture-msg", "image", NottiInAppAction.Type.DEEPLINK, "fixture://path"))
+
+    val (url, deeplink) = sink.inAppClicks
+    assertEquals("fixture-msg", url.getString("messageId"))
+    assertEquals("b1", url.getString("buttonId"))
+    assertEquals("url", url.getMap("action")!!.getString("type"))
+    assertEquals("https://example.invalid/a?b=1", url.getMap("action")!!.getString("value"))
+    assertEquals("image", deeplink.getString("buttonId"))
+    assertEquals("deeplink", deeplink.getMap("action")!!.getString("type"))
+    assertEquals("fixture://path", deeplink.getMap("action")!!.getString("value"))
+  }
+
+  @Test
+  fun `an In-App click without an action, as for push_permission, carries action null rather than omitting it`() {
+    val sink = startedAdapter()
+
+    native.fireInAppClick(NativeInAppClick("fixture-msg", "b2", null, null))
+
+    val payload = sink.inAppClicks.single()
+    assertEquals("fixture-msg", payload.getString("messageId"))
+    assertEquals("b2", payload.getString("buttonId"))
+    assertKeyIsNull(payload, "action")
+  }
+
+  @Test
+  fun `every native action type has an explicit 0_8_0 string, so a new SDK value fails here first`() {
+    for (type in NottiInAppAction.Type.entries) {
+      assertNotNull("no JS action type for $type", type.toJsActionType())
+    }
+  }
+
+  @Test
+  fun `nothing is emitted after stop`() {
+    val sink = startedAdapter()
+    adapter.stop()
+
+    native.fireReceived(NativeNotification("t", "b", emptyMap()))
+    native.fireClicked(NativeNotification("t", "b", emptyMap()))
+    native.fireDeviceIdChanged("fixture-device")
+    native.fireInAppClick(NativeInAppClick("fixture-msg", "b1", null, null))
+
+    assertTrue(sink.received.isEmpty() && sink.clicked.isEmpty() && sink.deviceIds.isEmpty() && sink.inAppClicks.isEmpty())
+  }
+
+  @Test
+  fun `after a reload the new adapter receives each event once and the old one none`() {
+    val oldSink = startedAdapter()
+    adapter.stop()
+    val newSink = CapturingEventSink()
+    NottiAdapter(app, native, newSink).start()
+
+    native.fireReceived(NativeNotification("t", "b", emptyMap()))
+    native.fireClicked(NativeNotification("t", "b", emptyMap()))
+    native.fireDeviceIdChanged("fixture-device")
+    native.fireInAppClick(NativeInAppClick("fixture-msg", "b1", null, null))
+
+    assertEquals(listOf(1, 1, 1, 1), listOf(newSink.received.size, newSink.clicked.size, newSink.deviceIds.size, newSink.inAppClicks.size))
+    assertEquals(listOf(0, 0, 0, 0), listOf(oldSink.received.size, oldSink.clicked.size, oldSink.deviceIds.size, oldSink.inAppClicks.size))
+    assertEquals(4, native.liveSubscriptions)
+  }
+
+  @Test
+  fun `getInitialNotificationClick resolves the cold-start tap once, then null`() {
+    native.initialClick = NativeNotification(null, "Fixture body", mapOf("delivery_id" to "fixture-d"))
+    val first = SettledPromise()
+    val second = SettledPromise()
+
+    adapter.getInitialNotificationClick(first)
+    adapter.getInitialNotificationClick(second)
+
+    val payload = first.resolved.single() as ReadableMap
+    assertKeyIsNull(payload, "title")
+    assertEquals("Fixture body", payload.getString("body"))
+    assertEquals(mapOf<String, Any?>("delivery_id" to "fixture-d"), payload.getMap("data")!!.toHashMap())
+    assertEquals(listOf<Any?>(null), second.resolved)
+    assertEquals(0, first.rejections + second.rejections)
+  }
+
+  @Test
+  fun `getInitialNotificationClick with no tap resolves null`() {
+    val promise = SettledPromise()
+
+    adapter.getInitialNotificationClick(promise)
+
+    assertEquals(listOf<Any?>(null), promise.resolved)
+  }
+
+  @Test
+  fun `starting does not pull the cold-start tap, so getInitialNotificationClick still gets it`() {
+    native.initialClick = NativeNotification("t", "b", emptyMap())
+    startedAdapter()
+    val promise = SettledPromise()
+
+    adapter.getInitialNotificationClick(promise)
+
+    assertFalse(promise.resolved.single() == null)
+  }
+
+  private fun startedAdapter(): CapturingEventSink {
+    val sink = CapturingEventSink()
+    adapter = NottiAdapter(app, native, sink)
+    adapter.start()
+    return sink
+  }
+
+  private fun assertKeyIsNull(map: ReadableMap, key: String) {
+    assertTrue("missing key $key", map.hasKey(key))
+    assertTrue("$key is not null", map.isNull(key))
   }
 
   private companion object {
