@@ -106,12 +106,8 @@ public class NottiImpl: NSObject {
   /// existed. A cold-start click is deliberately not replayed here — no JS
   /// listener exists yet at module-construction time — and is handed over by
   /// `getInitialNotificationClick()` instead.
-  @objc public var emitReceivedHandler: (([String: Any]) -> Void)? {
-    didSet { NottiEventBuffer.shared.setHandler(.received, emitReceivedHandler) }
-  }
-  @objc public var emitClickedHandler: (([String: Any]) -> Void)? {
-    didSet { NottiEventBuffer.shared.setHandler(.clicked, emitClickedHandler) }
-  }
+  @objc public var emitReceivedHandler: (([String: Any]) -> Void)?
+  @objc public var emitClickedHandler: (([String: Any]) -> Void)?
 
   /// Set by `Notti.mm`'s `-init` to forward an In-App click into the Codegen
   /// emitter `onInAppMessageClicked`. Deliberately not routed through
@@ -153,6 +149,8 @@ public class NottiImpl: NSObject {
 
   let core: NottiCore
   private let native: NottiNativeSDK
+  private let subscriptionsLock = NSLock()
+  private var subscriptions: [NottiNativeSubscription] = []
 
   @objc public override convenience init() {
     self.init(native: DefaultNottiNativeSDK.shared)
@@ -302,6 +300,21 @@ public class NottiImpl: NSObject {
   @objc public func activate() {
     NottiImpl.activeInstance = self
     NottiImpl.activeCore = core
+    // Take the launch tap before any clicked listener exists: the SDK replays a buffered click to the
+    // first listener, and a replay into an emitter JS has not subscribed to yet would lose it. It is
+    // kept for `getInitialNotificationClick()` instead (NSDK-07).
+    if let click = native.takeInitialClick() {
+      NottiImpl.storeInitialClick(NottiImpl.payload(click))
+    }
+    let added = [
+      native.addReceivedListener { [weak self] in self?.emitReceivedHandler?(NottiImpl.payload($0)) },
+      native.addClickedListener { [weak self] in self?.emitClickedHandler?(NottiImpl.payload($0)) },
+      native.addDeviceIdChangedListener { [weak self] in self?.emitDeviceIdChangedHandler?($0) },
+      native.addInAppClickListener { [weak self] in self?.emitInAppClickHandler?(NottiImpl.payload($0)) },
+    ]
+    subscriptionsLock.lock()
+    subscriptions.append(contentsOf: added)
+    subscriptionsLock.unlock()
   }
 
   /// Called by `Notti.mm`'s `-invalidate` (RCTInvalidating) when the RN
@@ -316,6 +329,11 @@ public class NottiImpl: NSObject {
   /// the next module. Guarded by identity: a second `NottiImpl` activating
   /// before this one tears down must not have its live `core` clobbered.
   @objc public func invalidate() {
+    subscriptionsLock.lock()
+    let live = subscriptions
+    subscriptions.removeAll()
+    subscriptionsLock.unlock()
+    live.forEach { $0.remove() }
     if NottiImpl.activeInstance === self {
       NottiImpl.activeInstance = nil
     }
@@ -450,11 +468,52 @@ public class NottiImpl: NSObject {
     native.trackEvent(name)
   }
 
-  /// Backs the Spec's `getInitialNotificationClick()`: returns the click that
-  /// launched the app from a cold start (buffered before any JS listener could
-  /// exist) and consumes it, or nil when the app was not launched by a tap.
+  /// Backs the Spec's `getInitialNotificationClick()`: the click that launched the app, once, then nil.
+  /// Reads the process-wide slot `activate()` filled; when empty it asks the SDK again, which covers a
+  /// tap stored after a reload removed the listeners (NSDK-07).
   @objc public func takeInitialNotificationClick() -> [String: Any]? {
-    NottiEventBuffer.shared.takeInitialClick()
+    if let stored = NottiImpl.takeStoredInitialClick() { return stored }
+    return native.takeInitialClick().map(NottiImpl.payload)
+  }
+
+  /// Process-wide so it survives a JS reload, which builds a new module while the tap is still unread.
+  private static let initialClickLock = NSLock()
+  private static var initialClick: [String: Any]?
+
+  private static func storeInitialClick(_ payload: [String: Any]) {
+    initialClickLock.lock()
+    initialClick = payload
+    initialClickLock.unlock()
+  }
+
+  private static func takeStoredInitialClick() -> [String: Any]? {
+    initialClickLock.lock()
+    defer { initialClickLock.unlock() }
+    let stored = initialClick
+    initialClick = nil
+    return stored
+  }
+
+  static func resetInitialClickForTests() {
+    _ = takeStoredInitialClick()
+  }
+
+  /// The 0.8.0 `NotificationPayload` shape: `title` and `body` are null when absent.
+  static func payload(_ notification: NottiNativeNotification) -> [String: Any] {
+    [
+      "title": notification.title ?? NSNull(),
+      "body": notification.body ?? NSNull(),
+      "data": notification.data,
+    ]
+  }
+
+  /// The 0.8.0 `InAppClickPayload` shape: `action` is null for a button without a link.
+  static func payload(_ click: NottiNativeInAppClick) -> [String: Any] {
+    var action: Any = NSNull()
+    if let type = click.actionType, let value = click.actionValue {
+      action = ["type": type, "value": value]
+    }
+    return ["messageId": click.messageId, "buttonId": click.buttonId, "action": action]
   }
 }
 
