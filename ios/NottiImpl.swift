@@ -152,8 +152,13 @@ public class NottiImpl: NSObject {
   private let deviceIdChangedBox: HandlerBox
 
   let core: NottiCore
+  private let native: NottiNativeSDK
 
-  @objc public override init() {
+  @objc public override convenience init() {
+    self.init(native: DefaultNottiNativeSDK.shared)
+  }
+
+  init(native: NottiNativeSDK) {
     _ = NottiImpl.processBackgroundObserver
     _ = NottiImpl.processForegroundObserver
     // Before the core exists: the core's first session start (which can be
@@ -282,6 +287,7 @@ public class NottiImpl: NSObject {
     // `self.deviceIdChangedBox`, the only thing `emitDeviceIdChangedHandler`'s
     // `didSet` (below) needs to write into later.
     self.deviceIdChangedBox = box
+    self.native = native
     super.init()
   }
 
@@ -363,114 +369,85 @@ public class NottiImpl: NSObject {
     return { box.end() }
   }
 
+  /// The `sdk_name` the backend receives for this wrapper (NSDK-03).
+  static let sdkName = "react-native"
+
   @objc(initialize:clientKey:baseUrl:sdkVersion:)
   public func initialize(_ appId: String, clientKey: String, baseUrl: String, sdkVersion: String) {
-    // Config goes to In-App first, through the same main queue as `trackEvent`,
-    // so a `trackEvent` right after it finds the config and the cold-start
-    // window open (A14, DD-13). Invalid input is left to the core, which logs it.
-    if !appId.isEmpty, !clientKey.isEmpty, let normalized = NottiApiClient.validatedBaseUrl(baseUrl) {
-      NottiInApp.get()?.onInitialized(appId: appId, clientKey: clientKey, baseUrl: normalized)
-    }
-    wirePushPermissionPort()
-    core.initialize(appId: appId, clientKey: clientKey, baseUrl: baseUrl, sdkVersion: sdkVersion)
-  }
-
-  /// Gives the In-App coordinator the OS side of the `push_permission` button.
-  /// The prompt goes through `NottiCore.requestPermission` (no JS callback), so
-  /// the subscribed PATCH and the status refresh stay in one place.
-  private func wirePushPermissionPort() {
-    let action = NottiPushPermissionAction(
-      readState: NottiPushPermissionAction.systemState,
-      requestPermission: { [weak self] in self?.core.requestPermission { _ in } },
-      openNotificationSettings: NottiPushPermissionAction.openSystemNotificationSettings,
-      logger: { message in NSLog("%@", message) }
-    )
-    // `initialize` runs on the module queue; the coordinator reads the port on
-    // main, so it is written there too (no data race).
-    DispatchQueue.main.async { [weak self] in
-      guard let self = self else { return }
-      NottiImpl.pushPermissionPortOwner = self
-      NottiInApp.get()?.pushPermissionPort = { action.run() }
-    }
+    native.initialize(
+      appId: appId, clientKey: clientKey, baseUrl: baseUrl,
+      sdkName: NottiImpl.sdkName, sdkVersion: sdkVersion)
   }
 
   @objc(requestPermission:)
   public func requestPermission(_ completion: @escaping (NSNumber) -> Void) {
-    core.requestPermission { granted in
+    native.requestPermission { granted in
       completion(NSNumber(value: granted))
     }
   }
 
   @objc(login:)
   public func login(_ externalUserId: String) {
-    core.login(externalUserId)
+    native.login(externalUserId)
   }
 
   @objc public func logout() {
-    core.logout()
+    native.logout()
   }
 
   @objc(addTags:)
   public func addTags(_ tags: NSDictionary) {
-    // I7 (found in pre-release review): `"\(value)"` string interpolation
-    // stringified a JS number/boolean/null differently than Android's
-    // `.toString()` (`"1"` vs `"1.0"`, `"<null>"` vs `"null"`) - the same
-    // call produced a different server-side tag value per platform. The
-    // public TS type (`Record<string, string>`) already promises
-    // string-only values; a non-string value is now dropped instead of
-    // coerced, matching Android's identical filter in `NottiModule.addTags`.
+    // A non-string value is dropped, not coerced: the public TS type promises string values and
+    // Android applies the same filter in `NottiModule.addTags` (0.8.0 review item I7).
     var add: [String: String] = [:]
     for (key, value) in tags {
       if let key = key as? String, let stringValue = value as? String {
         add[key] = stringValue
       }
     }
-    core.mutateTags(add: add, remove: nil)
+    native.addTags(add)
   }
 
   @objc(removeTags:)
   public func removeTags(_ keys: NSArray) {
-    let remove = keys.compactMap { $0 as? String }
-    core.mutateTags(add: nil, remove: remove)
+    native.removeTags(keys.compactMap { $0 as? String })
   }
 
   @objc(setSubscription:)
   public func setSubscription(_ enabled: Bool) {
-    core.setSubscription(enabled)
+    native.setSubscription(enabled)
   }
 
   @objc(setEmail:)
   public func setEmail(_ email: String) {
-    core.setEmail(email)
+    native.setEmail(email)
   }
 
   @objc public func clearEmail() {
-    core.clearEmail()
+    native.clearEmail()
   }
 
   @objc(setPhone:)
   public func setPhone(_ phone: String) {
-    core.setPhone(phone)
+    native.setPhone(phone)
   }
 
   @objc public func clearPhone() {
-    core.clearPhone()
+    native.clearPhone()
   }
 
   @objc(setLocationSharingEnabled:)
   public func setLocationSharingEnabled(_ enabled: Bool) {
-    core.setLocationSharingEnabled(enabled)
+    native.setLocationSharingEnabled(enabled)
   }
 
   @objc public func getDeviceId() -> String? {
-    core.getDeviceId()
+    native.deviceId
   }
 
-  /// Hands the name to the In-App coordinator, which hops to main. Never sent
-  /// to the server and never logged (SDKIAM-10).
   @objc(trackEvent:)
   public func trackEvent(_ name: String) {
-    NottiInApp.get()?.trackEvent(name)
+    native.trackEvent(name)
   }
 
   /// Backs the Spec's `getInitialNotificationClick()`: returns the click that

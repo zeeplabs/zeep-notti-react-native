@@ -408,14 +408,6 @@ final class NottiInAppWiringTests: XCTestCase {
     return module
   }
 
-  func test_initializeHandsTheNormalizedConfigToInApp() {
-    let coordinator = installCoordinator()
-
-    module().initialize("app-1", clientKey: "key", baseUrl: "https://notti.example.com/", sdkVersion: "")
-
-    XCTAssertEqual(coordinator.session.config, InAppConfig(appId: "app-1", clientKey: "key", baseUrl: "https://notti.example.com"))
-  }
-
   func test_initializeWithAnInvalidConfigLeavesInAppWithoutOne() {
     let coordinator = installCoordinator()
     let impl = module()
@@ -425,17 +417,6 @@ final class NottiInAppWiringTests: XCTestCase {
     impl.initialize("app-1", clientKey: "key", baseUrl: "not a url", sdkVersion: "")
 
     XCTAssertNil(coordinator.session.config)
-  }
-
-  func test_trackEventForwardsTheNameToInAppSoACallRightAfterInitializeIsKept() {
-    let coordinator = installCoordinator()
-    let impl = module()
-
-    impl.trackEvent("before-initialize")
-    impl.initialize("app-1", clientKey: "key", baseUrl: "https://notti.example.com", sdkVersion: "")
-    impl.trackEvent("promo")
-
-    XCTAssertEqual(coordinator.session.pending, ["promo"])
   }
 
   func test_creatingAModuleInstallsTheInAppCoordinatorWhenNoneExists() {
@@ -451,33 +432,6 @@ final class NottiInAppWiringTests: XCTestCase {
     let drained = expectation(description: "main drained")
     DispatchQueue.main.async { drained.fulfill() }
     wait(for: [drained], timeout: 5)
-  }
-
-  func test_thePushPermissionPortIsWrittenOnMainAndClearedByInvalidate() {
-    let coordinator = installCoordinator()
-    let impl = module()
-
-    impl.initialize("app-1", clientKey: "key", baseUrl: "https://notti.example.com", sdkVersion: "")
-    XCTAssertNil(coordinator.pushPermissionPort, "written by a main-queue hop, never from the module queue")
-    drainMain()
-    XCTAssertNotNil(coordinator.pushPermissionPort)
-
-    impl.invalidate()
-    drainMain()
-    XCTAssertNil(coordinator.pushPermissionPort)
-  }
-
-  func test_aStaleInvalidateLeavesTheNewerModulesPushPermissionPort() {
-    let coordinator = installCoordinator()
-    let old = module()
-    old.initialize("app-1", clientKey: "key", baseUrl: "https://notti.example.com", sdkVersion: "")
-    let new = module()
-    new.initialize("app-1", clientKey: "key", baseUrl: "https://notti.example.com", sdkVersion: "")
-
-    old.invalidate()
-    drainMain()
-
-    XCTAssertNotNil(coordinator.pushPermissionPort)
   }
 
   func test_invalidateLeavesTheInAppCoordinatorInstalled() {

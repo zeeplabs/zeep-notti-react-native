@@ -56,6 +56,10 @@
 		FC9FAC31E2199BC44DDB0B17 /* NottiCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D977C699E4908D806CEA914 /* NottiCore.swift */; };
 		b856e66df9c60438ae3e4165 /* NottiNetworkObserverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = f87325434599b530175c4764 /* NottiNetworkObserverTests.swift */; };
 		f36ce96b455f9bce18f00748 /* NottiNetworkObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9c59c2317ee1d68afd0953ed /* NottiNetworkObserver.swift */; };
+		6BD1CD99D11A45AE982AB1C8 /* NottiNativeSDK.swift in Sources */ = {isa = PBXBuildFile; fileRef = A672926F7ED44BB4AE136558 /* NottiNativeSDK.swift */; };
+		9E51D21B116749CD86C14AFA /* FakeNottiNativeSDK.swift in Sources */ = {isa = PBXBuildFile; fileRef = A420CD68AA3540368952E156 /* FakeNottiNativeSDK.swift */; };
+		9DD5095E364D4B699FA3F88A /* NottiImplAdapterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E3657959EF5403DAC64B0DE /* NottiImplAdapterTests.swift */; };
+		BDFEBFB39D1E45EA942C44DE /* DefaultNottiNativeSDKStub.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8881666A3A794A22984EEAE2 /* DefaultNottiNativeSDKStub.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -141,6 +145,10 @@
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 		d126d6de7b0c01ed06380e8e /* NottiPushDelegateTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiPushDelegateTests.swift; sourceTree = "<group>"; };
 		f87325434599b530175c4764 /* NottiNetworkObserverTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiNetworkObserverTests.swift; sourceTree = "<group>"; };
+		A672926F7ED44BB4AE136558 /* NottiNativeSDK.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiNativeSDK.swift; sourceTree = "<group>"; };
+		A420CD68AA3540368952E156 /* FakeNottiNativeSDK.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = FakeNottiNativeSDK.swift; sourceTree = "<group>"; };
+		3E3657959EF5403DAC64B0DE /* NottiImplAdapterTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiImplAdapterTests.swift; sourceTree = "<group>"; };
+		8881666A3A794A22984EEAE2 /* DefaultNottiNativeSDKStub.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DefaultNottiNativeSDKStub.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -262,6 +270,7 @@
 				3f0b3f51e7e781e5702d9c98 /* NottiImpl.swift */,
 				9c59c2317ee1d68afd0953ed /* NottiNetworkObserver.swift */,
 				40d45ab6ceefcf863e71399f /* NottiPushDelegate.swift */,
+				A672926F7ED44BB4AE136558 /* NottiNativeSDK.swift */,
 			);
 			name = NottiSources;
 			path = ../../ios;
@@ -309,6 +318,9 @@
 				5B328D0EDE407C9185A4C2FF /* NottiInAppCoordinatorTests.swift */,
 				f87325434599b530175c4764 /* NottiNetworkObserverTests.swift */,
 				d126d6de7b0c01ed06380e8e /* NottiPushDelegateTests.swift */,
+				A420CD68AA3540368952E156 /* FakeNottiNativeSDK.swift */,
+				3E3657959EF5403DAC64B0DE /* NottiImplAdapterTests.swift */,
+				8881666A3A794A22984EEAE2 /* DefaultNottiNativeSDKStub.swift */,
 			);
 			name = NottiTestsSources;
 			path = ../../ios/Tests;
@@ -610,6 +622,10 @@
 				48c916894d1519a8fbe72ad0 /* NottiPushDelegate.swift in Sources */,
 				b856e66df9c60438ae3e4165 /* NottiNetworkObserverTests.swift in Sources */,
 				56bcef1ec8cdeb91cdc84e09 /* NottiPushDelegateTests.swift in Sources */,
+				6BD1CD99D11A45AE982AB1C8 /* NottiNativeSDK.swift in Sources */,
+				9E51D21B116749CD86C14AFA /* FakeNottiNativeSDK.swift in Sources */,
+				9DD5095E364D4B699FA3F88A /* NottiImplAdapterTests.swift in Sources */,
+				BDFEBFB39D1E45EA942C44DE /* DefaultNottiNativeSDKStub.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
