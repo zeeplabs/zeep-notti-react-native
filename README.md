@@ -53,7 +53,7 @@ Notti is self-hosted or SaaS per deployment. By default `initialize` targets Not
 
 - React Native **0.80 or later** with the [New Architecture](https://reactnative.dev/architecture/landing-page) enabled (Turbo Modules). The Codegen spec uses the `CodegenTypes` namespace, which React Native exports from 0.80 on (0.8.0 already needed it; it is now documented).
 - Android: `minSdkVersion` 24 or higher, `compileSdkVersion` 34 or higher and Kotlin 2.0 or later (React Native 0.80+ projects already meet all three), and Firebase Cloud Messaging configured in your Firebase project. The Android engine is the native SDK `br.com.zeeplabs:notti-android` (see [Bare React Native setup](#android)).
-- iOS: Push Notifications capability enabled for your app target (APNs).
+- iOS: Push Notifications capability enabled for your app target (APNs). The iOS engine is the native SDK `NottiSDK` (CocoaPods, `~> 0.2.0`), pulled in by this package's podspec. Static and dynamic `use_frameworks!` linkage are supported.
 - A running [Notti](https://github.com/zeeplabs/zeep-notti) instance (self-hosted or SaaS) and an App's `appId`/`clientKey`. The device-profile fields require `zeep-notti` **v0.10.0 or later**. The `opened` event requires `zeep-notti` **v0.11.0 or later**; see [Notification event reporting](#notification-event-ctr-reporting).
 
 ## Installation
@@ -214,37 +214,11 @@ This package holds no Android push core of its own: its Kotlin code is a thin Tu
 ### iOS
 
 1. Enable the **Push Notifications** capability for your app target in Xcode (adds the `aps-environment` entitlement).
-2. Forward the APNs callbacks from your own `AppDelegate` — the SDK deliberately does **not** use method swizzling (see `design.md`'s AD-002 for why), so this small amount of integrator code is required:
+2. Nothing else goes in your `AppDelegate`. The native `NottiSDK` receives the APNs token and the notification callbacks by itself, so a plain `pod install` is the whole setup. A Notti push that arrives while the app is open is shown as a banner with list, sound and badge.
 
-   ```swift
-   // AppDelegate.swift
-   import UserNotifications
+   If your app must own those callbacks, set `NottiDisableSwizzling` to `YES` in `Info.plist` and forward them yourself (see [Forwarding events manually](#forwarding-events-manually)).
 
-   func application(
-     _ application: UIApplication,
-     didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
-   ) {
-     NottiBridge.didRegisterForRemoteNotifications(deviceToken: deviceToken)
-   }
-
-   func application(
-     _ application: UIApplication,
-     didFailToRegisterForRemoteNotificationsWithError error: Error
-   ) {
-     NottiBridge.didFailToRegisterForRemoteNotifications(error)
-   }
-
-   func application(
-     _ application: UIApplication,
-     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
-   ) -> Bool {
-     UNUserNotificationCenter.current().delegate = NottiPushDelegate.shared
-     // ... your existing launch code
-     return true
-   }
-   ```
-
-Without this forwarding, the device token never reaches the SDK and `notificationReceived`/`notificationClicked` never fire — `initialize()` still registers the device (with a `subscribed: false` state) but push delivery won't complete until the callbacks are wired.
+> **Upgrading from 0.8.x:** delete the `NottiBridge.didRegisterForRemoteNotifications`, `NottiBridge.didFailToRegisterForRemoteNotifications` and `UNUserNotificationCenter.current().delegate = NottiPushDelegate.shared` lines from your `AppDelegate`. They still compile and are forwarded to the SDK, but both classes are deprecated (warning) and will be removed no earlier than 1.0. `NottiPushDelegate` no longer reports anything: it only completes the callbacks.
 
 ## Android notification icon, color and image
 
@@ -278,7 +252,7 @@ On Expo, the `androidNotificationIcon` and `androidNotificationColor` plugin pro
 
 ## Rich push notifications (iOS)
 
-Attaching an image/video/audio to a push on iOS requires a [`Notification Service Extension`](https://developer.apple.com/documentation/usernotifications/unnotificationserviceextension) (NSE) — a separate, sandboxed app-extension target Apple requires for downloading and attaching media before the notification is shown. This is not something a Turbo Module can inject into your Xcode project automatically; like OneSignal, Notti ships the attachment logic as a small helper you wire into a target you create yourself (see `docs/adr/002-ios-rich-push-via-notification-service-extension-subspec.md` for the full rationale).
+Attaching an image/video/audio to a push on iOS requires a [`Notification Service Extension`](https://developer.apple.com/documentation/usernotifications/unnotificationserviceextension) (NSE) — a separate, sandboxed app-extension target Apple requires for downloading and attaching media before the notification is shown. This is not something a Turbo Module can inject into your Xcode project automatically; like OneSignal, Notti ships the attachment logic as a small helper (the `Notti/NotificationServiceExtension` subspec, an alias of the native SDK's `NottiSDKExtension` pod, so `import Notti` keeps working) that you wire into a target you create yourself (see `docs/adr/002-ios-rich-push-via-notification-service-extension-subspec.md` for the full rationale).
 
 > **Not supported in an Expo managed workflow.** This setup requires manually creating and configuring a native Xcode target (steps 1–3 below); there is no Expo config plugin for it, and running `expo prebuild` regenerates `ios/` from scratch, destroying a manually-added target. Bare React Native (or an Expo app that has already ejected) only.
 
@@ -437,7 +411,7 @@ Delivery guarantees, as implemented:
 - The heartbeat key differs per platform: `notti_last_foreground_at_ms` (Android) and `notti_session_last_seen_at_ms` (iOS) — see [Locally persisted data](#locally-persisted-data-backup-and-deletion).
 - On both platforms a process-wide session gate ensures a single session per foreground of the process, and it closes when the app goes to the background.
   - **Android:** sessions are run by the native Notti Android SDK, which keeps one core and one session gate per process. A JS reload tears down only the Turbo Module adapter: the core, its open session and its heartbeat keep running, and the `initialize` the reloaded JS sends again with the same config is a no-op, so `session_count` is not changed. The gate also absorbs a duplicate foreground signal (cold-start sync racing the lifecycle observer), and it is closed on background even if no core exists yet.
-  - **iOS:** `NottiImpl.processSessionGate` / `NottiCore.SessionGate`. After a JS reload with the app in the foreground, the new core adopts the persisted open session instead of closing it as an orphan: `session_count` is not changed and only the heartbeat is resumed. Tearing the module down (`invalidate`) removes the old core's lifecycle observers and stops its heartbeat, so the old and the new core do not end the same session twice.
+  - **iOS:** sessions are run by the native `NottiSDK`, which keeps one core and one session gate per process. A JS reload tears down only the Turbo Module adapter, which removes its SDK listeners; the core and its open session keep running.
 
 #### In-App message reporting
 
@@ -477,7 +451,7 @@ Behavior with `Notti.setLocationSharingEnabled(false)` (opt-out):
 
 Host-app requirements when you use country reporting:
 
-- **iOS**: the SDK never requests permission, so your app must request it itself and declare `NSLocationWhenInUseUsageDescription` in `Info.plist` with your own purpose string. The `Notti/Core` subspec links `CoreLocation` (declared in the podspec, nothing to add manually) and references location APIs even if you never opt in; App Store Connect upload validation may therefore warn about a missing location purpose string (ITMS-90683) for any app using this SDK — adding `NSLocationWhenInUseUsageDescription` avoids that.
+- **iOS**: the SDK never requests permission, so your app must request it itself and declare `NSLocationWhenInUseUsageDescription` in `Info.plist` with your own purpose string. The native SDK (`NottiSDK`) references location APIs even if you never opt in; App Store Connect upload validation may therefore warn about a missing location purpose string (ITMS-90683) for any app using this SDK — adding `NSLocationWhenInUseUsageDescription` avoids that.
 - **Android**: declare `ACCESS_COARSE_LOCATION` in your app's manifest and request it at runtime yourself. This library's manifest does not declare it.
 
 ## Privacy, App Store labels and LGPD
@@ -506,25 +480,7 @@ This section lists what the SDK does so you can fill in your own disclosures; it
 
 Both native setup paths above assume Notti owns the platform's single push hook (iOS's `UNUserNotificationCenter` delegate, Android's manifest-declared `FirebaseMessagingService`). If your app already owns that hook for another reason and can't hand it to Notti, forward events into the SDK manually instead — no delegate/manifest ownership required on either platform:
 
-**iOS** — `NottiPushDelegate.shared`'s methods are plain `public func`s, callable from inside your own delegate. Forward **both** callbacks — omitting `didReceive` silently loses every `notificationClicked` event and cold-start tap (I5, found in pre-release review). Forward every `didReceive` response, including custom action buttons: the SDK reports those as `clicked`.
-
-```swift
-func userNotificationCenter(
-  _ center: UNUserNotificationCenter,
-  willPresent notification: UNNotification,
-  withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
-) {
-  NottiPushDelegate.shared.userNotificationCenter(center, willPresent: notification, withCompletionHandler: completionHandler)
-}
-
-func userNotificationCenter(
-  _ center: UNUserNotificationCenter,
-  didReceive response: UNNotificationResponse,
-  withCompletionHandler completionHandler: @escaping () -> Void
-) {
-  NottiPushDelegate.shared.userNotificationCenter(center, didReceive: response, withCompletionHandler: completionHandler)
-}
-```
+**iOS** — set `NottiDisableSwizzling` to `YES` in `Info.plist`, then forward the APNs and notification-center callbacks from your own delegates to the native SDK's manual API (`Notti.Notifications.didRegisterForRemoteNotifications(deviceToken:)`, `didFailToRegisterForRemoteNotifications(error:)`, `didReceiveRemoteNotification(_:)`, `willPresent(_:)` and `didReceive(_:)`), documented in the [NottiSDK README](https://github.com/zeeplabs/zeep-notti-ios-sdk). Forward `didReceive` for every response, including custom action buttons: the SDK reports those as `clicked`. While swizzling is on, the SDK ignores these calls with one warning, so an event is never processed twice. The deprecated `NottiBridge` forwards the two registration callbacks the same way; `NottiPushDelegate` does not report anything.
 
 **Android** — Android delivers FCM messages to one service per app. Remove the SDK's service in your app's manifest and forward the two callbacks from yours to `com.zeeplabs.notti.NottiBridge` (from the native SDK this package depends on; it is on your app's compile classpath):
 
@@ -634,7 +590,7 @@ The value written to the entitlements file is resolved like this (`plugin/src/wi
 >
 > Adjust the list to your own `eas.json` profiles: any profile signed with an ad hoc, enterprise or App Store profile uses production APNs; only development-signed builds (dev client on a registered device, `expo run:ios` with a development team) use the sandbox.
 
-The Android runtime-permission declaration and the iOS `AppDelegate` forwarding above still apply the same way in an Expo dev client/prebuild project — the plugin only handles native project *configuration*, not the `AppDelegate` code path (Expo doesn't generate a customizable `AppDelegate` by default under managed workflow config plugins for this).
+The Android runtime-permission declaration above still applies the same way in an Expo dev client/prebuild project. On iOS nothing is needed in the `AppDelegate`: the native `NottiSDK` handles the push callbacks, and the plugin only adds the `aps-environment` entitlement.
 
 ## Manual smoke testing
 
