@@ -25,19 +25,8 @@ Pod::Spec.new do |s|
     core.source_files = "ios/**/*.{h,m,mm,swift,cpp}"
     core.exclude_files = ["ios/Tests/**/*", "ios/NotificationServiceExtension/**/*"]
     core.private_header_files = "ios/**/*.h"
-    # Segment telemetry P3: `NottiImpl` reads the host app's last cached
-    # location fix and reverse-geocodes it to a country code (CoreLocation).
-    # The SDK never requests location permission itself; it only reads when
-    # the host app has already granted it (see spec.md P3 / design.md).
-    core.frameworks = "CoreLocation"
-    # M6 (pre-release review round 3): a source pod gets no manifest unless
-    # one ships as its own resource bundle - Xcode's privacy report only
-    # aggregates `PrivacyInfo.xcprivacy` from bundles embedded in the final
-    # product, not stray files pulled in alongside `.swift` sources. Without
-    # this, only the example app declared the SDK's own UserDefaults
-    # required-reason API usage, leaving every real integrator to add it
-    # themselves or risk the ITMS-91053 warning on submission.
-    core.resource_bundles = { "Notti_Privacy" => ["ios/PrivacyInfo.xcprivacy"] }
+    # The engine lives in the native SDK (NSDK-01); the pod only adapts it to the Turbo Module.
+    core.dependency "NottiSDK", "~> 0.2.0"
     install_modules_dependencies(core)
   end
 
@@ -47,26 +36,8 @@ Pod::Spec.new do |s|
   # Consumers add this in its own Podfile target, never alongside the app's
   # main target. See docs/adr/002-....md.
   s.subspec "NotificationServiceExtension" do |nse|
-    nse.source_files = "ios/NotificationServiceExtension/**/*.swift"
-    nse.exclude_files = ["ios/NotificationServiceExtension/Tests/**/*"]
-    nse.frameworks = "UserNotifications"
-    # M6: the NSE target is a separate bundle from the app - it needs its own
-    # manifest declaring the `FileManager.attributesOfItem` file-timestamp
-    # read used to enforce the attachment size cap (A2).
-    nse.resource_bundles = { "Notti_NSE_Privacy" => ["ios/NotificationServiceExtension/PrivacyInfo.xcprivacy"] }
-
-    # Real, injectable-`URLSession` coverage for the helper (B3, found
-    # missing in pre-release review). `StubURLProtocol` is compiled directly
-    # into this test target from `ios/Tests/` rather than imported: it lives
-    # in the Core subspec's separate module, which this subspec must never
-    # depend on (see the module-note above `Core`). No app host needed - the
-    # helper is a plain Swift/Foundation/UserNotifications logic unit.
-    nse.test_spec "Tests" do |test|
-      test.source_files = [
-        "ios/NotificationServiceExtension/Tests/**/*.swift",
-        "ios/Tests/StubURLProtocol.swift",
-      ]
-      test.requires_app_host = false
-    end
+    # Alias of the native SDK's extension pod: `import Notti` keeps working in an NSE target (NSDK-13).
+    nse.source_files = "ios/NotificationServiceExtension/NottiSDKExtensionReexport.swift"
+    nse.dependency "NottiSDKExtension", "~> 0.2.0"
   end
 end
