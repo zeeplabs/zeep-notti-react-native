@@ -22,6 +22,8 @@ final class FakeNottiNativeSDK: NottiNativeSDK {
     case addClickedListener
     case addDeviceIdChangedListener
     case addInAppClickListener
+    case didRegister(Data)
+    case didFail(String)
   }
 
   private(set) var calls: [Call] = []
@@ -85,8 +87,8 @@ final class FakeNottiNativeSDK: NottiNativeSDK {
     return register(handler) { self.inAppClickHandlers[$0] = $1 } remove: { self.inAppClickHandlers[$0] = nil }
   }
 
-  func didRegisterForRemoteNotifications(deviceToken: Data) {}
-  func didFailToRegisterForRemoteNotifications(error: Error) {}
+  func didRegisterForRemoteNotifications(deviceToken: Data) { calls.append(.didRegister(deviceToken)) }
+  func didFailToRegisterForRemoteNotifications(error: Error) { calls.append(.didFail((error as NSError).domain)) }
 
   private func register<H>(
     _ handler: H, store: (Int, H) -> Void, remove: @escaping (Int) -> Void
