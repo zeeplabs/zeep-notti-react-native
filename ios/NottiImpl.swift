@@ -1,153 +1,21 @@
 import Foundation
-import UIKit
-import UserNotifications
-import CoreLocation
 
-/// Thin TurboModule business-logic entry (Swift side of the T2-confirmed
-/// Obj-C++-shim-plus-Swift-class bridging pattern): every Spec method (T4)
-/// delegates one line into `NottiCore` (T13). Mirrors `NottiModule.kt`'s
-/// role exactly — real push-token acquisition (APNs `registerForRemote
-/// Notifications`) and the native permission prompt are wired here, matching
-/// Android's real `FirebaseMessaging` token fetch rather than a stub.
-///
-/// `activeCore`/the emit handlers mirror `NottiModule.kt`'s
-/// `activeInstance`/`activeCore` static bridge: APNs delegate callbacks
-/// (T15) run outside this class (forwarded from the host app's own
-/// `AppDelegate`/`UNUserNotificationCenterDelegate`, per AD-002's confirmed
-/// wiring approach) and need a way to reach the live `NottiCore` instance
-/// and to emit Codegen events through the live Obj-C++ `Notti` instance
-/// (which owns `emitOnNotificationReceived`/`emitOnNotificationClicked` via
-/// `NativeNottiSpecBase` — a Swift class can't inherit that Obj-C++ base).
+/// Thin TurboModule business-logic entry: every Spec method forwards to the native SDK through the
+/// `NottiNativeSDK` seam, and SDK events are mapped to the Codegen emitters `Notti.mm` wires in. No
+/// business logic lives here (NSDK-01); the engine is `NottiSDK`.
 @objc(NottiImpl)
 public class NottiImpl: NSObject {
 
-  @objc public static weak var activeInstance: NottiImpl?
-  static var activeCore: NottiCore?
-  /// Instance whose `NottiPushPermissionAction` is the coordinator's
-  /// `pushPermissionPort`. Main-thread only, like the port itself.
-  private static weak var pushPermissionPortOwner: NottiImpl?
+  /// The `sdk_name` the backend receives for this wrapper (NSDK-03).
+  static let sdkName = "react-native"
 
-  /// Process-wide "a session is open" flag (final review A), shared by every
-  /// `NottiCore` this process builds - a JS reload creates a new module/core
-  /// while the foreground session is still open, and the new core must adopt
-  /// it rather than close it as an orphan. Mirrors Android's
-  /// `NottiModule.processSessionGate`.
-  static let processSessionGate = NottiCore.SessionGate()
-
-  /// M2 (pre-release review round 3): closes `processSessionGate`
-  /// unconditionally on background, even when no `NottiCore` is alive to
-  /// hear about it. `NottiCore.invalidate()` (called on JS reload) removes
-  /// that core's own `didEnterBackgroundNotification` observer immediately;
-  /// if the app backgrounds in the gap before the reloaded module's core
-  /// exists, nothing closes the gate. The next real foreground then finds it
-  /// already open, treats the new core as "adopting" a live session instead
-  /// of starting one, and counts the entire background interval as session
-  /// time. Mirrors Android's `NottiForegroundObserver.onStop` ->
-  /// `handleProcessBackground`, which closes the gate the same
-  /// unconditional way. Registered once per process; forced into existence
-  /// by the `_ = ...` touch in `init` below (a `static let` only runs its
-  /// initializer on first access).
-  private static let processBackgroundObserver: NSObjectProtocol = {
-    #if canImport(UIKit)
-      return NotificationCenter.default.addObserver(
-        forName: UIApplication.didEnterBackgroundNotification,
-        object: nil,
-        queue: nil
-      ) { _ in
-        NottiImpl.handleProcessBackground(gate: NottiImpl.processSessionGate, inApp: NottiInApp.get())
-      }
-    #else
-      return NSObject()
-    #endif
-  }()
-
-  /// Closes the process gate, then ends the In-App session and pauses its
-  /// display clock, with or without a live core (T25: the same gap the gate
-  /// close covers). Test seam, like Android's `handleProcessBackground`.
-  static func handleProcessBackground(gate: NottiCore.SessionGate, inApp: NottiInAppCoordinator?) {
-    gate.close()
-    inApp?.onSessionEnded()
-    inApp?.onAppBackgrounded()
-  }
-
-  /// Resumes the In-App display clock when the app returns from background
-  /// (design: `willEnterForeground` resumes it; `willResignActive` alone never
-  /// paused it). Registered once per process, like `processBackgroundObserver`.
-  private static let processForegroundObserver: NSObjectProtocol = {
-    #if canImport(UIKit)
-      return NotificationCenter.default.addObserver(
-        forName: UIApplication.willEnterForegroundNotification,
-        object: nil,
-        queue: nil
-      ) { _ in
-        NottiInApp.get()?.onAppForegrounded()
-      }
-    #else
-      return NSObject()
-    #endif
-  }()
-
-  /// The suite every Notti store shares (device, push events, In-App events).
-  static let sharedDefaults = UserDefaults(suiteName: "notti_prefs") ?? .standard
-
-  /// Shared offline event store (T8). `NottiPushDelegate`'s `willPresent`/
-  /// `didReceive` fire on cold start before `NottiImpl` exists, so the store
-  /// the delegate enqueues into and the store `NottiCore.flushEventQueue`
-  /// drains must be the same instance reachable without a live module — the
-  /// same "buffer before module exists" pattern as `NottiEventBuffer.shared`,
-  /// reached through the `activeCore`-style static. Lazily created on the
-  /// first touch from either side.
-  static let eventStore = NottiEventStore(defaults: NottiImpl.sharedDefaults)
-
-  /// Set by `Notti.mm`'s `-init` to forward parsed notification payloads
-  /// into the Codegen event emitters it alone has access to. Assigning them
-  /// registers the emitter with `NottiEventBuffer`, which immediately
-  /// replays any *received* notification that arrived before the module
-  /// existed. A cold-start click is deliberately not replayed here — no JS
-  /// listener exists yet at module-construction time — and is handed over by
-  /// `getInitialNotificationClick()` instead.
+  /// Set by `Notti.mm`'s `-init` before `activate()`. Handlers are plain closures: the SDK buffers
+  /// events while no listener is attached and replays them to the first one.
   @objc public var emitReceivedHandler: (([String: Any]) -> Void)?
   @objc public var emitClickedHandler: (([String: Any]) -> Void)?
-
-  /// Set by `Notti.mm`'s `-init` to forward an In-App click into the Codegen
-  /// emitter `onInAppMessageClicked`. Deliberately not routed through
-  /// `NottiEventBuffer`: a click with no live module is reported and the
-  /// display closed, but never buffered or replayed to a later listener (A9,
-  /// SDKIAM-68). Cleared by `invalidate()`.
+  @objc public var emitDeviceIdChangedHandler: ((String) -> Void)?
   @objc public var emitInAppClickHandler: (([String: Any]) -> Void)?
 
-  /// Delivers an In-App click to the live module's JS listener. False when no
-  /// module can receive it (between RN reloads), so the coordinator logs its
-  /// fixed warning. The SDK opens nothing: the integrator handles the link.
-  static func emitInAppClick(_ click: InAppClick) -> Bool {
-    guard let handler = activeInstance?.emitInAppClickHandler else { return false }
-    handler(click.payload)
-    return true
-  }
-
-  /// Plain reference-type cell so `init` (below) can hand `NottiCore` a
-  /// closure that reads this box's `value` at call time, while
-  /// `emitDeviceIdChangedHandler`'s `didSet` (running later, once `self` is
-  /// fully initialized) writes into that same box. A closure created before
-  /// `super.init()` runs cannot capture `self` at all - not even weakly - so
-  /// the box, not `self`, is what both sides actually share.
-  private final class HandlerBox {
-    var value: ((String) -> Void)?
-  }
-
-  /// Set by `Notti.mm`'s `-init`, before calling [activate], to forward a
-  /// device-id change into the Codegen event emitter it alone has access to.
-  /// Not routed through `NottiEventBuffer` - unlike a notification tap, there
-  /// is no cold-start replay concern (`getDeviceId()` covers the synchronous
-  /// case; this only fires for a value already assigned or updated while JS
-  /// is alive).
-  @objc public var emitDeviceIdChangedHandler: ((String) -> Void)? {
-    didSet { deviceIdChangedBox.value = emitDeviceIdChangedHandler }
-  }
-
-  private let deviceIdChangedBox: HandlerBox
-
-  let core: NottiCore
   private let native: NottiNativeSDK
   private let subscriptionsLock = NSLock()
   private var subscriptions: [NottiNativeSubscription] = []
@@ -157,149 +25,12 @@ public class NottiImpl: NSObject {
   }
 
   init(native: NottiNativeSDK) {
-    _ = NottiImpl.processBackgroundObserver
-    _ = NottiImpl.processForegroundObserver
-    // Before the core exists: the core's first session start (which can be
-    // replayed at creation) must find the coordinator installed.
-    NottiInAppSetup.install()
-    let defaults = NottiImpl.sharedDefaults
-    let box = HandlerBox()
-    let locationReader = NottiLocationReader()
-    core = NottiCore(
-      deviceStore: NottiDeviceStore(defaults: defaults),
-      // `NottiCore` holds the store strongly, so the shared static here is
-      // enough to keep it alive; the T8 enqueue hookup reaches the same store
-      // through `NottiImpl.eventStore`.
-      eventStore: NottiImpl.eventStore,
-      apiClientFactory: { appId, clientKey, baseUrl in
-        NottiApiClient(baseUrl: baseUrl, appId: appId, clientKey: clientKey)
-      },
-      tokenProvider: { _ in
-        // APNs delivers the device token asynchronously via
-        // application(_:didRegisterForRemoteNotificationsWithDeviceToken:)
-        // (T15, host AppDelegate-forwarded) — there is no synchronous
-        // "get current token" API on iOS, so this never invokes the
-        // callback itself; T15's forwarded callback calls
-        // `NottiCore.onTokenRefreshed` once the real token arrives,
-        // which performs the actual registration (both the first-time
-        // and any later refresh, uniformly).
-        DispatchQueue.main.async {
-          UIApplication.shared.registerForRemoteNotifications()
-        }
-      },
-      permissionRequester: { callback in
-        // No main-thread hop: `NottiCore` hops the result onto its own
-        // background work queue (where the blocking PATCH runs), and an
-        // RCTPromiseResolveBlock may be resolved from any thread. Hopping to
-        // main here would have put the blocking API-client call chain back on
-        // the main thread.
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { granted, _ in
-          callback(granted)
-        }
-      },
-      // Segment telemetry P1 (T7): reads the host app's marketing version once
-      // per launch; `Bundle.main.infoDictionary` has no entry for it in an
-      // odd host build, in which case this returns nil and `NottiCore` skips
-      // the sync (SEGTEL edge: no crash, no registration block).
-      versionProvider: {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
-      },
-      // Segment telemetry P3 (T9): check-only OS location permission read —
-      // the SDK never calls `requestWhenInUseAuthorization` (SEGTEL-14); it
-      // only reports country when the host app has already granted permission
-      // for its own purposes.
-      hasLocationPermission: { locationReader.hasPermission() },
-      // Device profile fields P1 (T7, DPF-01): OS version / model / timezone /
-      // language reads. Each fails to nil - never a crash (DPF-04/09).
-      // Segment telemetry P3 (T9): best-effort, async country resolution from
-      // the last cached fix reverse-geocoded to its ISO 3166-1 alpha-2 code.
-      // A stale fix is acceptable at country-level granularity (SEGTEL edge
-      // case); nil on any failure (services disabled, no fix, geocode error,
-      // a geocode already in flight) → the field is omitted.
-      countryProvider: { callback in locationReader.readCountry(callback) },
-      // Device profile fields P1 (T7, DPF-01): OS version / model / timezone /
-      // language reads. Each fails to nil - never a crash (DPF-04/09).
-      deviceOsProvider: {
-        UIDevice.current.systemVersion
-      },
-      deviceModelProvider: {
-        var systemInfo = utsname()
-        uname(&systemInfo)
-        let mirror = Mirror(reflecting: systemInfo.machine)
-        let bytes = mirror.children.map { $0.value as? Int8 ?? 0 }
-        let model = String(bytes: bytes.map { UInt8(bitPattern: $0) }, encoding: .ascii)?
-          .trimmingCharacters(in: .controlCharacters)
-        return model?.isEmpty == false ? model : nil
-      },
-      timezoneProvider: {
-        TimeZone.current.identifier
-      },
-      languageProvider: {
-        // ISO 639-1 primary subtag; "" / "und" -> nil (parity with Android).
-        NottiCore.normalizedLanguageCode(Locale.current.languageCode)
-      },
-      // Device profile fields P3 (T8, DPF-10): OS push-permission state read
-      // via `getNotificationSettings` (callback-based). Maps authorization
-      // status to the enum; unknown/transitional resolves nil (omit, never
-      // fabricate - DPF edge case).
-      permissionStatusProvider: { callback in
-        UNUserNotificationCenter.current().getNotificationSettings { settings in
-          let status: String?
-          switch settings.authorizationStatus {
-          case .authorized: status = "granted"
-          case .denied: status = "denied"
-          case .notDetermined: status = "notDetermined"
-          case .provisional: status = "provisional"
-          @unknown default: status = nil
-          }
-          callback(status)
-        }
-      },
-      // Review item 2: the cold-start `didBecomeActive` usually fired before
-      // this module was constructed; report whether the app is already active
-      // (read on the main thread, asynchronously - never `main.sync`, which
-      // could deadlock a module constructed while main waits on it).
-      appStateProvider: { callback in
-        DispatchQueue.main.async {
-          callback(UIApplication.shared.applicationState == .active)
-        }
-      },
-      // Review item 3: keep the process alive while the session-end
-      // bookkeeping + PATCH queued at `didEnterBackground` run.
-      beginBackgroundTask: { NottiImpl.beginBackgroundTask() },
-      // B1 (found in pre-release review): `NottiCore`'s `logger` parameter
-      // defaults to a no-op, so every diagnostic it logs - including the A4
-      // fix (mutation-failure logging) - was silently discarded in production
-      // on iOS, exercised only by tests that inject their own logger. `NSLog`
-      // mirrors Android's `Log.w("Notti", ...)` production wiring.
-      logger: { message in NSLog("Notti: %@", message) },
-      onDeviceIdChanged: { deviceId in box.value?(deviceId) },
-      sessionGate: NottiImpl.processSessionGate,
-      inApp: NottiInApp.coreHooks
-    )
-    // The closure passed to `NottiCore` above cannot capture `self` (or any
-    // of its properties) this early - a class's stored properties, and
-    // therefore `self` itself, are not valid to reference until after
-    // `super.init()` runs. `box` is a plain local instead, captured directly
-    // into that closure; this line publishes the very same box as
-    // `self.deviceIdChangedBox`, the only thing `emitDeviceIdChangedHandler`'s
-    // `didSet` (below) needs to write into later.
-    self.deviceIdChangedBox = box
     self.native = native
     super.init()
   }
 
-  /// Publishes this instance as `activeInstance`/`activeCore` so
-  /// `NottiBridge`/`NottiPushDelegate` (and any other external caller
-  /// reaching them from an arbitrary thread) can find it. Called by
-  /// `Notti.mm`'s `-init` only after every emit handler - including
-  /// `emitDeviceIdChangedHandler` - is wired: publishing first left a window
-  /// where a device-id change landing on another thread invoked a `nil`
-  /// handler, dropping the event for the case that matters most (first
-  /// assignment on a fresh install).
+  /// Attaches the SDK listeners. Called by `Notti.mm`'s `-init` once every emit handler is wired.
   @objc public func activate() {
-    NottiImpl.activeInstance = self
-    NottiImpl.activeCore = core
     // Take the launch tap before any clicked listener exists: the SDK replays a buffered click to the
     // first listener, and a replay into an emitter JS has not subscribed to yet would lose it. It is
     // kept for `getInitialNotificationClick()` instead (NSDK-07).
@@ -317,78 +48,19 @@ public class NottiImpl: NSObject {
     subscriptionsLock.unlock()
   }
 
-  /// Called by `Notti.mm`'s `-invalidate` (RCTInvalidating) when the RN
-  /// bridge tears this module down (dev reload, host dropping the bridge).
-  /// I1/I2 (found in pre-release review): without this, `activeCore` - a
-  /// strong static, unlike the `weak activeInstance` - kept a dead module's
-  /// `NottiCore` alive indefinitely (its foreground observer and work queue
-  /// still registered), and `emitReceivedHandler`/`emitClickedHandler` stayed
-  /// non-nil (pointing at a captured `weakSelf` that had already gone nil),
-  /// so `NottiEventBuffer.emit` treated the event as "delivered" - calling a
-  /// no-op handler and burning the dedupe key - instead of buffering it for
-  /// the next module. Guarded by identity: a second `NottiImpl` activating
-  /// before this one tears down must not have its live `core` clobbered.
+  /// Called by `Notti.mm`'s `-invalidate` when the RN bridge tears this module down (dev reload, host
+  /// dropping the bridge): removes every SDK listener so a reloaded module gets each event once.
   @objc public func invalidate() {
     subscriptionsLock.lock()
     let live = subscriptions
     subscriptions.removeAll()
     subscriptionsLock.unlock()
     live.forEach { $0.remove() }
-    if NottiImpl.activeInstance === self {
-      NottiImpl.activeInstance = nil
-    }
-    // The coordinator reads the port on main; this runs on the module queue.
-    // Cleared only if this instance still owns it: a newer module's
-    // `wirePushPermissionPort` hop may already have run.
-    DispatchQueue.main.async {
-      guard NottiImpl.pushPermissionPortOwner === self else { return }
-      NottiImpl.pushPermissionPortOwner = nil
-      NottiInApp.get()?.pushPermissionPort = nil
-    }
-    if NottiImpl.activeCore === core {
-      NottiImpl.activeCore = nil
-    }
     emitReceivedHandler = nil
     emitClickedHandler = nil
     emitDeviceIdChangedHandler = nil
     emitInAppClickHandler = nil
-    // Final review A: stop this core observing lifecycle, so it cannot end
-    // the session the reloaded core adopts (double `session_count`).
-    core.invalidate()
   }
-
-  /// Begins a UIKit background task and returns an idempotent closure that
-  /// ends it; the expiration handler ends it too, so the OS never kills the
-  /// app for overrunning the task.
-  private static func beginBackgroundTask() -> () -> Void {
-    final class TaskBox {
-      let lock = NSLock()
-      var id: UIBackgroundTaskIdentifier = .invalid
-      var ended = false
-      func end() {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !ended else { return }
-        ended = true
-        if id != .invalid {
-          UIApplication.shared.endBackgroundTask(id)
-        }
-      }
-    }
-    let box = TaskBox()
-    let id = UIApplication.shared.beginBackgroundTask(withName: "app.notti.session-end") { box.end() }
-    box.lock.lock()
-    box.id = id
-    let alreadyEnded = box.ended
-    box.lock.unlock()
-    if alreadyEnded && id != .invalid {
-      UIApplication.shared.endBackgroundTask(id)
-    }
-    return { box.end() }
-  }
-
-  /// The `sdk_name` the backend receives for this wrapper (NSDK-03).
-  static let sdkName = "react-native"
 
   @objc(initialize:clientKey:baseUrl:sdkVersion:)
   public func initialize(_ appId: String, clientKey: String, baseUrl: String, sdkVersion: String) {
@@ -514,80 +186,5 @@ public class NottiImpl: NSObject {
       action = ["type": type, "value": value]
     }
     return ["messageId": click.messageId, "buttonId": click.buttonId, "action": action]
-  }
-}
-
-/// Location reads for segment telemetry P3.
-///
-/// Threading (final review E): `CLLocationManager` must be created on a
-/// thread with a live run loop - it delivers its delegate callbacks on the
-/// creating thread's run loop - and the old lazy creation happened on
-/// `NottiCore`'s work queue (a GCD thread without one). The manager is now
-/// created on the main thread (inline if `init` already runs there, else via
-/// `main.async`, never `main.sync`: no deadlock with a main thread that waits
-/// on module construction), and every touch of it stays on main:
-/// - `hasPermission()` (synchronous, called from the work queue) reads a
-///   lock-guarded cache, seeded on main right after creation and refreshed by
-///   `locationManagerDidChangeAuthorization` (e.g. permission changed in
-///   Settings while backgrounded). `NottiImpl.init` creates this reader
-///   before `NottiCore` enqueues its `appStateProvider` main block, so the
-///   seed lands before the cold-start session reads it (main is FIFO).
-/// - `readCountry` hops to main to read `location` and start the geocode;
-///   `NottiCore` hops the callback back onto its work queue.
-/// One shared `CLGeocoder`, never asked to geocode in parallel (Apple
-/// rate-limits reverse geocoding; `NottiCore` additionally throttles reads).
-/// The SDK never requests permission (SEGTEL-14), only reads it.
-private final class NottiLocationReader: NSObject, CLLocationManagerDelegate {
-  private let lock = NSLock()
-  private var cachedPermission = false
-  /// Main-thread-only.
-  private var manager: CLLocationManager?
-  /// Main-thread-only.
-  private let geocoder = CLGeocoder()
-
-  override init() {
-    super.init()
-    if Thread.isMainThread {
-      setUpManager()
-    } else {
-      DispatchQueue.main.async { self.setUpManager() }
-    }
-  }
-
-  /// Main thread only.
-  private func setUpManager() {
-    let manager = CLLocationManager()
-    manager.delegate = self
-    self.manager = manager
-    updatePermission(manager.authorizationStatus)
-  }
-
-  private func updatePermission(_ status: CLAuthorizationStatus) {
-    let granted = status == .authorizedWhenInUse || status == .authorizedAlways
-    lock.lock()
-    cachedPermission = granted
-    lock.unlock()
-  }
-
-  func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-    updatePermission(manager.authorizationStatus)
-  }
-
-  func hasPermission() -> Bool {
-    lock.lock()
-    defer { lock.unlock() }
-    return cachedPermission
-  }
-
-  func readCountry(_ callback: @escaping (String?) -> Void) {
-    DispatchQueue.main.async {
-      guard let location = self.manager?.location, !self.geocoder.isGeocoding else {
-        callback(nil)
-        return
-      }
-      self.geocoder.reverseGeocodeLocation(location) { placemarks, _ in
-        callback(placemarks?.first?.isoCountryCode)
-      }
-    }
   }
 }

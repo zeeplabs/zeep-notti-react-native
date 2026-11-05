@@ -25,7 +25,6 @@
     "react-native.config.js",
     "!ios/build",
     "!ios/Tests",
-    "!ios/NotificationServiceExtension/Tests",
     "!android/build",
     "!android/src/test",
     "!android/gradle",
