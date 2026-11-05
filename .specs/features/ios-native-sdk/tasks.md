@@ -1,7 +1,7 @@
 # iOS on the Native SDK Tasks
 
 **Design**: `.specs/features/ios-native-sdk/design.md` (approved by Julio, 2026-10-31)
-**Status**: Draft
+**Status**: T1-T9 implemented on `feat/ios-native-sdk` (2026-11-05). T10 waits for `NottiSDK` 0.2.0 on the CocoaPods trunk (EXT-2); T11 is Julio's device run.
 
 ---
 
@@ -78,9 +78,9 @@ T10). Old Swift core still compiles in this task.
 **Reuses**: spike diff (`spike/ios-native-sdk`)
 **Requirement**: NSDK-01 (partial), NSDK-13, NSDK-18, NSDK-21 (partial)
 **Done when**:
-- [ ] `pod install` and simulator build pass in default, `USE_FRAMEWORKS=static`, `USE_FRAMEWORKS=dynamic`
-- [ ] Example NSE target compiles with `import Notti` unchanged
-- [ ] `example/ios/Podfile.lock` and `Info.plist` noise reverted (AGENTS.md)
+- [x] `pod install` and simulator build pass in default, `USE_FRAMEWORKS=static`, `USE_FRAMEWORKS=dynamic`
+- [x] Example NSE target compiles with `import Notti` unchanged
+- [x] `example/ios/Podfile.lock` and `Info.plist` noise reverted (AGENTS.md)
 **Tests**: none (build)
 **Gate**: build
 
@@ -94,7 +94,7 @@ calling `Notti.*` unqualified, with `@_spi(Wrapper) import NottiSDK`.
 **Depends on**: T1
 **Requirement**: NSDK-02, NSDK-03, NSDK-17
 **Done when**:
-- [ ] Builds in the three linkages; no `NottiSDK.` qualification anywhere (`grep -n "NottiSDK\.Notti" ios/` empty)
+- [x] Builds in the three linkages; no `NottiSDK.` qualification anywhere (`grep -n "NottiSDK\.Notti" ios/` empty)
 **Tests**: none (pure pass-through; covered through the fake in T3-T5)
 **Gate**: build
 
@@ -108,9 +108,9 @@ facade by injection (production default). Old core references removed from these
 **Depends on**: T2
 **Requirement**: NSDK-02, NSDK-03, NSDK-04
 **Done when**:
-- [ ] Each Spec method forwards the exact arguments (one test per method)
-- [ ] `initialize` passes `opensInAppURLs == false`, `sdkName == "react-native"` and the JS `sdkVersion`, empty string included
-- [ ] `requestPermission` resolves with the facade's Bool
+- [x] Each Spec method forwards the exact arguments (one test per method)
+- [x] `initialize` passes `opensInAppURLs == false`, `sdkName == "react-native"` and the JS `sdkVersion`, empty string included
+- [x] `requestPermission` resolves with the facade's Bool
 **Tests**: XCTest with the fake facade
 **Gate**: quick (blocked by B-1 until resolved)
 
@@ -125,10 +125,10 @@ subscription. `takeInitialNotificationClick()` returns and clears the slot, fall
 **Depends on**: T3
 **Requirement**: NSDK-05, NSDK-06, NSDK-07
 **Done when**:
-- [ ] Take happens before the clicked listener is added (fake records call order)
-- [ ] Payload mapping matches the 0.8.0 shapes, including `action: null`
-- [ ] After `invalidate()` the fake has zero live subscriptions; a second module instance gets each event once
-- [ ] Initial click returned once, nil afterwards, also across a simulated reload
+- [x] Take happens before the clicked listener is added (fake records call order)
+- [x] Payload mapping matches the 0.8.0 shapes, including `action: null`
+- [x] After `invalidate()` the fake has zero live subscriptions; a second module instance gets each event once
+- [x] Initial click returned once, nil afterwards, also across a simulated reload
 **Tests**: XCTest with the fake facade
 **Gate**: quick
 
@@ -143,9 +143,9 @@ Keep the Obj-C names `NottiBridge` and `NottiPushDelegate`.
 **Depends on**: T2
 **Requirement**: NSDK-11, NSDK-12
 **Done when**:
-- [ ] Bridge calls reach the fake's manual API with the same token/error
-- [ ] Delegate completes with the documented options and never calls the facade
-- [ ] 0.8.0 README `AppDelegate` snippet compiles in the example (with deprecation warnings only)
+- [x] Bridge calls reach the fake's manual API with the same token/error
+- [x] Delegate completes with the documented options and never calls the facade
+- [x] 0.8.0 README `AppDelegate` snippet compiles in the example (with deprecation warnings only)
 **Tests**: XCTest
 **Gate**: quick
 
@@ -160,9 +160,9 @@ symbols; add `.gitignore`/`package.json` `files` cleanup for removed paths.
 **Depends on**: T4, T5
 **Requirement**: NSDK-01, NSDK-19, NSDK-21
 **Done when**:
-- [ ] `ios/` holds only `Notti.h`, `Notti.mm`, `NottiImpl.swift`, `NottiNativeSDK.swift`, `NottiLegacyIntegration.swift`, the NSE re-export and adapter tests
-- [ ] Swift line count under 600 (excluding tests)
-- [ ] Builds in the three linkages; `NottiTests` green
+- [x] `ios/` holds only `Notti.h`, `Notti.mm`, `NottiImpl.swift`, `NottiNativeSDK.swift`, `NottiLegacyIntegration.swift`, the NSE re-export and adapter tests
+- [x] Swift line count under 600 (excluding tests)
+- [x] Builds in the three linkages; `NottiTests` green
 - [ ] Archive privacy report lists the `NottiSDK` manifest, not `Notti_Privacy` (manual check, recorded in T11)
 **Tests**: existing adapter tests
 **Gate**: quick + build
@@ -175,7 +175,7 @@ symbols; add `.gitignore`/`package.json` `files` cleanup for removed paths.
 **Depends on**: T6
 **Requirement**: NSDK-16, NSDK-20
 **Done when**:
-- [ ] Workflow parses; no step references a removed scheme
+- [x] Workflow parses; no step references a removed scheme
 **Tests**: none
 **Gate**: CI run on the PR (note: GitHub Actions billing may block runs, see iOS SDK history; then run locally)
 
@@ -186,8 +186,10 @@ helper; update plugin code and its Jest tests only if it does. Record the result
 **Where**: `plugin/src/withNotti.ts`, `src/__tests__/`
 **Depends on**: none
 **Requirement**: NSDK-14
+**Finding (2026-11-05)**: no change needed. The iOS side of `plugin/src/withNotti.ts` only writes the `aps-environment` entitlement (`withEntitlementsPlist`); it edits no `AppDelegate` and creates no NSE source, so nothing imports the old helper. No code or Jest change.
+
 **Done when**:
-- [ ] Finding recorded; tests updated if code changed; JS gate green
+- [x] Finding recorded; tests updated if code changed; JS gate green
 **Tests**: Jest (only if code changes)
 **Gate**: `pnpm typecheck && pnpm lint && pnpm test`
 
@@ -202,8 +204,8 @@ NSE import if the re-export ever has to go, foreground rule, warning for identit
 **Depends on**: T5, T6
 **Requirement**: NSDK-11, NSDK-13, NSDK-15
 **Done when**:
-- [ ] Every integrator-visible change from spec P1 "Integrator setup" has an upgrade note
-- [ ] README snippets compile in the example
+- [x] Every integrator-visible change from spec P1 "Integrator setup" has an upgrade note
+- [x] README snippets compile in the example
 **Tests**: none
 **Gate**: `pnpm lint` (prettier on markdown)
 
@@ -319,3 +321,14 @@ runtime proof.
 | NSDK-21 | T1, T6, T11 |
 
 **Coverage:** 21 total, 21 mapped, 0 unmapped.
+
+---
+
+## Deviations from this plan (implementation, 2026-11-05)
+
+- **T1** uses the `:path` development override to the sibling `zeep-notti-ios-sdk` checkout at tag `0.2.0` (as the task says). It stays in `example/ios/Podfile` until T10, so `pod install` and the iOS CI jobs cannot pass on a clean checkout before `NottiSDK` 0.2.0 is on the trunk.
+- **T2** seam carries its own `NottiNativeNotification`, `NottiNativeInAppClick` and `NottiNativeSubscription` types: the SDK's payload and subscription initializers are internal, so a test fake could not build them.
+- **T2/T3** the seam is split in two files, `NottiNativeSDK.swift` (protocol and types) and `DefaultNottiNativeSDK.swift` (the `NottiSDK` pass-through). `NottiTests` is a hostless bundle that compiles `ios/` sources directly and has no `NottiSDK` module, so `ios/Tests/DefaultNottiNativeSDKStub.swift` stands in for the default there. `ios/` therefore holds one file more than T6 listed.
+- **T3/T4/T5** new test files are registered in `NottiExample.xcodeproj` by hand (minimal insertions); regenerating the project reserializes it.
+- **T3** removed four `NottiInAppWiringTests` cases that covered the old `initialize` wiring.
+- **T5** `NottiPushDelegate.shared` no longer starts the old network observer.
