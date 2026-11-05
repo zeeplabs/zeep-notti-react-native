@@ -177,9 +177,13 @@ entries once released.
 * **Android: new manifest component `com.zeeplabs.notti.NottiPermissionActivity`** (translucent, not exported), merged from the SDK. It hosts the Android 13+ notification permission dialog; nothing to declare.
 * **Android: `com.notti.NottiBridge` is deprecated.** It keeps the 0.8.0 signatures and forwards to `com.zeeplabs.notti.NottiBridge`, so your service still compiles (deprecation warning only); it will be removed no earlier than 1.0. Change the import to `com.zeeplabs.notti.NottiBridge`. `onMessageReceived` now also reports the `received` event, so apps with their own service start reporting `received` like apps on the SDK's service (0.8.0's bridge only emitted the JS event). Expect a rise in `received` counts for those apps.
 * **Android: one engine per app.** Do not call `com.zeeplabs.notti.Notti` directly from a React Native app. It drives the same single native core as the JS API: a native `Notti.initialize` re-initializes it reporting `sdk_name: "android"` and the native SDK's version, and a native clicked listener makes `getInitialNotificationClick()` resolve `null`.
+* **iOS: the push core now comes from the native NottiSDK.** This package's Swift code is a Turbo Module adapter over `NottiSDK ~> 0.2.0` (CocoaPods); the in-repo engine is deleted. A plain `pod install` resolves it, nothing to add to your Podfile. The `Notti/NotificationServiceExtension` subspec is now an alias of `NottiSDKExtension`: `import Notti` and `NottiNotificationServiceExtension` keep working in your extension target.
+* **iOS: remove the APNs forwarding from your `AppDelegate`.** Delete the `NottiBridge.didRegisterForRemoteNotifications`, `NottiBridge.didFailToRegisterForRemoteNotifications` and `NottiPushDelegate.shared` lines. Both classes keep their 0.8.0 names and signatures (deprecation warning only) and will be removed no earlier than 1.0. `NottiPushDelegate` no longer reports events, it only completes `willPresent` (banner, list, sound, badge) and `didReceive`; the SDK handles the callbacks itself. To own them yourself, set `NottiDisableSwizzling` to `YES` in `Info.plist` and see [Forwarding events manually](README.md#forwarding-events-manually).
+* **iOS: `login`, `addTags`, `removeTags` and `setSubscription` called before `initialize()` are dropped with one warning** (0.8.0 queued them). `logout`, email and phone set before `initialize()` are kept. Call them after `initialize()`.
 
 ### Features
 
+* **iOS: devices report `sdk_name: "react-native"`** next to `sdk_version` (this package's version), through the native SDK's wrapper entry point. Android does the same.
 * **Android: devices report `sdk_name: "react-native"`** next to `sdk_version` (this package's version) in the device profile, under the same echo-based ack as the other profile fields. Sent once after the upgrade. Requires `zeep-notti` **v0.27.0 or later**, which uses it to gate In-App `push_permission` buttons per SDK; an older backend does not store it, and the SDK re-sends it at the next registration.
 
 ### Bug Fixes
@@ -196,6 +200,9 @@ entries once released.
 * **Android: one core per process.** 0.8.0 built a new core for each module instance; the native SDK keeps one, and a repeated `initialize()` with the same config is a no-op. In development, a JS reload is therefore expected to no longer re-run registration. Release builds are not affected.
 * **Android: `notificationReceived` and `deviceIdChanged` are emitted from the main thread** (0.8.0 emitted them from the FCM or network thread). Not visible to JS listeners.
 * Android behavior now follows the native SDK release this package pins. If your app raises `br.com.zeeplabs:notti-android` to a later 0.2.x in its own Gradle files, Gradle uses that version.
+* **iOS: `getInitialNotificationClick()` and the click event keep their 0.8.0 behavior.** The adapter takes the launch tap before attaching its clicked listener, so a cold-start tap is returned once by `getInitialNotificationClick()` and not replayed as an event.
+* **iOS: one engine per app.** Use Notti only through this package's JS API. Calling `Notti` from `NottiSDK` in your own Swift code drives the same core and, for `initialize`, replaces `sdk_name: "react-native"` with `ios`.
+* iOS behavior now follows the `NottiSDK` release this package depends on (`~> 0.2.0`).
 
 ## Upgrade notes for 0.8.0 (released)
 
