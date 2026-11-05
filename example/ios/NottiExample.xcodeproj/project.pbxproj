@@ -60,6 +60,7 @@
 		9E51D21B116749CD86C14AFA /* FakeNottiNativeSDK.swift in Sources */ = {isa = PBXBuildFile; fileRef = A420CD68AA3540368952E156 /* FakeNottiNativeSDK.swift */; };
 		9DD5095E364D4B699FA3F88A /* NottiImplAdapterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E3657959EF5403DAC64B0DE /* NottiImplAdapterTests.swift */; };
 		BDFEBFB39D1E45EA942C44DE /* DefaultNottiNativeSDKStub.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8881666A3A794A22984EEAE2 /* DefaultNottiNativeSDKStub.swift */; };
+		CFEB86F6643B4ED0B2164994 /* NottiImplEventTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF43D94D717F4DA48007A5CA /* NottiImplEventTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -149,6 +150,7 @@
 		A420CD68AA3540368952E156 /* FakeNottiNativeSDK.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = FakeNottiNativeSDK.swift; sourceTree = "<group>"; };
 		3E3657959EF5403DAC64B0DE /* NottiImplAdapterTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiImplAdapterTests.swift; sourceTree = "<group>"; };
 		8881666A3A794A22984EEAE2 /* DefaultNottiNativeSDKStub.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DefaultNottiNativeSDKStub.swift; sourceTree = "<group>"; };
+		CF43D94D717F4DA48007A5CA /* NottiImplEventTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NottiImplEventTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -321,6 +323,7 @@
 				A420CD68AA3540368952E156 /* FakeNottiNativeSDK.swift */,
 				3E3657959EF5403DAC64B0DE /* NottiImplAdapterTests.swift */,
 				8881666A3A794A22984EEAE2 /* DefaultNottiNativeSDKStub.swift */,
+				CF43D94D717F4DA48007A5CA /* NottiImplEventTests.swift */,
 			);
 			name = NottiTestsSources;
 			path = ../../ios/Tests;
@@ -626,6 +629,7 @@
 				9E51D21B116749CD86C14AFA /* FakeNottiNativeSDK.swift in Sources */,
 				9DD5095E364D4B699FA3F88A /* NottiImplAdapterTests.swift in Sources */,
 				BDFEBFB39D1E45EA942C44DE /* DefaultNottiNativeSDKStub.swift in Sources */,
+				CFEB86F6643B4ED0B2164994 /* NottiImplEventTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
