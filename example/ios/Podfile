@@ -14,11 +14,6 @@ if linkage != nil
   use_frameworks! :linkage => linkage.to_sym
 end
 
-# DEVELOPMENT OVERRIDE (ios-native-sdk T1, removed in T10): NottiSDK 0.2.0 is not on the CocoaPods
-# trunk yet (read-only until 2026-11-06), so resolve it from the sibling checkout at tag 0.2.0.
-pod 'NottiSDK', :path => '../../../zeep-notti-ios-sdk'
-pod 'NottiSDKExtension', :path => '../../../zeep-notti-ios-sdk'
-
 target 'NottiExample' do
   config = use_native_modules!
 
