@@ -1,7 +1,7 @@
 # iOS on the Native SDK Tasks
 
 **Design**: `.specs/features/ios-native-sdk/design.md` (approved by Julio, 2026-10-31)
-**Status**: T1-T9 implemented on `feat/ios-native-sdk` (2026-11-05). T10 waits for `NottiSDK` 0.2.0 on the CocoaPods trunk (EXT-2); T11 is Julio's device run.
+**Status**: T1-T10 implemented on `feat/ios-native-sdk` (T1-T9 2026-11-05, T10 2026-11-06). `NottiSDK` and `NottiSDKExtension` 0.2.0 are on the CocoaPods trunk (EXT-2 done); T11 is Julio's device run.
 
 ---
 
@@ -217,7 +217,7 @@ NSE import if the re-export ever has to go, foreground rule, warning for identit
 **Depends on**: T7, T8, T9, EXT-2
 **Requirement**: NSDK-16, NSDK-20
 **Done when**:
-- [ ] Full gate green (commands at the top), outputs pasted in the PR
+- [x] Full gate green (commands at the top), outputs pasted in the PR (2026-11-06: typecheck, lint, 57 Jest tests, example Android build, simulator builds in default/static/dynamic, `NottiTests` 25 tests)
 **Tests**: all
 **Gate**: full
 
@@ -326,9 +326,10 @@ runtime proof.
 
 ## Deviations from this plan (implementation, 2026-11-05)
 
-- **T1** uses the `:path` development override to the sibling `zeep-notti-ios-sdk` checkout at tag `0.2.0` (as the task says). It stays in `example/ios/Podfile` until T10, so `pod install` and the iOS CI jobs cannot pass on a clean checkout before `NottiSDK` 0.2.0 is on the trunk.
+- **T1** uses the `:path` development override to the sibling `zeep-notti-ios-sdk` checkout at tag `0.2.0` (as the task says). It stayed in `example/ios/Podfile` until T10 (removed 2026-11-06), so `pod install` and the iOS CI jobs could not pass on a clean checkout before `NottiSDK` 0.2.0 was on the trunk.
 - **T2** seam carries its own `NottiNativeNotification`, `NottiNativeInAppClick` and `NottiNativeSubscription` types: the SDK's payload and subscription initializers are internal, so a test fake could not build them.
 - **T2/T3** the seam is split in two files, `NottiNativeSDK.swift` (protocol and types) and `DefaultNottiNativeSDK.swift` (the `NottiSDK` pass-through). `NottiTests` is a hostless bundle that compiles `ios/` sources directly and has no `NottiSDK` module, so `ios/Tests/DefaultNottiNativeSDKStub.swift` stands in for the default there. `ios/` therefore holds one file more than T6 listed.
 - **T3/T4/T5** new test files are registered in `NottiExample.xcodeproj` by hand (minimal insertions); regenerating the project reserializes it.
 - **T3** removed four `NottiInAppWiringTests` cases that covered the old `initialize` wiring.
 - **T5** `NottiPushDelegate.shared` no longer starts the old network observer.
+- **T10** `NottiSDKExtension` 0.2.0 reached the trunk after `NottiSDK` 0.2.0 (the trunk answered five pushes with a 504, CocoaPods issue #12935), and the CDN version index lagged the spec files for a while, so `pod install` could not resolve `~> 0.2.0` until it refreshed. The committed `example/ios/Podfile.lock` was already stale (`Notti 0.3.0`) and CI runs a fresh `pod install`, so it is not updated here, and the reordering `pod install` does in `project.pbxproj` is reverted.
